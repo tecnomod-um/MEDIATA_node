@@ -17,6 +17,7 @@ import org.taniwha.util.JwtTokenUtil;
 @RequestMapping("/node")
 public class NodeController {
 
+
     private static final Logger logger = LoggerFactory.getLogger(NodeController.class);
     private final NodeAccessService nodeAccessService;
     private final JwtTokenUtil jwtTokenUtil;
