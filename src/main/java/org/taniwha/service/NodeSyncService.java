@@ -140,7 +140,7 @@ public class NodeSyncService {
         ErrorLogDTO errorLogDTO = new ErrorLogDTO();
         errorLogDTO.setError(error);
         errorLogDTO.setInfo(info);
-        errorLogDTO.setTimestamp(LocalDateTime.now());
+        errorLogDTO.setTimestamp(LocalDateTime.now().toString());
 
         UriComponentsBuilder builder = UriComponentsBuilder.fromHttpUrl(centralBackendUrl + "/api/error");
         String token = jwtTokenUtil.generateToken(jwtUsername);
