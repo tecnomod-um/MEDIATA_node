@@ -22,12 +22,10 @@ class RestTemplateConfigTest {
             assertThat(supplier)
                     .as("restTemplateSupplier bean")
                     .isNotNull();
-
             RestTemplate rtFromSupplier = supplier.get();
             assertThat(rtFromSupplier)
                     .as("supplier.get() returns RestTemplate")
                     .isInstanceOf(RestTemplate.class);
-
             RestTemplate rtBean = ctx.getBean(RestTemplate.class);
             assertThat(rtBean)
                     .as("restTemplate bean")
