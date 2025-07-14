@@ -5,6 +5,8 @@
     <file url="file://$PROJECT_DIR$/src/main/java/org.taniwha.dto/src/main/java" charset="UTF-8" />
     <file url="file://$PROJECT_DIR$/src/main/java/org.taniwha/taniwha/src/main/java" charset="UTF-8" />
     <file url="file://$PROJECT_DIR$/src/main/java/org.taniwha/taniwha/src/main/resources" charset="UTF-8" />
+    <file url="file://$PROJECT_DIR$/src/main/java/org/taniwha/RestTemplateHolder/src/main/java" charset="UTF-8" />
     <file url="file://$PROJECT_DIR$/src/main/resources" charset="UTF-8" />
+    <file url="file://$PROJECT_DIR$/src/test/java/org/src/main/java" charset="UTF-8" />
   </component>
 </project>

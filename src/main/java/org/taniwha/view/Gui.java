@@ -6,11 +6,10 @@ import javafx.geometry.Insets;
 import javafx.geometry.Pos;
 import javafx.scene.Scene;
 import javafx.scene.control.Button;
-import javafx.scene.control.ColorPicker;
 import javafx.scene.control.Label;
-import javafx.scene.control.ProgressBar;
 import javafx.scene.control.TextArea;
 import javafx.scene.control.TextField;
+import javafx.scene.control.*;
 import javafx.scene.layout.GridPane;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.Priority;
@@ -48,7 +47,7 @@ public class Gui extends javafx.application.Application {
         primaryStage.setTitle(TITLE);
         primaryStage.getIcons().add(new javafx.scene.image.Image(Objects.requireNonNull(getClass().getResourceAsStream("/images/trayIcon.png"))));
 
-        TextField portField = new TextField("8081");
+        TextField portField = new TextField("8080");
         TextField nodeIpField = new TextField("localhost");
         TextField nameField = new TextField("SCUBA");
         TextField descField = new TextField("This is the description for the new node");

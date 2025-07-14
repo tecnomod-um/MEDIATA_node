@@ -1,0 +1,54 @@
+name: MEDIATA NODE CI
+
+on:
+  push:
+    branches:
+      - dev
+      - main
+
+permissions:
+  contents: write
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+        with: { fetch-depth: 0 }
+      - uses: actions/setup-java@v3
+        with:
+          distribution: temurin
+          java-version: 17
+      - run: mvn test -B
+
+  update-parent:
+    needs: test
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout combined repo (@main)
+        uses: actions/checkout@v3
+        with:
+          repository: tecnomod-um/MEDIATA_project
+          token: ${{ secrets.PARENT_REPO_TOKEN }}
+          ref: main
+          path: monorepo
+          fetch-depth: 0
+          submodules: recursive
+          persist-credentials: true
+
+      - name: Bump node submodule
+        working-directory: monorepo
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git -C MEDIATA_node fetch origin "${{ github.sha }}"
+          git -C MEDIATA_node checkout "${{ github.sha }}"
+          
+          git add MEDIATA_node
+          if ! git diff --cached --quiet; then
+            git commit -m "ci: bump MEDIATA_node to ${{ github.sha }}"
+            git push origin main
+          else
+            echo "No changes to submodule"
+          fi
