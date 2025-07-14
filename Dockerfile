@@ -1,7 +1,25 @@
 FROM openjdk:17-jdk-alpine
 WORKDIR /app
-VOLUME /opt/shared-folder
+
 COPY target/TANIWHA_Backend_node.jar /app/TANIWHA_Backend_node.jar
-EXPOSE 8081
-ENTRYPOINT ["java", "-jar", "/app/TANIWHA_Backend_node.jar"]
-CMD ["--PORT=8081", "--NODE_IP=http://localhost", "--NAME=SCUBA", "--DESC=This is the description for the new node", "--COLOR=#21c2c3"]
+COPY entrypoint.sh /app/entrypoint.sh
+
+RUN chmod +x /app/entrypoint.sh \
+    && mkdir -p \
+        /taniwha/datasets \
+        /taniwha/mapped_datasets \
+        /taniwha/fhir_mappings \
+        /taniwha/dataset_elements \
+        /taniwha/dataset_metadata \
+    && chmod 777 \
+        /taniwha/datasets \
+        /taniwha/mapped_datasets \
+        /taniwha/fhir_mappings \
+        /taniwha/dataset_elements \
+        /taniwha/dataset_metadata
+
+VOLUME /taniwha
+
+ARG EXPOSE_PORT=8080
+EXPOSE ${EXPOSE_PORT}
+ENTRYPOINT ["/app/entrypoint.sh"]

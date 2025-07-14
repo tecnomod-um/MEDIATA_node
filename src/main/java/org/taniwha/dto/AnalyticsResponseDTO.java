@@ -16,7 +16,7 @@ import java.util.Map;
 @Getter
 public class AnalyticsResponseDTO {
     private String message;
-
+    private String fileName;
     private List<FeatureStatistics> continuousFeatures;
     private List<FeatureStatistics> categoricalFeatures;
     private List<DateFeatureStatistics> dateFeatures;
@@ -30,6 +30,7 @@ public class AnalyticsResponseDTO {
     public AnalyticsResponseDTO() {
         this.continuousFeatures = new ArrayList<>();
         this.categoricalFeatures = new ArrayList<>();
+        this.dateFeatures = new ArrayList<>();
         this.omittedFeatures = new ArrayList<>();
 
         this.covariances = new HashMap<>();
