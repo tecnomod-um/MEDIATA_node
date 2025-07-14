@@ -12,6 +12,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
+import org.taniwha.model.NodeMetadata;
 import org.taniwha.util.JwtTokenUtil;
 
 import java.io.IOException;
@@ -27,6 +28,8 @@ public class NodeAccessService {
     private static final Logger logger = LoggerFactory.getLogger(NodeAccessService.class);
     private final JwtTokenUtil jwtTokenUtil;
     private final KerberosService kerberosService;
+    private final FileService fileService;
+
     private final ConcurrentMap<String, SgtTicket> authorizedTokens = new ConcurrentHashMap<>();
     private final PrincipalService principalService;
 
@@ -37,10 +40,15 @@ public class NodeAccessService {
     @Value("${node.ip}")
     private String nodeIp;
 
-    public NodeAccessService(JwtTokenUtil jwtTokenUtil, KerberosService kerberosService, PrincipalService principalService) {
+    public NodeAccessService(JwtTokenUtil jwtTokenUtil, KerberosService kerberosService, FileService fileService, PrincipalService principalService) {
         this.jwtTokenUtil = jwtTokenUtil;
         this.kerberosService = kerberosService;
+        this.fileService = fileService;
         this.principalService = principalService;
+    }
+
+    public NodeMetadata getMetadata() {
+        return fileService.parseNodeMetadata();
     }
 
     public void storeToken(SgtTicket sgtTicket) {
@@ -61,7 +69,6 @@ public class NodeAccessService {
             return false;
         }
     }
-
 
     public boolean verifySgtTicket(SgtTicket sgtTicket) {
         if (isTicketValid(sgtTicket)) {
@@ -98,6 +105,7 @@ public class NodeAccessService {
     }
 
     private boolean isTicketValid(SgtTicket sgtTicket) {
+
         Ticket ticket = sgtTicket.getTicket();
         EncKdcRepPart encKdcRepPart = sgtTicket.getEncKdcRepPart();
         KerberosTime now = KerberosTime.now();

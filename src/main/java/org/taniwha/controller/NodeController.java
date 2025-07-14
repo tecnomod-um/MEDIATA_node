@@ -9,6 +9,7 @@ import org.taniwha.dto.NodeAuthRequestDTO;
 import org.taniwha.dto.NodeAuthResponseDTO;
 import org.taniwha.dto.NodeValidationRequestDTO;
 import org.taniwha.dto.NodeValidationResponseDTO;
+import org.taniwha.model.NodeMetadata;
 import org.taniwha.service.NodeAccessService;
 import org.taniwha.util.JwtTokenUtil;
 
@@ -16,7 +17,6 @@ import org.taniwha.util.JwtTokenUtil;
 @RestController
 @RequestMapping("/node")
 public class NodeController {
-
 
     private static final Logger logger = LoggerFactory.getLogger(NodeController.class);
     private final NodeAccessService nodeAccessService;
@@ -32,6 +32,16 @@ public class NodeController {
         return "OK";
     }
 
+    @GetMapping("/metadata")
+    public ResponseEntity<?> nodeMetadata() {
+        NodeMetadata metadata = nodeAccessService.getMetadata();
+        if (metadata == null) {
+            logger.warn("No metadata found or error reading the RDF file");
+            return ResponseEntity.status(HttpStatus.NOT_FOUND)
+                    .body("No metadata file found or could not read it.");
+        }
+        return ResponseEntity.ok(metadata);
+    }
 
     @PostMapping("/authorize")
     public ResponseEntity<NodeAuthResponseDTO> authorizeNode(@RequestBody NodeAuthRequestDTO request) {

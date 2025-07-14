@@ -7,7 +7,7 @@ import ch.qos.logback.core.AppenderBase;
 import javafx.application.Platform;
 import javafx.scene.control.TextArea;
 
-// Redirects the console logs to the GUI textbox
+// Redirects the console logs to the GUI text box
 public class TextAreaAppender extends AppenderBase<ILoggingEvent> {
 
     private static TextArea textArea;

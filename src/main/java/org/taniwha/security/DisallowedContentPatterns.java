@@ -2,6 +2,7 @@ package org.taniwha.security;
 
 import lombok.Getter;
 
+// Checks for malicious strings in the data
 @Getter
 public enum DisallowedContentPatterns {
     SCRIPT("<script>"), IFRAME("<iframe>"), JAVASCRIPT("javascript:"), VBSCRIPT("vbscript:");

@@ -32,7 +32,6 @@ public class JwtRequestFilter extends OncePerRequestFilter {
     @Override
     protected void doFilterInternal(@NonNull HttpServletRequest request, @NonNull HttpServletResponse response, @NonNull FilterChain chain)
             throws ServletException, IOException {
-
         // Allow requests to specific endpoints to bypass the filter
         if (isExemptedEndpoint(request)) {
             chain.doFilter(request, response);
@@ -41,7 +40,6 @@ public class JwtRequestFilter extends OncePerRequestFilter {
 
         String jwtToken = extractJwtToken(request, response);
         if (jwtToken == null) return;
-
         if (!validateToken(jwtToken, response)) return;
         setAuthenticationContext(request);
         chain.doFilter(request, response);
