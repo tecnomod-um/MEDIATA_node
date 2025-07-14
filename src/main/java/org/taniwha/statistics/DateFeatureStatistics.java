@@ -1,6 +1,7 @@
 package org.taniwha.statistics;
 
 import lombok.Getter;
+
 import java.util.List;
 import java.util.Map;
 

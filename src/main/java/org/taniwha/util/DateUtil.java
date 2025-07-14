@@ -6,11 +6,28 @@ import java.time.format.DateTimeFormatter;
 import java.time.format.DateTimeParseException;
 import java.util.Optional;
 
-public class DateUtils {
+public class DateUtil {
 
-    private static final String[] DATE_TIME_FORMATS = {"dd/MM/yyyy HH:mm:ss", "dd/MM/yyyy", "MM/dd/yyyy HH:mm:ss", "MM/dd/yyyy", "yyyy/MM/dd HH:mm:ss", "yyyy/MM/dd", "dd-MM-yyyy HH:mm:ss", "dd-MM-yyyy", "MM-dd-yyyy HH:mm:ss", "MM-dd-yyyy", "yyyy-MM-dd HH:mm:ss", "yyyy-MM-dd", "dd.MM.yyyy HH:mm:ss", "dd.MM.yyyy", "MM.dd.yyyy HH:mm:ss", "MM.dd.yyyy", "yyyy.MM.dd HH:mm:ss", "yyyy.MM.dd", "yyyy-MM-dd'T'HH:mm:ss.SSS'Z'"};
+    private static final String[] DATE_TIME_FORMATS = {
+            "dd/MM/yy HH:mm:ss", "dd/MM/yy",
+            "dd.MM.yy HH:mm:ss", "dd.MM.yy",
+            "d/MM/yyyy HH:mm:ss", "d/MM/yyyy",
+            "dd/M/yyyy HH:mm:ss", "dd/M/yyyy",
+            "d.MM.yyyy HH:mm:ss", "d.MM.yyyy",
+            "dd.M.yyyy HH:mm:ss", "dd.M.yyyy",
+            "dd/MM/yyyy HH:mm:ss", "dd/MM/yyyy",
+            "MM/dd/yyyy HH:mm:ss", "MM/dd/yyyy",
+            "yyyy/MM/dd HH:mm:ss", "yyyy/MM/dd",
+            "dd-MM-yyyy HH:mm:ss", "dd-MM-yyyy",
+            "MM-dd-yyyy HH:mm:ss", "MM-dd-yyyy",
+            "yyyy-MM-dd HH:mm:ss", "yyyy-MM-dd",
+            "dd.MM.yyyy HH:mm:ss", "dd.MM.yyyy",
+            "MM.dd.yyyy HH:mm:ss", "MM.dd.yyyy",
+            "yyyy.MM.dd HH:mm:ss", "yyyy.MM.dd",
+            "yyyy-MM-dd'T'HH:mm:ss.SSS'Z'"
+    };
 
-    private DateUtils() {
+    private DateUtil() {
     }
 
     public static Optional<LocalDateTime> parseDate(String value) {

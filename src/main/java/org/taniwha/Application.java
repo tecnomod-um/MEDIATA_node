@@ -1,4 +1,5 @@
 package org.taniwha;
+
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -26,9 +27,9 @@ public class Application {
 
     public static void main(String[] args) {
         // Conditionally switch launch modes based on the environment
-       if (!GraphicsEnvironment.isHeadless() && System.console() == null)
+        if (!GraphicsEnvironment.isHeadless() && System.console() == null)
             Gui.main(args);
-         else
+        else
             launchSpringBootApp(args);
     }
 

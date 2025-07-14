@@ -1,6 +1,9 @@
+### Sensitive data###
 .env
-
+nohup.out
 target/
+taniwha.log
+
 !.mvn/wrapper/maven-wrapper.jar
 !**/src/main/**/target/
 !**/src/test/**/target/
