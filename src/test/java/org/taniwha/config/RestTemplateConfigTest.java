@@ -32,6 +32,7 @@ class RestTemplateConfigTest {
                     .isInstanceOf(RestTemplate.class);
             assertThat(rtFromSupplier).isNotNull();
             assertThat(rtBean).isNotNull();
+            
         }
     }
 }
