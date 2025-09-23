@@ -5,32 +5,43 @@ import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
-import org.taniwha.dto.AnalyticsResponseDTO;
-import org.taniwha.dto.FileNamesDTO;
-import org.taniwha.dto.MultiFileFilterRequest;
+import org.taniwha.dto.*;
+import org.taniwha.service.AnalyticsProcessingJobs;
 import org.taniwha.service.AnalyticsService;
 
 import java.util.Collections;
 import java.util.List;
 import java.util.concurrent.ExecutionException;
 
-// Exposes uris to operate with aggregated data
 @RestController
 @RequestMapping("/api/data")
 public class AnalyticsController {
 
     private static final Logger logger = LoggerFactory.getLogger(AnalyticsController.class);
-    private final AnalyticsService analyticsService;
 
-    public AnalyticsController(AnalyticsService analyticsService) {
+    private final AnalyticsService analyticsService;
+    private final AnalyticsProcessingJobs jobs;
+
+    public AnalyticsController(AnalyticsService analyticsService, AnalyticsProcessingJobs jobs) {
         this.analyticsService = analyticsService;
+        this.jobs = jobs;
     }
 
     @PostMapping("/processList")
-    public ResponseEntity<List<AnalyticsResponseDTO>> processList(@RequestBody FileNamesDTO dto) {
+    public ResponseEntity<?> processList(@RequestBody FileNamesDTO dto) {
         try {
-            List<AnalyticsResponseDTO> resultList = analyticsService.processDatasetsOnDisk(dto.getFileNames());
-            return ResponseEntity.ok(resultList);
+            List<String> fileNames = dto.getFileNames();
+            boolean huge = analyticsService.isAnyHugeForDiscovery(fileNames);
+
+            if (!huge) {
+                List<AnalyticsResponseDTO> resultList = analyticsService.processDatasetsOnDisk(fileNames);
+                return ResponseEntity.ok(resultList);
+            }
+
+            String jobId = jobs.createJob();
+            analyticsService.startDiscoveryJob(jobId, fileNames);
+            return ResponseEntity.status(HttpStatus.ACCEPTED).body(new ProcessingStartDTO(jobId, true));
+
         } catch (Exception e) {
             logger.error("Error processing file list", e);
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
@@ -38,8 +49,36 @@ public class AnalyticsController {
         }
     }
 
+    @GetMapping("/processList/status/{jobId}")
+    public ResponseEntity<ProcessingStatusDTO> processListStatus(
+            @PathVariable String jobId
+    ) {
+        AnalyticsProcessingJobs.JobState s = jobs.getJob(jobId);
+        if (s == null) return ResponseEntity.notFound().build();
+        // Do NOT include results in polling response
+        return ResponseEntity.ok(jobs.toDto(s, false));
+    }
+
+    @GetMapping("/processList/result/{jobId}")
+    public ResponseEntity<List<AnalyticsResponseDTO>> processListResult(@PathVariable String jobId) {
+        AnalyticsProcessingJobs.JobState s = jobs.getJob(jobId);
+        if (s == null) return ResponseEntity.notFound().build();
+
+        if (s.state != ProcessingStatusDTO.State.DONE)
+            return ResponseEntity.status(HttpStatus.CONFLICT).build();
+
+        List<AnalyticsResponseDTO> out = s.results == null ? List.of() : s.results;
+        jobs.clear(jobId);
+
+        return ResponseEntity.ok(out);
+    }
+
     @PostMapping("/reprocessList")
-    public ResponseEntity<AnalyticsResponseDTO> recalculateFeatureList(@RequestParam("fileName") String fileName, @RequestParam("featureName") String featureName, @RequestParam("featureType") String featureType) {
+    public ResponseEntity<AnalyticsResponseDTO> recalculateFeatureList(
+            @RequestParam("fileName") String fileName,
+            @RequestParam("featureName") String featureName,
+            @RequestParam("featureType") String featureType
+    ) {
         logger.debug("File reprocessing request: {} as type {} for file: {}", featureName, featureType, fileName);
         if (!featureType.equalsIgnoreCase("continuous") && !featureType.equalsIgnoreCase("categorical")) {
             logger.warn("Invalid feature type provided: {}", featureType);
@@ -63,9 +102,7 @@ public class AnalyticsController {
 
     @PostMapping("/filterByNameList")
     public ResponseEntity<List<AnalyticsResponseDTO>> filterByNameList(@RequestBody MultiFileFilterRequest payload) {
-        logger.debug("Received multiple-file filter request with {} entries",
-                payload.getMultipleFileFilters().size());
-
+        logger.debug("Received multiple-file filter request with {} entries", payload.getMultipleFileFilters().size());
         try {
             List<AnalyticsResponseDTO> filteredList = analyticsService.filterMultipleFilesByName(payload.getMultipleFileFilters());
             return ResponseEntity.ok(filteredList);

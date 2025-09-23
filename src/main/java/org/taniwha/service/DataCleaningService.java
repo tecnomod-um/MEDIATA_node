@@ -4,10 +4,13 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.taniwha.util.DateUtil;
+import org.taniwha.util.NumberUtil;
+
 import java.time.format.DateTimeFormatter;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.stream.Collectors;
 
 @Service
@@ -55,7 +58,6 @@ public class DataCleaningService {
                 .collect(Collectors.joining("|"));
     }
 
-
     public void standardizeDatesInPlace(Map<String,String> row, String outputPattern) {
         String fmt = Optional.ofNullable(outputPattern)
                 .filter(s->!s.isBlank())
@@ -67,6 +69,27 @@ public class DataCleaningService {
             if (raw!=null && !raw.isEmpty()) {
                 DateUtil.parseDate(raw)
                         .ifPresent(ldt->e.setValue(ldt.format(dtf)));
+            }
+        }
+    }
+
+    public void standardizeNumericInPlace(Map<String,String> row,
+                                          Set<String> numericColumns,
+                                          String mode) {
+        for (String col : numericColumns) {
+            if (!row.containsKey(col)) continue;
+            String raw = row.get(col);
+            if (raw == null || raw.isBlank()) continue;
+
+            try {
+                double d = NumberUtil.parseDouble(raw);
+                switch (mode) {
+                    case "double" -> row.put(col, Double.toString(d));
+                    case "int_round" -> row.put(col, Long.toString(Math.round(d)));
+                    case "int_trunc" -> row.put(col, Long.toString((long) d));
+                    default -> { /* ignore unknown */ }
+                }
+            } catch (Exception ignored) {
             }
         }
     }

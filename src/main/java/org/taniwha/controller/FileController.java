@@ -5,6 +5,8 @@ import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
+import org.taniwha.dto.FileInfoDto;
+import org.taniwha.model.FileCategory;
 import org.taniwha.service.FileService;
 
 import java.nio.file.Files;
@@ -105,5 +107,44 @@ public class FileController {
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
                     .body("Error fetching element file: " + fileName);
         }
+    }
+
+
+
+    @GetMapping
+    public ResponseEntity<List<FileInfoDto>> listFiles(@RequestParam FileCategory category) {
+        logger.debug("List files for category={}", category);
+        return ResponseEntity.ok(fileService.listFilesWithInfo(category));
+    }
+
+    @PostMapping("/rename")
+    public ResponseEntity<Void> renameFile(
+            @RequestParam FileCategory category,
+            @RequestParam String from,
+            @RequestParam String to
+    ) {
+        logger.debug("Rename file category={} from={} to={}", category, from, to);
+        fileService.renameFile(category, from, to);
+        return ResponseEntity.ok().build();
+    }
+
+    @DeleteMapping
+    public ResponseEntity<Void> deleteFile(
+            @RequestParam FileCategory category,
+            @RequestParam String name
+    ) {
+        logger.debug("Delete file category={} name={}", category, name);
+        fileService.deleteFile(category, name);
+        return ResponseEntity.ok().build();
+    }
+
+    @PostMapping("/clean")
+    public ResponseEntity<Void> cleanFile(
+            @RequestParam FileCategory category,
+            @RequestParam String name
+    ) {
+        logger.debug("Clean (placeholder) file category={} name={}", category, name);
+        fileService.cleanFilePlaceholder(category, name);
+        return ResponseEntity.ok().build();
     }
 }

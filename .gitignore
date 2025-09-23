@@ -4,6 +4,9 @@ nohup.out
 target/
 taniwha.log
 
+# OS-specific distributable JARs
+TANIWHA_Backend_node*.jar
+
 !.mvn/wrapper/maven-wrapper.jar
 !**/src/main/**/target/
 !**/src/test/**/target/
