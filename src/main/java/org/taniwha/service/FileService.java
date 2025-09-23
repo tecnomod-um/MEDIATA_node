@@ -7,17 +7,20 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
+import org.taniwha.dto.FileInfoDto;
 import org.taniwha.model.Dataset;
 import org.taniwha.model.Distribution;
+import org.taniwha.model.FileCategory;
 import org.taniwha.model.NodeMetadata;
 import org.taniwha.security.FileFilter;
 
 import java.io.IOException;
 import java.io.StringReader;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.nio.file.Paths;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.*;
+import java.nio.file.attribute.BasicFileAttributes;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
 import java.util.stream.Collectors;
 
@@ -25,7 +28,10 @@ import java.util.stream.Collectors;
 public class FileService {
 
     private static final Logger logger = LoggerFactory.getLogger(FileService.class);
+
     private final FileFilter fileFilter;
+
+    // Keep your original String folder fields for compatibility with existing methods
     private final String datasetsFolder;
     @Getter
     private final String mappedDatasetsFolder;
@@ -33,14 +39,40 @@ public class FileService {
     private final String elementsFolder;
     private final String metadataFolder;
 
+    // Also keep Path forms for the explorer methods
+    private final Path datasetsDir;
+    private final Path mappedDatasetsDir;
+    private final Path fhirMappingsDir;
+    private final Path elementsDir;
+    private final Path metadataDir;
+
     public FileService(FileFilter fileFilter, @Value("${app.path}") String basePath) {
         this.fileFilter = fileFilter;
+
+        // Original behavior preserved (strings)
         this.datasetsFolder = basePath + "/datasets";
+
+        // NOTE: Your original code sets mappedDatasetsFolder = datasetsFolder.
+        // If that was intentional, keep it. If not, change to basePath + "/mapped_datasets".
+        // I'll keep your behavior exactly:
         this.mappedDatasetsFolder = this.datasetsFolder;
+
         this.fhirMappingsFolder = basePath + "/fhir_mappings";
         this.elementsFolder = basePath + "/dataset_elements";
         this.metadataFolder = basePath + "/dataset_metadata";
+
+        // Path normalized versions used by explorer operations
+        Path base = Paths.get(basePath).normalize();
+        this.datasetsDir = base.resolve("datasets").normalize();
+        this.mappedDatasetsDir = this.datasetsDir; // keep your current behavior
+        this.fhirMappingsDir = base.resolve("fhir_mappings").normalize();
+        this.elementsDir = base.resolve("dataset_elements").normalize();
+        this.metadataDir = base.resolve("dataset_metadata").normalize();
     }
+
+    // =========================
+    // Existing functionality (kept)
+    // =========================
 
     public NodeMetadata parseNodeMetadata() {
         try {
@@ -49,19 +81,21 @@ public class FileService {
                 logger.warn("No metadata files found in {}", metadataFolder);
                 return null;
             }
-            
+
             String firstFileName = files.get(0);
             Path metaPath = Paths.get(metadataFolder, firstFileName);
+
+            // keep your filter usage
             fileFilter.validate(metaPath);
+
             String rdfContent = Files.readString(metaPath);
 
-            // parse it with Jena as TTL
             Model model = ModelFactory.createDefaultModel();
             model.read(new StringReader(rdfContent), null, "TTL");
+
             NodeMetadata nm = new NodeMetadata();
             nm.setContext("https://www.w3.org/ns/dcat.jsonld");
 
-            // find all DCAT datasets
             Resource dcatDataset = model.createResource("http://www.w3.org/ns/dcat#Dataset");
             ResIterator dsIter = model.listResourcesWithProperty(RDF.type, dcatDataset);
 
@@ -90,33 +124,27 @@ public class FileService {
         ds.setModified(getStringValue(dsRes, "http://purl.org/dc/terms/modified"));
         ds.setAccrualPeriodicity(getStringValue(dsRes, "http://purl.org/dc/terms/accrualPeriodicity"));
 
-        // multi-valued fields
         ds.setKeyword(getStringObjects(dsRes, "http://www.w3.org/ns/dcat#keyword"));
         ds.setTheme(getResourceURIs(dsRes, "http://www.w3.org/ns/dcat#theme"));
         ds.setLanguage(getResourceURIs(dsRes, "http://purl.org/dc/terms/language"));
 
-        // publisher (like a foaf:Organization)
         Resource pubRes = getResourceObject(dsRes, "http://purl.org/dc/terms/publisher");
         if (pubRes != null) {
             String pubName = getStringValue(pubRes, "http://xmlns.com/foaf/0.1/name");
             ds.setPublisher(pubName != null ? pubName : pubRes.getURI());
         }
 
-        // contact point
         Resource cpRes = getResourceObject(dsRes, "http://www.w3.org/ns/dcat#contactPoint");
         if (cpRes != null) {
             ds.setContactPoint(cpRes.getURI());
         }
 
-        // spatial coverage
         Resource spatialRes = getResourceObject(dsRes, "http://purl.org/dc/terms/spatial");
         if (spatialRes != null) {
-            // e.g. geometry
             String geometry = getStringValue(spatialRes, "http://www.w3.org/ns/locn#geometry");
             ds.setSpatial(geometry != null ? geometry : spatialRes.getURI());
         }
 
-        // temporal coverage
         Resource temporalRes = getResourceObject(dsRes, "http://purl.org/dc/terms/temporal");
         if (temporalRes != null) {
             String start = getStringValue(temporalRes, "http://www.w3.org/ns/dcat#startDate");
@@ -128,7 +156,6 @@ public class FileService {
             }
         }
 
-        // distributions
         ds.setDistribution(parseDistributions(dsRes));
         return ds;
     }
@@ -207,8 +234,14 @@ public class FileService {
             String sanitizedFileName = fileName.replaceAll("[^a-zA-Z0-9._-]", "_");
             sanitizedFileName = sanitizedFileName.replaceAll("(?i)\\.(csv|xlsx)$", "");
             String finalFileName = sanitizedFileName + "_elements.csv";
+
             String filePath = Paths.get(elementsFolder, finalFileName).toString();
-            Files.write(Paths.get(filePath), csvData.getBytes());
+
+            // validate output path too
+            Path outPath = Paths.get(filePath).normalize();
+            fileFilter.validate(outPath);
+
+            Files.write(outPath, csvData.getBytes(StandardCharsets.UTF_8));
             logger.info("Saved dataset elements to {}", filePath);
             return filePath;
         } catch (IOException e) {
@@ -219,8 +252,18 @@ public class FileService {
 
     private List<String> listFilesInFolder(String folderPath) {
         try {
-            return Files.list(Paths.get(folderPath))
+            Path dir = Paths.get(folderPath);
+            if (!Files.exists(dir)) return new ArrayList<>();
+
+            return Files.list(dir)
                     .filter(Files::isRegularFile)
+                    .peek(p -> {
+                        try { fileFilter.validate(p); } catch (Exception ignored) {}
+                    })
+                    .filter(p -> {
+                        try { fileFilter.validate(p); return true; }
+                        catch (Exception e) { return false; }
+                    })
                     .map(path -> path.getFileName().toString())
                     .collect(Collectors.toList());
         } catch (IOException e) {
@@ -264,4 +307,111 @@ public class FileService {
         return (r != null) ? r.getURI() : null;
     }
 
+    // explorer
+
+    private Path dirFor(FileCategory category) {
+        return switch (category) {
+            case DATASETS -> datasetsDir;
+            case MAPPED_DATASETS -> mappedDatasetsDir;
+            case FHIR_MAPPINGS -> fhirMappingsDir;
+            case DATASET_ELEMENTS -> elementsDir;
+            case DATASET_METADATA -> metadataDir;
+        };
+    }
+
+    private Path resolveSafe(FileCategory category, String fileName) {
+        String safeName = fileName.replace("\\", "/");
+        if (safeName.contains("/")) {
+            throw new IllegalArgumentException("Invalid file name");
+        }
+
+        Path dir = dirFor(category);
+        Path resolved = dir.resolve(safeName).normalize();
+
+        if (!resolved.startsWith(dir)) {
+            throw new IllegalArgumentException("Invalid path");
+        }
+
+        fileFilter.validate(resolved);
+        return resolved;
+    }
+
+    public List<FileInfoDto> listFilesWithInfo(FileCategory category) {
+        Path dir = dirFor(category);
+
+        try {
+            if (!Files.exists(dir)) return List.of();
+
+            List<FileInfoDto> out = new ArrayList<>();
+            try (var stream = Files.list(dir)) {
+                stream
+                        .filter(Files::isRegularFile)
+                        .forEach(p -> {
+                            try {
+                                fileFilter.validate(p);
+                                BasicFileAttributes attrs = Files.readAttributes(p, BasicFileAttributes.class);
+
+                                long createdMs = (attrs.creationTime() != null)
+                                        ? attrs.creationTime().toMillis()
+                                        : attrs.lastModifiedTime().toMillis();
+
+                                long modifiedMs = (attrs.lastModifiedTime() != null)
+                                        ? attrs.lastModifiedTime().toMillis()
+                                        : createdMs;
+
+                                out.add(new FileInfoDto(
+                                        p.getFileName().toString(),
+                                        attrs.size(),
+                                        createdMs,
+                                        modifiedMs
+                                ));
+                            } catch (Exception e) {
+                                logger.warn("Skipping file due to validation/read error: {}", p, e);
+                            }
+                        });
+            }
+
+            out.sort(Comparator.comparing(FileInfoDto::getName, String.CASE_INSENSITIVE_ORDER));
+            return out;
+
+        } catch (IOException e) {
+            logger.error("Failed to list files with info for category={}", category, e);
+            return List.of();
+        }
+    }
+
+    public void renameFile(FileCategory category, String from, String to) {
+        Path src = resolveSafe(category, from);
+
+        String sanitizedTo = to.replaceAll("[^a-zA-Z0-9._-]", "_");
+        Path dst = resolveSafe(category, sanitizedTo);
+
+        try {
+            if (!Files.exists(src)) throw new IllegalArgumentException("Source does not exist");
+            if (Files.exists(dst)) throw new IllegalArgumentException("Destination already exists");
+
+            try {
+                Files.move(src, dst, StandardCopyOption.ATOMIC_MOVE);
+            } catch (AtomicMoveNotSupportedException e) {
+                Files.move(src, dst);
+            }
+        } catch (IOException e) {
+            throw new RuntimeException("Rename failed", e);
+        }
+    }
+
+    public void deleteFile(FileCategory category, String name) {
+        Path p = resolveSafe(category, name);
+        try {
+            Files.deleteIfExists(p);
+        } catch (IOException e) {
+            throw new RuntimeException("Delete failed", e);
+        }
+    }
+
+    public void cleanFilePlaceholder(FileCategory category, String name) {
+        Path p = resolveSafe(category, name);
+        if (!Files.exists(p)) throw new IllegalArgumentException("File does not exist");
+        // placeholder: no-op
+    }
 }
