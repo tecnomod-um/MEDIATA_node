@@ -24,7 +24,7 @@ jobs:
           cache: maven
 
       - name: Test (with coverage)
-        run: mvn -B -q verify
+        run: mvn -B -q -Plinux verify
 
       - name: Generate coverage badge
         uses: cicirello/jacoco-badge-generator@v2
