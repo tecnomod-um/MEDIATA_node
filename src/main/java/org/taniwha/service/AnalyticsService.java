@@ -12,6 +12,7 @@ import org.taniwha.util.AggregateCalculator;
 import org.taniwha.util.DateUtil;
 import org.taniwha.util.NumberUtil;
 
+import jakarta.annotation.PreDestroy;
 import java.io.BufferedInputStream;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
@@ -56,7 +57,7 @@ public class AnalyticsService {
     private final DataProcessingService dataProcessingService;
     private final FileService fileService;
     private final AnalyticsProcessingJobs jobs;
-    private final ExecutorService discoveryJobExecutor = Executors.newCachedThreadPool();
+    private final ExecutorService discoveryJobExecutor;
 
     private static final String successMsg = "Data processed successfully";
 
@@ -66,6 +67,33 @@ public class AnalyticsService {
         this.dataProcessingService = dataProcessingService;
         this.fileService = fileService;
         this.jobs = jobs;
+        // Use a thread factory with meaningful thread names for debugging
+        ThreadFactory threadFactory = r -> {
+            Thread t = new Thread(r);
+            t.setName("analytics-discovery-" + t.getId());
+            t.setDaemon(true); // Daemon threads won't prevent JVM shutdown
+            return t;
+        };
+        this.discoveryJobExecutor = Executors.newCachedThreadPool(threadFactory);
+    }
+
+    @PreDestroy
+    public void shutdown() {
+        logger.info("Shutting down AnalyticsService executor...");
+        discoveryJobExecutor.shutdown();
+        try {
+            if (!discoveryJobExecutor.awaitTermination(60, TimeUnit.SECONDS)) {
+                logger.warn("Executor did not terminate in time, forcing shutdown");
+                discoveryJobExecutor.shutdownNow();
+                if (!discoveryJobExecutor.awaitTermination(10, TimeUnit.SECONDS)) {
+                    logger.error("Executor did not terminate after forced shutdown");
+                }
+            }
+        } catch (InterruptedException e) {
+            logger.error("Interrupted while waiting for executor shutdown", e);
+            discoveryJobExecutor.shutdownNow();
+            Thread.currentThread().interrupt();
+        }
     }
 
     // -------------------------------------------------------------------------
