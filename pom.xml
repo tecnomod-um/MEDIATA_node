@@ -312,7 +312,7 @@
                     <version>${javafx.version}</version>
                 </dependency>
 
-                <!-- linux natives -->
+
                 <dependency>
                     <groupId>org.openjfx</groupId>
                     <artifactId>javafx-graphics</artifactId>
