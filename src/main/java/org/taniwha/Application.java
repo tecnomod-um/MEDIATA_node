@@ -39,8 +39,7 @@ public class Application {
                 Gui.main(args);
                 return;
             } catch (Throwable guiFailure) {
-                System.err.println("GUI startup failed; falling back to CLI mode.");
-                guiFailure.printStackTrace(System.err);
+                logger.error("GUI startup failed; falling back to CLI mode.", guiFailure);
                 // Continue to Spring Boot below
             }
         }
