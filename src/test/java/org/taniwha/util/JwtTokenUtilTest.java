@@ -23,7 +23,8 @@ class JwtTokenUtilTest {
 
     @Test
     void generate_parse_and_validate_token() {
-        JwtTokenUtil util = loadWith("myVerySecretKey", "3600");
+        // Use a 256-bit (32 character) secret key as required by modern JWT
+        JwtTokenUtil util = loadWith("myVerySecretKeyThatIsAtLeast32BytesLongForSecurityPurposes", "3600");
 
         String token = util.generateToken("alice");
         assertThat(token).isNotBlank();
@@ -36,7 +37,8 @@ class JwtTokenUtilTest {
 
     @Test
     void expired_token_throwsExpiredJwtException() throws InterruptedException {
-        JwtTokenUtil util = loadWith("anotherSecret", "0");
+        // Use a 256-bit (32 character) secret key as required by modern JWT
+        JwtTokenUtil util = loadWith("anotherSecretKeyThatIsAtLeast32BytesLongForSecurityPurposes", "0");
 
         String token = util.generateToken("eve");
         Thread.sleep(10);
