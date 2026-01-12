@@ -21,13 +21,13 @@ public class FileFilter {
     private static final int QUICK_SCAN_BYTES = 4 * 1024;
 
     public void validate(MultipartFile file) {
-        if (isFileInvalid(file))
-            throw new InvalidFileException("Dangerous upload: " + file.getOriginalFilename());
+        if (file == null || isFileInvalid(file))
+            throw new InvalidFileException("Dangerous upload: " + (file != null ? file.getOriginalFilename() : "null"));
     }
 
     public void validate(Path path) {
-        if (isFileInvalid(path))
-            throw new InvalidFileException("Dangerous server file: " + path);
+        if (path == null || isFileInvalid(path))
+            throw new InvalidFileException("Dangerous server file: " + (path != null ? path : "null"));
     }
 
     public boolean isFileInvalid(Path path) {
