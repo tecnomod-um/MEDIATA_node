@@ -68,9 +68,10 @@ public class AnalyticsService {
         this.fileService = fileService;
         this.jobs = jobs;
         // Use a thread factory with meaningful thread names for debugging
+        AtomicLong threadCounter = new AtomicLong(0);
         ThreadFactory threadFactory = r -> {
             Thread t = new Thread(r);
-            t.setName("analytics-discovery-" + t.getId());
+            t.setName("analytics-discovery-" + threadCounter.incrementAndGet());
             t.setDaemon(true); // Daemon threads won't prevent JVM shutdown
             return t;
         };

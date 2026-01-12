@@ -18,9 +18,9 @@ class NumberUtilExtendedTest {
 
     @Test
     void parseDouble_withCommaDecimalSeparator_shouldParse() throws ParseException {
-        // German locale uses comma as decimal separator
+        // NumberUtil supports German locale format where comma is decimal separator
+        // and dot is thousand separator (e.g., 1.234,56 = 1234.56)
         assertThat(NumberUtil.parseDouble("123,45")).isCloseTo(123.45, within(0.001));
-        // With dot as decimal, comma is treated as thousand separator in German locale
         assertThat(NumberUtil.parseDouble("1.234,56")).isCloseTo(1234.56, within(0.001));
     }
 
