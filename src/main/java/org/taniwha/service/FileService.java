@@ -257,12 +257,14 @@ public class FileService {
 
             return Files.list(dir)
                     .filter(Files::isRegularFile)
-                    .peek(p -> {
-                        try { fileFilter.validate(p); } catch (Exception ignored) {}
-                    })
                     .filter(p -> {
-                        try { fileFilter.validate(p); return true; }
-                        catch (Exception e) { return false; }
+                        try { 
+                            fileFilter.validate(p); 
+                            return true; 
+                        } catch (Exception e) { 
+                            logger.debug("File validation failed for {}: {}", p, e.getMessage());
+                            return false; 
+                        }
                     })
                     .map(path -> path.getFileName().toString())
                     .collect(Collectors.toList());

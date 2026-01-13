@@ -87,9 +87,10 @@ public class DataCleaningService {
                     case "double" -> row.put(col, Double.toString(d));
                     case "int_round" -> row.put(col, Long.toString(Math.round(d)));
                     case "int_trunc" -> row.put(col, Long.toString((long) d));
-                    default -> { /* ignore unknown */ }
+                    default -> logger.debug("Unknown numeric standardization mode: {}", mode);
                 }
-            } catch (Exception ignored) {
+            } catch (Exception e) {
+                logger.debug("Cannot parse numeric value for column {}: {}", col, raw);
             }
         }
     }
