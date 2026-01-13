@@ -260,90 +260,43 @@
             <scope>compile</scope>
         </dependency>
 
+        <!-- JavaFX dependencies with automatic platform detection -->
+        <dependency>
+            <groupId>org.openjfx</groupId>
+            <artifactId>javafx-controls</artifactId>
+            <version>${javafx.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>org.openjfx</groupId>
+            <artifactId>javafx-fxml</artifactId>
+            <version>${javafx.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>org.openjfx</groupId>
+            <artifactId>javafx-graphics</artifactId>
+            <version>${javafx.version}</version>
+        </dependency>
+
     </dependencies>
 
-    <!-- OS-specific JavaFX natives -->
+    <!-- Kept for backward compatibility but JavaFX now works by default -->
     <profiles>
         <profile>
             <id>windows</id>
-            <dependencies>
-                <dependency>
-                    <groupId>org.openjfx</groupId>
-                    <artifactId>javafx-graphics</artifactId>
-                    <version>${javafx.version}</version>
-                </dependency>
-                <dependency>
-                    <groupId>org.openjfx</groupId>
-                    <artifactId>javafx-controls</artifactId>
-                    <version>${javafx.version}</version>
-                </dependency>
-                <dependency>
-                    <groupId>org.openjfx</groupId>
-                    <artifactId>javafx-fxml</artifactId>
-                    <version>${javafx.version}</version>
-                </dependency>
-
-                <!-- windows natives -->
-                <dependency>
-                    <groupId>org.openjfx</groupId>
-                    <artifactId>javafx-graphics</artifactId>
-                    <version>${javafx.version}</version>
-                    <classifier>win</classifier>
-                </dependency>
-                <dependency>
-                    <groupId>org.openjfx</groupId>
-                    <artifactId>javafx-controls</artifactId>
-                    <version>${javafx.version}</version>
-                    <classifier>win</classifier>
-                </dependency>
-                <dependency>
-                    <groupId>org.openjfx</groupId>
-                    <artifactId>javafx-fxml</artifactId>
-                    <version>${javafx.version}</version>
-                    <classifier>win</classifier>
-                </dependency>
-            </dependencies>
+            <activation>
+                <os>
+                    <family>windows</family>
+                </os>
+            </activation>
         </profile>
 
         <profile>
             <id>linux</id>
-            <dependencies>
-                <dependency>
-                    <groupId>org.openjfx</groupId>
-                    <artifactId>javafx-graphics</artifactId>
-                    <version>${javafx.version}</version>
-                </dependency>
-                <dependency>
-                    <groupId>org.openjfx</groupId>
-                    <artifactId>javafx-controls</artifactId>
-                    <version>${javafx.version}</version>
-                </dependency>
-                <dependency>
-                    <groupId>org.openjfx</groupId>
-                    <artifactId>javafx-fxml</artifactId>
-                    <version>${javafx.version}</version>
-                </dependency>
-
-
-                <dependency>
-                    <groupId>org.openjfx</groupId>
-                    <artifactId>javafx-graphics</artifactId>
-                    <version>${javafx.version}</version>
-                    <classifier>linux</classifier>
-                </dependency>
-                <dependency>
-                    <groupId>org.openjfx</groupId>
-                    <artifactId>javafx-controls</artifactId>
-                    <version>${javafx.version}</version>
-                    <classifier>linux</classifier>
-                </dependency>
-                <dependency>
-                    <groupId>org.openjfx</groupId>
-                    <artifactId>javafx-fxml</artifactId>
-                    <version>${javafx.version}</version>
-                    <classifier>linux</classifier>
-                </dependency>
-            </dependencies>
+            <activation>
+                <os>
+                    <family>unix</family>
+                </os>
+            </activation>
         </profile>
 
     </profiles>
