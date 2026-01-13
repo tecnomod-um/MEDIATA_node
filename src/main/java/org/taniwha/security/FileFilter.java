@@ -124,6 +124,6 @@ public class FileFilter {
     }
 
     private boolean isTextExtension(String ext) {
-        return ext.equals("csv") || ext.equals("txt") || ext.equals("log");
+        return "csv".equals(ext) || "txt".equals(ext) || "log".equals(ext);
     }
 }
