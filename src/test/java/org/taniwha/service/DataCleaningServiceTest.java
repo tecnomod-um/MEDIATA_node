@@ -218,4 +218,190 @@ class DataCleaningServiceTest {
         assertThat(row.get("c")).isEqualTo("  ");
         assertThat(row.get("d")).isEqualTo("2023-06-05");
     }
+
+    @Test
+    @DisplayName("trimWhitespace removes leading and trailing spaces")
+    void trimWhitespace_removesSpaces() {
+        Map<String, String> row = new HashMap<>();
+        row.put("a", "  hello  ");
+        row.put("b", "world\t");
+        row.put("c", null);
+        
+        var result = svc.trimWhitespace(new ArrayList<>(List.of(row)));
+        assertThat(result.get(0).get("a")).isEqualTo("hello");
+        assertThat(result.get(0).get("b")).isEqualTo("world");
+        assertThat(result.get(0).get("c")).isNull();
+    }
+
+    @Test
+    @DisplayName("standardizeCase converts to uppercase")
+    void standardizeCase_uppercase() {
+        Map<String, String> row = new HashMap<>();
+        row.put("text", "Hello World");
+        
+        var result = svc.standardizeCase(new ArrayList<>(List.of(row)), "upper");
+        assertThat(result.get(0).get("text")).isEqualTo("HELLO WORLD");
+    }
+
+    @Test
+    @DisplayName("standardizeCase converts to lowercase")
+    void standardizeCase_lowercase() {
+        Map<String, String> row = new HashMap<>();
+        row.put("text", "Hello World");
+        
+        var result = svc.standardizeCase(new ArrayList<>(List.of(row)), "lower");
+        assertThat(result.get(0).get("text")).isEqualTo("hello world");
+    }
+
+    @Test
+    @DisplayName("standardizeCase converts to title case")
+    void standardizeCase_titleCase() {
+        Map<String, String> row = new HashMap<>();
+        row.put("text", "hello world test");
+        
+        var result = svc.standardizeCase(new ArrayList<>(List.of(row)), "title");
+        assertThat(result.get(0).get("text")).isEqualTo("Hello World Test");
+    }
+
+    @Test
+    @DisplayName("removeSpecialCharacters keeps alphanumeric and basic punctuation")
+    void removeSpecialCharacters_keepsAlphanumeric() {
+        Map<String, String> row = new HashMap<>();
+        row.put("text", "Hello@World#123!");
+        
+        var result = svc.removeSpecialCharacters(new ArrayList<>(List.of(row)), null);
+        assertThat(result.get(0).get("text")).isEqualTo("HelloWorld123");
+    }
+
+    @Test
+    @DisplayName("normalizeText collapses multiple spaces")
+    void normalizeText_collapsesSpaces() {
+        Map<String, String> row = new HashMap<>();
+        row.put("text", "Hello    World  \n  Test");
+        
+        var result = svc.normalizeText(new ArrayList<>(List.of(row)));
+        assertThat(result.get(0).get("text")).isEqualTo("Hello World Test");
+    }
+
+    @Test
+    @DisplayName("removeLeadingZeros strips leading zeros from numbers")
+    void removeLeadingZeros_stripsZeros() {
+        Map<String, String> row = new HashMap<>();
+        row.put("num", "00123");
+        row.put("text", "hello");
+        row.put("zero", "0");
+        
+        var result = svc.removeLeadingZeros(new ArrayList<>(List.of(row)));
+        assertThat(result.get(0).get("num")).isEqualTo("123");
+        assertThat(result.get(0).get("text")).isEqualTo("hello");
+        assertThat(result.get(0).get("zero")).isEqualTo("0");
+    }
+
+    @Test
+    @DisplayName("fillMissingValues with constant fills empty values")
+    void fillMissingValues_constant() {
+        Map<String, String> row1 = new HashMap<>();
+        row1.put("a", "");
+        row1.put("b", "value");
+        Map<String, String> row2 = new HashMap<>();
+        row2.put("a", "data");
+        row2.put("b", null);
+        
+        var result = svc.fillMissingValues(new ArrayList<>(List.of(row1, row2)), "constant", "DEFAULT", null);
+        assertThat(result.get(0).get("a")).isEqualTo("DEFAULT");
+        assertThat(result.get(0).get("b")).isEqualTo("value");
+        assertThat(result.get(1).get("a")).isEqualTo("data");
+        assertThat(result.get(1).get("b")).isEqualTo("DEFAULT");
+    }
+
+    @Test
+    @DisplayName("fillMissingValues with mean fills with average")
+    void fillMissingValues_mean() {
+        Map<String, String> row1 = new HashMap<>();
+        row1.put("num", "10");
+        Map<String, String> row2 = new HashMap<>();
+        row2.put("num", "");
+        Map<String, String> row3 = new HashMap<>();
+        row3.put("num", "20");
+        
+        var result = svc.fillMissingValues(new ArrayList<>(List.of(row1, row2, row3)), "mean", null, null);
+        assertThat(result.get(1).get("num")).isEqualTo("15.0");
+    }
+
+    @Test
+    @DisplayName("fillMissingValues with mode fills with most frequent value")
+    void fillMissingValues_mode() {
+        Map<String, String> row1 = new HashMap<>();
+        row1.put("val", "A");
+        Map<String, String> row2 = new HashMap<>();
+        row2.put("val", "");
+        Map<String, String> row3 = new HashMap<>();
+        row3.put("val", "A");
+        Map<String, String> row4 = new HashMap<>();
+        row4.put("val", "B");
+        
+        var result = svc.fillMissingValues(new ArrayList<>(List.of(row1, row2, row3, row4)), "mode", null, null);
+        assertThat(result.get(1).get("val")).isEqualTo("A");
+    }
+
+    @Test
+    @DisplayName("fillMissingValues with forward fills from previous row")
+    void fillMissingValues_forward() {
+        Map<String, String> row1 = new HashMap<>();
+        row1.put("val", "A");
+        Map<String, String> row2 = new HashMap<>();
+        row2.put("val", "");
+        Map<String, String> row3 = new HashMap<>();
+        row3.put("val", null);
+        
+        var result = svc.fillMissingValues(new ArrayList<>(List.of(row1, row2, row3)), "forward", null, null);
+        assertThat(result.get(1).get("val")).isEqualTo("A");
+        assertThat(result.get(2).get("val")).isEqualTo("A");
+    }
+
+    @Test
+    @DisplayName("fillMissingValues with backward fills from next row")
+    void fillMissingValues_backward() {
+        Map<String, String> row1 = new HashMap<>();
+        row1.put("val", "");
+        Map<String, String> row2 = new HashMap<>();
+        row2.put("val", null);
+        Map<String, String> row3 = new HashMap<>();
+        row3.put("val", "B");
+        
+        var result = svc.fillMissingValues(new ArrayList<>(List.of(row1, row2, row3)), "backward", null, null);
+        assertThat(result.get(0).get("val")).isEqualTo("B");
+        assertThat(result.get(1).get("val")).isEqualTo("B");
+    }
+
+    @Test
+    @DisplayName("standardizeCase handles empty strings gracefully")
+    void standardizeCase_emptyStrings() {
+        Map<String, String> row = new HashMap<>();
+        row.put("a", "");
+        row.put("b", null);
+        
+        var result = svc.standardizeCase(new ArrayList<>(List.of(row)), "upper");
+        assertThat(result.get(0).get("a")).isEmpty();
+        assertThat(result.get(0).get("b")).isNull();
+    }
+
+    @Test
+    @DisplayName("normalizeText handles null values")
+    void normalizeText_handlesNull() {
+        Map<String, String> row = new HashMap<>();
+        row.put("a", null);
+        row.put("b", "");
+        
+        var result = svc.normalizeText(new ArrayList<>(List.of(row)));
+        assertThat(result.get(0).get("a")).isNull();
+        assertThat(result.get(0).get("b")).isEmpty();
+    }
+
+    @Test
+    @DisplayName("fillMissingValues handles empty list")
+    void fillMissingValues_emptyList() {
+        var result = svc.fillMissingValues(new ArrayList<>(), "mean", null, null);
+        assertThat(result).isEmpty();
+    }
 }
