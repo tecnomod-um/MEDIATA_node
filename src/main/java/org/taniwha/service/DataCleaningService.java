@@ -2,6 +2,8 @@ package org.taniwha.service;
 
 import org.apache.commons.csv.CSVFormat;
 import org.apache.commons.csv.CSVPrinter;
+import org.apache.commons.text.similarity.JaroWinklerSimilarity;
+import org.apache.commons.text.similarity.LevenshteinDistance;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -181,6 +183,18 @@ public class DataCleaningService {
         if (opts.isBinData() && opts.getBinColumn() != null) {
             cleaned = binData(cleaned, opts.getBinColumn(), opts.getBinEdges(), opts.getBinLabels());
         }
+        
+        // Fuzzy matching and value merging
+        if (opts.isMergeSimilarValues() && opts.getFuzzyMatchColumns() != null) {
+            cleaned = mergeSimilarValues(cleaned, 
+                extractColumnList(opts.getFuzzyMatchColumns()),
+                Objects.toString(opts.getMergeSimilarityAlgorithm(), "levenshtein"),
+                opts.getMergeSimilarityThreshold() > 0 ? opts.getMergeSimilarityThreshold() : 0.85,
+                opts.isMergeCaseInsensitive(),
+                opts.isMergeTrimValues(),
+                Objects.toString(opts.getMergePreferredValue(), "most_frequent")
+            );
+        }
 
         if (lower.endsWith(".csv")) {
             writeCsvAtomically(file, cleaned);
@@ -208,7 +222,7 @@ public class DataCleaningService {
                 || o.isRemoveNonPrintableChars() || o.isNormalizeUnicode() || o.isSplitColumn()
                 || o.isMergeColumns() || o.isRemoveRowsWithPattern() || o.isKeepOnlyNumericRows()
                 || o.isNormalizeData() || o.isStandardizeData() || o.isBinData()
-                || o.isExtractDateComponents() || o.isRoundDecimals();
+                || o.isExtractDateComponents() || o.isRoundDecimals() || o.isMergeSimilarValues();
     }
 
     private Set<String> extractNumericColumns(DataCleaningOptionsDTO opts) {
@@ -1249,6 +1263,226 @@ public class DataCleaningService {
             }
         }
         return records;
+    }
+    
+    /**
+     * Merge similar values in specified columns using fuzzy matching.
+     * Detects values that are similar and transforms them to a single canonical value.
+     * 
+     * @param records Data records
+     * @param columns Columns to apply fuzzy matching
+     * @param algorithm Similarity algorithm: "levenshtein", "jaro_winkler", "cosine"
+     * @param threshold Similarity threshold (0.0-1.0), higher means stricter matching
+     * @param caseInsensitive Whether to ignore case when comparing
+     * @param trimValues Whether to trim whitespace before comparing
+     * @param preferredValue How to choose canonical value: "most_frequent", "shortest", "longest", "first", "alphabetical"
+     * @return Cleaned records
+     */
+    List<Map<String, String>> mergeSimilarValues(List<Map<String, String>> records, 
+                                                         Set<String> columns,
+                                                         String algorithm,
+                                                         double threshold,
+                                                         boolean caseInsensitive,
+                                                         boolean trimValues,
+                                                         String preferredValue) {
+        if (records.isEmpty() || columns.isEmpty()) return records;
+        
+        logger.debug("Merging similar values in {} columns using {} algorithm (threshold: {})", 
+                    columns.size(), algorithm, threshold);
+        
+        for (String column : columns) {
+            // Collect all unique ORIGINAL values and their normalized forms
+            Map<String, String> valueToNormalized = new HashMap<>(); // original -> normalized
+            Map<String, Integer> valueCounts = new HashMap<>(); // normalized -> count
+            List<String> originalValues = new ArrayList<>();
+            
+            for (Map<String, String> row : records) {
+                String val = row.get(column);
+                if (isNullOrEmpty(val)) continue;
+                
+                String normalized = trimValues ? val.trim() : val;
+                normalized = caseInsensitive ? normalized.toLowerCase() : normalized;
+                
+                if (!valueToNormalized.containsKey(val)) {
+                    valueToNormalized.put(val, normalized);
+                    originalValues.add(val);
+                }
+                valueCounts.merge(normalized, 1, Integer::sum);
+            }
+            
+            if (originalValues.size() < 2) continue; // Nothing to merge
+            
+            // Build similarity groups - values that should be merged together
+            Map<String, String> valueMapping = new HashMap<>(); // original -> canonical
+            Set<String> processedOriginals = new HashSet<>();
+            
+            for (int i = 0; i < originalValues.size(); i++) {
+                String origValue1 = originalValues.get(i);
+                if (processedOriginals.contains(origValue1)) continue;
+                
+                String norm1 = valueToNormalized.get(origValue1);
+                
+                // Find all similar values
+                List<String> similarGroup = new ArrayList<>();
+                similarGroup.add(origValue1);
+                
+                for (int j = i + 1; j < originalValues.size(); j++) {
+                    String origValue2 = originalValues.get(j);
+                    if (processedOriginals.contains(origValue2)) continue;
+                    
+                    String norm2 = valueToNormalized.get(origValue2);
+                    
+                    double similarity = calculateSimilarity(norm1, norm2, algorithm);
+                    
+                    if (similarity >= threshold) {
+                        similarGroup.add(origValue2);
+                    }
+                }
+                
+                // Choose canonical value from the group (using normalized counts)
+                if (similarGroup.size() > 1) {
+                    // Build counts map for original values in this group
+                    Map<String, Integer> groupCounts = new HashMap<>();
+                    for (String orig : similarGroup) {
+                        String norm = valueToNormalized.get(orig);
+                        groupCounts.put(orig, valueCounts.getOrDefault(norm, 0));
+                    }
+                    
+                    String canonical = chooseCanonicalValue(similarGroup, groupCounts, preferredValue);
+                    
+                    for (String variant : similarGroup) {
+                        valueMapping.put(variant, canonical);
+                        processedOriginals.add(variant); // Mark as processed
+                    }
+                    
+                    logger.debug("Merged {} similar values in column '{}' to canonical value: '{}'", 
+                                similarGroup.size(), column, canonical);
+                } else {
+                    processedOriginals.add(origValue1);
+                }
+            }
+            
+            // Apply mappings to all rows
+            if (!valueMapping.isEmpty()) {
+                for (Map<String, String> row : records) {
+                    String val = row.get(column);
+                    if (isNullOrEmpty(val)) continue;
+                    
+                    String canonical = valueMapping.get(val);
+                    if (canonical != null) {
+                        row.put(column, canonical);
+                    }
+                }
+            }
+        }
+        
+        return records;
+    }
+    
+    /**
+     * Calculate similarity between two strings using specified algorithm.
+     * 
+     * @param s1 First string
+     * @param s2 Second string
+     * @param algorithm "levenshtein", "jaro_winkler", or "cosine"
+     * @return Similarity score between 0.0 and 1.0
+     */
+    private double calculateSimilarity(String s1, String s2, String algorithm) {
+        if (s1 == null || s2 == null) return 0.0;
+        if (s1.equals(s2)) return 1.0;
+        
+        switch (algorithm.toLowerCase()) {
+            case "jaro_winkler":
+                JaroWinklerSimilarity jaro = new JaroWinklerSimilarity();
+                return jaro.apply(s1, s2);
+                
+            case "cosine":
+                return cosineSimilarity(s1, s2);
+                
+            case "levenshtein":
+            default:
+                // Levenshtein distance normalized to 0-1 similarity
+                LevenshteinDistance lev = new LevenshteinDistance();
+                int distance = lev.apply(s1, s2);
+                int maxLen = Math.max(s1.length(), s2.length());
+                if (maxLen == 0) return 1.0;
+                return 1.0 - ((double) distance / maxLen);
+        }
+    }
+    
+    /**
+     * Calculate cosine similarity between two strings based on character trigrams.
+     */
+    private double cosineSimilarity(String s1, String s2) {
+        Set<String> trigrams1 = getTrigrams(s1);
+        Set<String> trigrams2 = getTrigrams(s2);
+        
+        if (trigrams1.isEmpty() && trigrams2.isEmpty()) return 1.0;
+        if (trigrams1.isEmpty() || trigrams2.isEmpty()) return 0.0;
+        
+        Set<String> intersection = new HashSet<>(trigrams1);
+        intersection.retainAll(trigrams2);
+        
+        double dotProduct = intersection.size();
+        double magnitude1 = Math.sqrt(trigrams1.size());
+        double magnitude2 = Math.sqrt(trigrams2.size());
+        
+        return dotProduct / (magnitude1 * magnitude2);
+    }
+    
+    /**
+     * Extract character trigrams from a string.
+     */
+    private Set<String> getTrigrams(String s) {
+        Set<String> trigrams = new HashSet<>();
+        if (s.length() < 3) {
+            trigrams.add(s);
+            return trigrams;
+        }
+        
+        for (int i = 0; i <= s.length() - 3; i++) {
+            trigrams.add(s.substring(i, i + 3));
+        }
+        return trigrams;
+    }
+    
+    /**
+     * Choose the canonical value from a group of similar values.
+     * 
+     * @param group Group of similar values
+     * @param counts Frequency counts for each value
+     * @param strategy Strategy: "most_frequent", "shortest", "longest", "first", "alphabetical"
+     * @return Canonical value
+     */
+    private String chooseCanonicalValue(List<String> group, Map<String, Integer> counts, String strategy) {
+        if (group.isEmpty()) return "";
+        if (group.size() == 1) return group.get(0);
+        
+        switch (strategy.toLowerCase()) {
+            case "most_frequent":
+                return group.stream()
+                    .max(Comparator.comparingInt(v -> counts.getOrDefault(v, 0)))
+                    .orElse(group.get(0));
+                    
+            case "shortest":
+                return group.stream()
+                    .min(Comparator.comparingInt(String::length))
+                    .orElse(group.get(0));
+                    
+            case "longest":
+                return group.stream()
+                    .max(Comparator.comparingInt(String::length))
+                    .orElse(group.get(0));
+                    
+            case "alphabetical":
+                return group.stream()
+                    .min(String::compareTo)
+                    .orElse(group.get(0));
+                    
+            case "first":
+            default:
+                return group.get(0);
+        }
     }
 
     private boolean isNullOrEmpty(String value) {

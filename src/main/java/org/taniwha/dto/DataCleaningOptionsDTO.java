@@ -102,4 +102,13 @@ public class DataCleaningOptionsDTO {
     private String binColumn;
     private List<Double> binEdges;
     private List<String> binLabels;
+    
+    // Fuzzy matching and value merging
+    private boolean mergeSimilarValues;
+    private List<String> fuzzyMatchColumns; // Columns to apply fuzzy matching
+    private String mergeSimilarityAlgorithm; // "levenshtein", "jaro_winkler", "cosine"
+    private double mergeSimilarityThreshold; // 0.0-1.0, default 0.85 (85% similar)
+    private boolean mergeCaseInsensitive; // Ignore case when comparing
+    private boolean mergeTrimValues; // Trim whitespace before comparing
+    private String mergePreferredValue; // "most_frequent", "shortest", "longest", "first", "alphabetical"
 }
