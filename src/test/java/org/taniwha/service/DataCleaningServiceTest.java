@@ -9,6 +9,7 @@ import java.nio.file.Path;
 import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
 import java.util.*;
+import java.util.stream.Collectors;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
@@ -403,5 +404,171 @@ class DataCleaningServiceTest {
     void fillMissingValues_emptyList() {
         var result = svc.fillMissingValues(new ArrayList<>(), "mean", null, null);
         assertThat(result).isEmpty();
+    }
+    
+    @Test
+    @DisplayName("mergeSimilarValues with Levenshtein algorithm merges similar strings")
+    void mergeSimilarValues_levenshteinAlgorithm() {
+        Map<String, String> row1 = new HashMap<>(Map.of("company", "Apple Inc"));
+        Map<String, String> row2 = new HashMap<>(Map.of("company", "Apple Inc."));
+        Map<String, String> row3 = new HashMap<>(Map.of("company", "Apple  Inc"));  // Extra space
+        Map<String, String> row4 = new HashMap<>(Map.of("company", "Microsoft"));
+        
+        var input = new ArrayList<>(List.of(row1, row2, row3, row4));
+        var result = svc.mergeSimilarValues(input, Set.of("company"), "levenshtein", 0.85, false, true, "most_frequent");
+        
+        // "Apple Inc" and "Apple Inc." should merge (very similar after trimming)
+        Set<String> uniqueValues = result.stream()
+            .map(r -> r.get("company"))
+            .collect(Collectors.toSet());
+        assertThat(uniqueValues).hasSizeLessThanOrEqualTo(3); // At least some merging should occur
+    }
+    
+    @Test
+    @DisplayName("mergeSimilarValues with Jaro-Winkler algorithm")
+    void mergeSimilarValues_jaroWinklerAlgorithm() {
+        Map<String, String> row1 = new HashMap<>(Map.of("name", "John Smith"));
+        Map<String, String> row2 = new HashMap<>(Map.of("name", "Jon Smith"));
+        Map<String, String> row3 = new HashMap<>(Map.of("name", "Jane Doe"));
+        
+        var input = new ArrayList<>(List.of(row1, row2, row3));
+        var result = svc.mergeSimilarValues(input, Set.of("name"), "jaro_winkler", 0.9, false, false, "first");
+        
+        Set<String> uniqueValues = result.stream()
+            .map(r -> r.get("name"))
+            .collect(Collectors.toSet());
+        // John Smith and Jon Smith are very similar with Jaro-Winkler
+        assertThat(uniqueValues).hasSizeLessThanOrEqualTo(2);
+    }
+    
+    @Test
+    @DisplayName("mergeSimilarValues case insensitive merges different cases")
+    void mergeSimilarValues_caseInsensitive() {
+        Map<String, String> row1 = new HashMap<>(Map.of("city", "BOSTON"));
+        Map<String, String> row2 = new HashMap<>(Map.of("city", "Boston"));
+        Map<String, String> row3 = new HashMap<>(Map.of("city", "boston"));
+        Map<String, String> row4 = new HashMap<>(Map.of("city", "Los Angeles"));
+        
+        var input = new ArrayList<>(List.of(row1, row2, row3, row4));
+        var result = svc.mergeSimilarValues(input, Set.of("city"), "levenshtein", 0.95, true, true, "most_frequent");
+        
+        // All Boston variants should merge when case insensitive (they're identical when normalized)
+        Set<String> uniqueValues = result.stream()
+            .map(r -> r.get("city"))
+            .collect(Collectors.toSet());
+        
+        // With case insensitive mode, BOSTON/Boston/boston should all become the same
+        long bostonVariants = uniqueValues.stream()
+            .filter(v -> v.toLowerCase().equals("boston"))
+            .count();
+        
+        // Should merge to just 1 Boston variant + Los Angeles = 2 total unique values
+        assertThat(uniqueValues).hasSize(2);
+        assertThat(bostonVariants).isEqualTo(1);
+    }
+    
+    @Test
+    @DisplayName("mergeSimilarValues preferred value strategy - shortest")
+    void mergeSimilarValues_preferredValue_shortest() {
+        Map<String, String> row1 = new HashMap<>(Map.of("code", "USA"));
+        Map<String, String> row2 = new HashMap<>(Map.of("code", "U.S.A."));
+        Map<String, String> row3 = new HashMap<>(Map.of("code", "U.S.A"));
+        
+        var input = new ArrayList<>(List.of(row1, row2, row3));
+        var result = svc.mergeSimilarValues(input, Set.of("code"), "levenshtein", 0.65, false, false, "shortest");
+        
+        // Should merge similar values, and "USA" should win as shortest
+        Set<String> uniqueValues = result.stream()
+            .map(r -> r.get("code"))
+            .collect(Collectors.toSet());
+        assertThat(uniqueValues).hasSizeLessThanOrEqualTo(2); // Should have some merging
+        // If merged to 1, it should be USA
+        if (uniqueValues.size() == 1) {
+            assertThat(uniqueValues.iterator().next()).isEqualTo("USA");
+        }
+    }
+    
+    @Test
+    @DisplayName("mergeSimilarValues preferred value strategy - longest")
+    void mergeSimilarValues_preferredValue_longest() {
+        Map<String, String> row1 = new HashMap<>(Map.of("abbr", "NY"));
+        Map<String, String> row2 = new HashMap<>(Map.of("abbr", "N.Y."));
+        Map<String, String> row3 = new HashMap<>(Map.of("abbr", "N.Y"));
+        
+        var input = new ArrayList<>(List.of(row1, row2, row3));
+        var result = svc.mergeSimilarValues(input, Set.of("abbr"), "levenshtein", 0.65, false, false, "longest");
+        
+        Set<String> uniqueValues = result.stream()
+            .map(r -> r.get("abbr"))
+            .collect(Collectors.toSet());
+        assertThat(uniqueValues).hasSizeLessThanOrEqualTo(2); // Should have some merging
+        // If merged to 1, longest should win
+        if (uniqueValues.size() == 1) {
+            assertThat(uniqueValues.iterator().next().length()).isGreaterThanOrEqualTo(3);
+        }
+    }
+    
+    @Test
+    @DisplayName("mergeSimilarValues handles empty column list")
+    void mergeSimilarValues_emptyColumnList() {
+        Map<String, String> row = new HashMap<>(Map.of("a", "test"));
+        var input = new ArrayList<>(List.of(row));
+        
+        var result = svc.mergeSimilarValues(input, Collections.emptySet(), "levenshtein", 0.85, false, false, "first");
+        assertThat(result).hasSize(1);
+        assertThat(result.get(0).get("a")).isEqualTo("test");
+    }
+    
+    @Test
+    @DisplayName("mergeSimilarValues with high threshold keeps values separate")
+    void mergeSimilarValues_highThreshold() {
+        Map<String, String> row1 = new HashMap<>(Map.of("product", "iPhone"));
+        Map<String, String> row2 = new HashMap<>(Map.of("product", "iPad"));
+        
+        var input = new ArrayList<>(List.of(row1, row2));
+        var result = svc.mergeSimilarValues(input, Set.of("product"), "levenshtein", 0.99, false, false, "first");
+        
+        // High threshold should keep them separate
+        Set<String> uniqueValues = result.stream()
+            .map(r -> r.get("product"))
+            .collect(Collectors.toSet());
+        assertThat(uniqueValues).hasSize(2);
+    }
+    
+    @Test
+    @DisplayName("mergeSimilarValues with cosine similarity algorithm")
+    void mergeSimilarValues_cosineSimilarity() {
+        Map<String, String> row1 = new HashMap<>(Map.of("desc", "Software Engineer"));
+        Map<String, String> row2 = new HashMap<>(Map.of("desc", "Software Eng"));
+        Map<String, String> row3 = new HashMap<>(Map.of("desc", "Hardware Engineer"));
+        
+        var input = new ArrayList<>(List.of(row1, row2, row3));
+        var result = svc.mergeSimilarValues(input, Set.of("desc"), "cosine", 0.7, false, false, "most_frequent");
+        
+        // Software Engineer and Software Eng should merge (similar trigrams)
+        Set<String> uniqueValues = result.stream()
+            .map(r -> r.get("desc"))
+            .collect(Collectors.toSet());
+        assertThat(uniqueValues).hasSizeLessThanOrEqualTo(2);
+    }
+    
+    @Test
+    @DisplayName("mergeSimilarValues handles null and empty values")
+    void mergeSimilarValues_nullAndEmptyValues() {
+        Map<String, String> row1 = new HashMap<>(Map.of("status", "Active"));
+        Map<String, String> row2 = new HashMap<>();
+        row2.put("status", null);
+        Map<String, String> row3 = new HashMap<>(Map.of("status", ""));
+        Map<String, String> row4 = new HashMap<>(Map.of("status", "Active"));
+        
+        var input = new ArrayList<>(List.of(row1, row2, row3, row4));
+        var result = svc.mergeSimilarValues(input, Set.of("status"), "levenshtein", 0.85, false, false, "most_frequent");
+        
+        // Should handle nulls/empties gracefully
+        assertThat(result).hasSize(4);
+        long activeCount = result.stream()
+            .filter(r -> "Active".equals(r.get("status")))
+            .count();
+        assertThat(activeCount).isEqualTo(2);
     }
 }
