@@ -419,7 +419,7 @@ public class FileService {
     }
 
     public void cleanFilePlaceholder(FileCategory category, String name) {
-        // Clean up placeholder file for the given category and name
+        // TODO
         resolveSafeExistingFile(category, name);
     }
 }
