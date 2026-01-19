@@ -23,7 +23,7 @@ This component is deployed on-premise at each clinical site. It hosts and proces
 
 ---
 
-## 🚀 Deployment Instructions
+## Deployment
 
 ### Prerequisites
 
@@ -68,7 +68,7 @@ sudo docker run -d \
 
 ---
 
-## 📁 Directory Structure
+## Directory Structure
 
 The Docker container creates and mounts the following directories in `/taniwha`:
 
@@ -88,13 +88,6 @@ The Docker container creates and mounts the following directories in `/taniwha`:
 
 ---
 
-## 🧪 Development
-
-### Run Tests
-```bash
-mvn test
-```
-
 ### Run Locally (without Docker)
 ```bash
 mvn clean package
@@ -103,22 +96,7 @@ java -jar target/TANIWHA_Backend_node.jar
 
 ---
 
-## 📊 Container Management
-
-```bash
-# View running containers
-sudo docker ps
-
-# View logs
-sudo docker logs [container-id]
-
-# Stop container
-sudo docker stop [container-id]
-```
-
----
-
-## 📚 Additional Resources
+## Additional Resources
 
 - **Full Platform Documentation:** [MEDIATA_project](https://github.com/tecnomod-um/MEDIATA_project)
 - **API Documentation:** See `DOCUMENTATION.md`
@@ -127,21 +105,6 @@ sudo docker stop [container-id]
 
 ---
 
-## 📄 License
+## License
 
 This project is developed under the [MIT License](LICENSE.md).
-
----
-
-## 🤝 Contributing
-
-Contributions are welcome! Please:
-1. Fork the repository
-2. Create a feature branch
-3. Make your changes with tests
-4. Submit a pull request
-
-Ensure all tests pass before submitting:
-```bash
-mvn clean test
-```
