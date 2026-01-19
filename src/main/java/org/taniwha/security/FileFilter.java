@@ -49,7 +49,11 @@ public class FileFilter {
                 try (BufferedReader reader = Files.newBufferedReader(path, StandardCharsets.UTF_8)) {
                     return scanAsText(reader, path.toString());
                 }
-            } else if ("xlsx".equals(ext)) return scanXlsxHead(Files.newInputStream(path), path.toString());
+            } else if ("xlsx".equals(ext)) {
+                try (InputStream in = Files.newInputStream(path)) {
+                    return scanXlsxHead(in, path.toString());
+                }
+            }
 
             return false;
         } catch (IOException e) {
