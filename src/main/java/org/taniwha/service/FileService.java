@@ -30,16 +30,12 @@ public class FileService {
     private static final Logger logger = LoggerFactory.getLogger(FileService.class);
 
     private final FileFilter fileFilter;
-
-    // Keep your original String folder fields for compatibility with existing methods
     private final String datasetsFolder;
     @Getter
     private final String mappedDatasetsFolder;
     private final String fhirMappingsFolder;
     private final String elementsFolder;
     private final String metadataFolder;
-
-    // Also keep Path forms for the explorer methods
     private final Path datasetsDir;
     private final Path mappedDatasetsDir;
     private final Path fhirMappingsDir;
@@ -49,19 +45,12 @@ public class FileService {
     public FileService(FileFilter fileFilter, @Value("${app.path}") String basePath) {
         this.fileFilter = fileFilter;
 
-        // Original behavior preserved (strings)
         this.datasetsFolder = basePath + "/datasets";
-
-        // NOTE: Your original code sets mappedDatasetsFolder = datasetsFolder.
-        // If that was intentional, keep it. If not, change to basePath + "/mapped_datasets".
-        // I'll keep your behavior exactly:
         this.mappedDatasetsFolder = this.datasetsFolder;
-
         this.fhirMappingsFolder = basePath + "/fhir_mappings";
         this.elementsFolder = basePath + "/dataset_elements";
         this.metadataFolder = basePath + "/dataset_metadata";
 
-        // Path normalized versions used by explorer operations
         Path base = Paths.get(basePath).normalize();
         this.datasetsDir = base.resolve("datasets").normalize();
         this.mappedDatasetsDir = this.datasetsDir; // keep your current behavior
@@ -69,10 +58,6 @@ public class FileService {
         this.elementsDir = base.resolve("dataset_elements").normalize();
         this.metadataDir = base.resolve("dataset_metadata").normalize();
     }
-
-    // =========================
-    // Existing functionality (kept)
-    // =========================
 
     public NodeMetadata parseNodeMetadata() {
         try {
@@ -85,7 +70,6 @@ public class FileService {
             String firstFileName = files.get(0);
             Path metaPath = Paths.get(metadataFolder, firstFileName);
 
-            // keep your filter usage
             fileFilter.validate(metaPath);
 
             String rdfContent = Files.readString(metaPath);
@@ -231,13 +215,12 @@ public class FileService {
 
     public String saveDatasetElements(String fileName, String csvData) {
         try {
-            String sanitizedFileName = fileName.replaceAll("[^a-zA-Z0-9._-]", "_");
+            String sanitizedFileName = sanitizeFileName(fileName);
             sanitizedFileName = sanitizedFileName.replaceAll("(?i)\\.(csv|xlsx)$", "");
             String finalFileName = sanitizedFileName + "_elements.csv";
 
             String filePath = Paths.get(elementsFolder, finalFileName).toString();
 
-            // validate output path too
             Path outPath = Paths.get(filePath).normalize();
             fileFilter.validate(outPath);
 
@@ -258,12 +241,12 @@ public class FileService {
             return Files.list(dir)
                     .filter(Files::isRegularFile)
                     .filter(p -> {
-                        try { 
-                            fileFilter.validate(p); 
-                            return true; 
-                        } catch (Exception e) { 
+                        try {
+                            fileFilter.validate(p);
+                            return true;
+                        } catch (Exception e) {
                             logger.debug("File validation failed for {}: {}", p, e.getMessage());
-                            return false; 
+                            return false;
                         }
                     })
                     .map(path -> path.getFileName().toString())
@@ -277,8 +260,7 @@ public class FileService {
     private String getStringValue(Resource subject, String propertyUri) {
         Property prop = ResourceFactory.createProperty(propertyUri);
         Statement st = subject.getProperty(prop);
-        if (st != null && st.getObject().isLiteral())
-            return st.getObject().asLiteral().getString();
+        if (st != null && st.getObject().isLiteral()) return st.getObject().asLiteral().getString();
         return null;
     }
 
@@ -298,9 +280,7 @@ public class FileService {
     private Resource getResourceObject(Resource subject, String propertyUri) {
         Property prop = ResourceFactory.createProperty(propertyUri);
         Statement st = subject.getProperty(prop);
-        if (st != null && st.getObject().isResource()) {
-            return st.getObject().asResource();
-        }
+        if (st != null && st.getObject().isResource()) return st.getObject().asResource();
         return null;
     }
 
@@ -308,8 +288,6 @@ public class FileService {
         Resource r = getResourceObject(subject, propertyUri);
         return (r != null) ? r.getURI() : null;
     }
-
-    // explorer
 
     private Path dirFor(FileCategory category) {
         return switch (category) {
@@ -321,8 +299,12 @@ public class FileService {
         };
     }
 
-    private Path resolveSafe(FileCategory category, String fileName) {
-        String safeName = fileName.replace("\\", "/");
+    public Path resolveExistingFilePath(FileCategory category, String fileName) {
+        return resolveSafeExistingFile(category, fileName);
+    }
+    
+    private Path resolveSafePath(FileCategory category, String fileName) {
+        String safeName = String.valueOf(fileName).replace("\\", "/");
         if (safeName.contains("/")) {
             throw new IllegalArgumentException("Invalid file name");
         }
@@ -334,8 +316,25 @@ public class FileService {
             throw new IllegalArgumentException("Invalid path");
         }
 
-        fileFilter.validate(resolved);
         return resolved;
+    }
+
+    private Path resolveSafeExistingFile(FileCategory category, String fileName) {
+        Path p = resolveSafePath(category, fileName);
+
+        fileFilter.validate(p);
+
+        if (!Files.exists(p)) {
+            throw new IllegalArgumentException("File does not exist");
+        }
+        if (!Files.isRegularFile(p)) {
+            throw new IllegalArgumentException("Not a file");
+        }
+        return p;
+    }
+
+    private String sanitizeFileName(String name) {
+        return String.valueOf(name).replaceAll("[^a-zA-Z0-9._-]", "_");
     }
 
     public List<FileInfoDto> listFilesWithInfo(FileCategory category) {
@@ -383,13 +382,18 @@ public class FileService {
     }
 
     public void renameFile(FileCategory category, String from, String to) {
-        Path src = resolveSafe(category, from);
+        Path src = resolveSafeExistingFile(category, from);
 
-        String sanitizedTo = to.replaceAll("[^a-zA-Z0-9._-]", "_");
-        Path dst = resolveSafe(category, sanitizedTo);
+        String sanitizedTo = sanitizeFileName(to).trim();
+        if (sanitizedTo.isEmpty()) {
+            throw new IllegalArgumentException("Invalid destination name");
+        }
+
+        if (sanitizedTo.equals(from)) return;
+
+        Path dst = resolveSafePath(category, sanitizedTo);
 
         try {
-            if (!Files.exists(src)) throw new IllegalArgumentException("Source does not exist");
             if (Files.exists(dst)) throw new IllegalArgumentException("Destination already exists");
 
             try {
@@ -403,17 +407,19 @@ public class FileService {
     }
 
     public void deleteFile(FileCategory category, String name) {
-        Path p = resolveSafe(category, name);
+        Path p = resolveSafePath(category, name);
         try {
-            Files.deleteIfExists(p);
+            if (!Files.exists(p))
+                return;
+            fileFilter.validate(p);
+            Files.delete(p);
         } catch (IOException e) {
             throw new RuntimeException("Delete failed", e);
         }
     }
 
     public void cleanFilePlaceholder(FileCategory category, String name) {
-        Path p = resolveSafe(category, name);
-        if (!Files.exists(p)) throw new IllegalArgumentException("File does not exist");
-        // placeholder: no-op
+        // TODO
+        resolveSafeExistingFile(category, name);
     }
 }

@@ -137,14 +137,4 @@ public class FileController {
         fileService.deleteFile(category, name);
         return ResponseEntity.ok().build();
     }
-
-    @PostMapping("/clean")
-    public ResponseEntity<Void> cleanFile(
-            @RequestParam FileCategory category,
-            @RequestParam String name
-    ) {
-        logger.debug("Clean (placeholder) file category={} name={}", category, name);
-        fileService.cleanFilePlaceholder(category, name);
-        return ResponseEntity.ok().build();
-    }
 }
