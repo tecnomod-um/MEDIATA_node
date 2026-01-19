@@ -147,7 +147,11 @@ public class DataCleaningService {
             }
 
         } catch (IOException e) {
-            try { Files.deleteIfExists(tmp); } catch (IOException ignored) {}
+            try { 
+                Files.deleteIfExists(tmp); 
+            } catch (IOException cleanupEx) {
+                logger.debug("Failed to delete temp file during cleanup: {}", tmp, cleanupEx);
+            }
             throw new RuntimeException("Failed to write cleaned CSV", e);
         }
 
@@ -158,7 +162,11 @@ public class DataCleaningService {
                 Files.move(tmp, target, StandardCopyOption.REPLACE_EXISTING);
             }
         } catch (IOException e) {
-            try { Files.deleteIfExists(tmp); } catch (IOException ignored) {}
+            try { 
+                Files.deleteIfExists(tmp); 
+            } catch (IOException cleanupEx) {
+                logger.debug("Failed to delete temp file during cleanup: {}", tmp, cleanupEx);
+            }
             throw new RuntimeException("Failed to replace original file with cleaned version", e);
         }
     }

@@ -3,12 +3,17 @@ package org.taniwha.service;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.taniwha.security.FileFilter;
 
+import java.nio.file.Path;
 import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
 import java.util.*;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.doNothing;
+import static org.mockito.Mockito.mock;
 
 class DataCleaningServiceTest {
 
@@ -16,7 +21,11 @@ class DataCleaningServiceTest {
 
     @BeforeEach
     void setUp() {
-        svc = new DataCleaningService();
+        FileFilter fileFilter = mock(FileFilter.class);
+        doNothing().when(fileFilter).validate(any(Path.class));
+        FileService fileService = mock(FileService.class);
+        DataProcessingService dataProcessingService = mock(DataProcessingService.class);
+        svc = new DataCleaningService(fileService, dataProcessingService);
     }
 
     @Test
