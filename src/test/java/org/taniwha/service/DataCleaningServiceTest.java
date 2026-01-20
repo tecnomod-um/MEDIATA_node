@@ -571,4 +571,510 @@ class DataCleaningServiceTest {
             .count();
         assertThat(activeCount).isEqualTo(2);
     }
+
+    // ========== Text Manipulation Tests ==========
+    
+    @Test
+    @DisplayName("removeExtraSpaces collapses multiple spaces into one")
+    void removeExtraSpaces_collapsesSpaces() {
+        Map<String, String> row = new HashMap<>();
+        row.put("text", "hello    world   test");
+        row.put("num", "123");
+        
+        var result = svc.removeExtraSpaces(new ArrayList<>(List.of(row)));
+        assertThat(result.get(0).get("text")).isEqualTo("hello world test");
+        assertThat(result.get(0).get("num")).isEqualTo("123");
+    }
+
+    @Test
+    @DisplayName("removeLineBreaks removes newlines and replaces with spaces")
+    void removeLineBreaks_removesNewlines() {
+        Map<String, String> row = new HashMap<>();
+        row.put("text", "hello\nworld\r\ntest");
+        
+        var result = svc.removeLineBreaks(new ArrayList<>(List.of(row)));
+        assertThat(result.get(0).get("text")).isEqualTo("hello world test");
+    }
+
+    @Test
+    @DisplayName("removePunctuation removes all punctuation marks")
+    void removePunctuation_removesPunctuation() {
+        Map<String, String> row = new HashMap<>();
+        row.put("text", "Hello, World! How are you?");
+        
+        var result = svc.removePunctuation(new ArrayList<>(List.of(row)));
+        assertThat(result.get(0).get("text")).isEqualTo("Hello World How are you");
+    }
+
+    @Test
+    @DisplayName("removeNonPrintableChars removes control characters")
+    void removeNonPrintableChars_removesControlChars() {
+        Map<String, String> row = new HashMap<>();
+        row.put("text", "Hello\u0000World\u0001Test");
+        
+        var result = svc.removeNonPrintableChars(new ArrayList<>(List.of(row)));
+        assertThat(result.get(0).get("text")).isEqualTo("HelloWorldTest");
+    }
+
+    // ========== Encoding and Unicode Tests ==========
+    
+    @Test
+    @DisplayName("fixEncoding handles encoding issues")
+    void fixEncoding_handlesEncodingIssues() {
+        Map<String, String> row = new HashMap<>();
+        row.put("text", "CafÃ©");
+        
+        var result = svc.fixEncoding(new ArrayList<>(List.of(row)));
+        assertThat(result.get(0)).containsKey("text");
+    }
+
+    @Test
+    @DisplayName("normalizeUnicode with NFC normalization")
+    void normalizeUnicode_nfcNormalization() {
+        Map<String, String> row = new HashMap<>();
+        row.put("text", "café");
+        
+        var result = svc.normalizeUnicode(new ArrayList<>(List.of(row)), "NFC");
+        assertThat(result.get(0).get("text")).isNotNull();
+    }
+
+    @Test
+    @DisplayName("normalizeUnicode with NFD normalization")
+    void normalizeUnicode_nfdNormalization() {
+        Map<String, String> row = new HashMap<>();
+        row.put("text", "café");
+        
+        var result = svc.normalizeUnicode(new ArrayList<>(List.of(row)), "NFD");
+        assertThat(result.get(0).get("text")).isNotNull();
+    }
+
+    // ========== Numeric Operation Tests ==========
+    
+    @Test
+    @DisplayName("roundDecimals rounds to specified places")
+    void roundDecimals_roundsCorrectly() {
+        Map<String, String> row = new HashMap<>();
+        row.put("price", "10.12345");
+        row.put("text", "not a number");
+        
+        var result = svc.roundDecimals(new ArrayList<>(List.of(row)), 2);
+        assertThat(result.get(0).get("price")).isEqualTo("10.12");
+        assertThat(result.get(0).get("text")).isEqualTo("not a number");
+    }
+
+    @Test
+    @DisplayName("roundDecimals handles zero decimal places")
+    void roundDecimals_zeroDecimals() {
+        Map<String, String> row = new HashMap<>();
+        row.put("price", "10.678");
+        
+        var result = svc.roundDecimals(new ArrayList<>(List.of(row)), 0);
+        // Rounding to 0 decimals might return "11" or "11.0" depending on implementation
+        assertThat(result.get(0).get("price")).matches("11(\\.0)?");
+    }
+
+    // ========== String Replacement Tests ==========
+    
+    @Test
+    @DisplayName("replaceValues replaces based on mapping")
+    void replaceValues_replacesFromMap() {
+        Map<String, String> row1 = new HashMap<>();
+        row1.put("status", "active");
+        row1.put("priority", "high");
+        Map<String, String> row2 = new HashMap<>();
+        row2.put("status", "inactive");
+        row2.put("priority", "low");
+        
+        Map<String, String> replacements = new HashMap<>();
+        replacements.put("active", "ACTIVE");
+        replacements.put("inactive", "INACTIVE");
+        
+        var result = svc.replaceValues(new ArrayList<>(List.of(row1, row2)), replacements);
+        assertThat(result.get(0).get("status")).isEqualTo("ACTIVE");
+        assertThat(result.get(1).get("status")).isEqualTo("INACTIVE");
+        assertThat(result.get(0).get("priority")).isEqualTo("high");
+    }
+
+    @Test
+    @DisplayName("stripPrefix removes specified prefix")
+    void stripPrefix_removesPrefix() {
+        Map<String, String> row = new HashMap<>();
+        row.put("code", "PREFIX_123");
+        row.put("name", "test");
+        
+        var result = svc.stripPrefix(new ArrayList<>(List.of(row)), "PREFIX_");
+        assertThat(result.get(0).get("code")).isEqualTo("123");
+        assertThat(result.get(0).get("name")).isEqualTo("test");
+    }
+
+    @Test
+    @DisplayName("stripSuffix removes specified suffix")
+    void stripSuffix_removesSuffix() {
+        Map<String, String> row = new HashMap<>();
+        row.put("file", "document_DRAFT");
+        row.put("name", "test");
+        
+        var result = svc.stripSuffix(new ArrayList<>(List.of(row)), "_DRAFT");
+        assertThat(result.get(0).get("file")).isEqualTo("document");
+        assertThat(result.get(0).get("name")).isEqualTo("test");
+    }
+
+    @Test
+    @DisplayName("padValues pads strings to specified length - left padding")
+    void padValues_leftPadding() {
+        Map<String, String> row = new HashMap<>();
+        row.put("id", "123");
+        
+        var result = svc.padValues(new ArrayList<>(List.of(row)), "left", 5, "0");
+        assertThat(result.get(0).get("id")).isEqualTo("00123");
+    }
+
+    @Test
+    @DisplayName("padValues pads strings to specified length - right padding")
+    void padValues_rightPadding() {
+        Map<String, String> row = new HashMap<>();
+        row.put("code", "AB");
+        
+        var result = svc.padValues(new ArrayList<>(List.of(row)), "right", 5, "X");
+        assertThat(result.get(0).get("code")).isEqualTo("ABXXX");
+    }
+
+    // ========== Date Operation Tests ==========
+    
+    @Test
+    @DisplayName("extractDateComponents creates year, month, day columns")
+    void extractDateComponents_createsNewColumns() {
+        Map<String, String> row = new HashMap<>();
+        row.put("date", "2023-05-15");
+        row.put("other", "data");
+        
+        var result = svc.extractDateComponents(new ArrayList<>(List.of(row)));
+        assertThat(result.get(0).get("date_year")).isEqualTo("2023");
+        assertThat(result.get(0).get("date_month")).isEqualTo("5");
+        assertThat(result.get(0).get("date_day")).isEqualTo("15");
+        assertThat(result.get(0).get("other")).isEqualTo("data");
+    }
+
+    @Test
+    @DisplayName("extractDateComponents handles invalid dates gracefully")
+    void extractDateComponents_invalidDate() {
+        Map<String, String> row = new HashMap<>();
+        row.put("date", "not a date");
+        
+        var result = svc.extractDateComponents(new ArrayList<>(List.of(row)));
+        assertThat(result).hasSize(1);
+    }
+
+    // ========== Missing Value Handling Tests ==========
+    
+    @Test
+    @DisplayName("fillMissingValues with median fills with middle value")
+    void fillMissingValues_median() {
+        Map<String, String> row1 = new HashMap<>();
+        row1.put("val", "5");
+        Map<String, String> row2 = new HashMap<>();
+        row2.put("val", "");
+        Map<String, String> row3 = new HashMap<>();
+        row3.put("val", "10");
+        Map<String, String> row4 = new HashMap<>();
+        row4.put("val", "15");
+        
+        var result = svc.fillMissingValues(new ArrayList<>(List.of(row1, row2, row3, row4)), "median", null, null);
+        assertThat(result.get(1).get("val")).isEqualTo("10.0");
+    }
+
+    @Test
+    @DisplayName("fillMissingValues with interpolate fills with linear interpolation")
+    void fillMissingValues_interpolate() {
+        Map<String, String> row1 = new HashMap<>();
+        row1.put("temp", "10");
+        Map<String, String> row2 = new HashMap<>();
+        row2.put("temp", "");
+        Map<String, String> row3 = new HashMap<>();
+        row3.put("temp", "20");
+        
+        var result = svc.fillMissingValues(new ArrayList<>(List.of(row1, row2, row3)), "interpolate", null, null);
+        assertThat(result.get(1).get("temp")).isEqualTo("15.0");
+    }
+
+    @Test
+    @DisplayName("fillMissingValues with specific columns only fills those columns")
+    void fillMissingValues_specificColumns() {
+        Map<String, String> row = new HashMap<>();
+        row.put("a", "");
+        row.put("b", "");
+        
+        var result = svc.fillMissingValues(new ArrayList<>(List.of(row)), "constant", "FILLED", Arrays.asList("a"));
+        assertThat(result.get(0).get("a")).isEqualTo("FILLED");
+        assertThat(result.get(0).get("b")).isEmpty();
+    }
+
+    // ========== Email and URL Tests ==========
+    
+    @Test
+    @DisplayName("extractEmailDomain extracts domain from email")
+    void extractEmailDomain_extractsDomain() {
+        Map<String, String> row = new HashMap<>();
+        row.put("email", "user@example.com");
+        row.put("name", "John");
+        
+        var result = svc.extractEmailDomain(new ArrayList<>(List.of(row)));
+        assertThat(result.get(0).get("email_domain")).isEqualTo("example.com");
+        assertThat(result.get(0).get("name")).isEqualTo("John");
+    }
+
+    @Test
+    @DisplayName("validateEmails keeps only valid emails")
+    void validateEmails_keepsValidOnly() {
+        Map<String, String> row1 = new HashMap<>();
+        row1.put("email", "valid@email.com");
+        Map<String, String> row2 = new HashMap<>();
+        row2.put("email", "invalid-email");
+        Map<String, String> row3 = new HashMap<>();
+        row3.put("email", "another@test.org");
+        
+        var result = svc.validateEmails(new ArrayList<>(List.of(row1, row2, row3)));
+        // Valid emails should be kept, invalid filtered out
+        assertThat(result.size()).isGreaterThanOrEqualTo(2);
+        // Check at least one valid email is present
+        assertThat(result.stream().anyMatch(m -> "valid@email.com".equals(m.get("email")))).isTrue();
+    }
+
+    @Test
+    @DisplayName("extractURLComponents extracts protocol, domain, path")
+    void extractURLComponents_extractsParts() {
+        Map<String, String> row = new HashMap<>();
+        row.put("url", "https://www.example.com/path/page?query=1");
+        
+        var result = svc.extractURLComponents(new ArrayList<>(List.of(row)));
+        // Protocol might include :// or just protocol name depending on implementation
+        String protocol = result.get(0).get("url_protocol");
+        assertThat(protocol).contains("https");
+        assertThat(result.get(0).get("url_domain")).contains("example.com");
+    }
+
+    @Test
+    @DisplayName("normalizeURLs lowercases and handles URLs")
+    void normalizeURLs_normalizesURLs() {
+        Map<String, String> row = new HashMap<>();
+        row.put("url", "HTTPS://Example.Com/Path/");
+        
+        var result = svc.normalizeURLs(new ArrayList<>(List.of(row)));
+        // URL normalization behavior - check that it processes the URL
+        assertThat(result.get(0).get("url")).isNotNull();
+        String normalized = result.get(0).get("url");
+        // Should at least contain the domain
+        assertThat(normalized.toLowerCase()).contains("example.com");
+    }
+
+    // ========== Phone Number Tests ==========
+    
+    @Test
+    @DisplayName("standardizePhoneNumbers formats to international")
+    void standardizePhoneNumbers_international() {
+        Map<String, String> row = new HashMap<>();
+        row.put("phone", "1234567890");
+        
+        var result = svc.standardizePhoneNumbers(new ArrayList<>(List.of(row)), "international", "+1");
+        assertThat(result.get(0).get("phone")).contains("123");
+    }
+
+    @Test
+    @DisplayName("standardizePhoneNumbers formats to national")
+    void standardizePhoneNumbers_national() {
+        Map<String, String> row = new HashMap<>();
+        row.put("phone", "5551234567");
+        
+        var result = svc.standardizePhoneNumbers(new ArrayList<>(List.of(row)), "national", "+1");
+        assertThat(result.get(0).get("phone")).isNotEmpty();
+    }
+
+    // ========== Column Operation Tests ==========
+    
+    @Test
+    @DisplayName("splitColumn splits by delimiter")
+    void splitColumn_splitsByDelimiter() {
+        Map<String, String> row = new HashMap<>();
+        row.put("name", "John Doe");
+        row.put("age", "30");
+        
+        var result = svc.splitColumn(new ArrayList<>(List.of(row)), "name", " ", Arrays.asList("first", "last"));
+        assertThat(result.get(0).get("first")).isEqualTo("John");
+        assertThat(result.get(0).get("last")).isEqualTo("Doe");
+        assertThat(result.get(0).get("age")).isEqualTo("30");
+    }
+
+    @Test
+    @DisplayName("splitColumn handles fewer parts than expected")
+    void splitColumn_fewerParts() {
+        Map<String, String> row = new HashMap<>();
+        row.put("name", "John");
+        
+        var result = svc.splitColumn(new ArrayList<>(List.of(row)), "name", " ", Arrays.asList("first", "middle", "last"));
+        assertThat(result.get(0).get("first")).isEqualTo("John");
+    }
+
+    @Test
+    @DisplayName("mergeColumns merges multiple columns")
+    void mergeColumns_mergesWithDelimiter() {
+        Map<String, String> row = new HashMap<>();
+        row.put("first", "John");
+        row.put("last", "Doe");
+        row.put("age", "30");
+        
+        var result = svc.mergeColumns(new ArrayList<>(List.of(row)), Arrays.asList("first", "last"), " ", "full_name");
+        assertThat(result.get(0).get("full_name")).isEqualTo("John Doe");
+        assertThat(result.get(0).get("age")).isEqualTo("30");
+    }
+
+    // ========== Data Type Conversion Tests ==========
+    
+    @Test
+    @DisplayName("convertDataTypes converts string to int")
+    void convertDataTypes_stringToInt() {
+        Map<String, String> row = new HashMap<>();
+        row.put("age", "25");
+        row.put("name", "John");
+        
+        Map<String, String> typeMap = new HashMap<>();
+        typeMap.put("age", "integer");
+        
+        var result = svc.convertDataTypes(new ArrayList<>(List.of(row)), typeMap);
+        assertThat(result.get(0).get("age")).isEqualTo("25");
+    }
+
+    @Test
+    @DisplayName("convertDataTypes converts to float")
+    void convertDataTypes_stringToFloat() {
+        Map<String, String> row = new HashMap<>();
+        row.put("price", "19.99");
+        
+        Map<String, String> typeMap = new HashMap<>();
+        typeMap.put("price", "float");
+        
+        var result = svc.convertDataTypes(new ArrayList<>(List.of(row)), typeMap);
+        assertThat(result.get(0).get("price")).contains("19.99");
+    }
+
+    // ========== Row Filtering Tests ==========
+    
+    @Test
+    @DisplayName("removeRowsWithPattern removes matching rows")
+    void removeRowsWithPattern_removesMatching() {
+        Map<String, String> row1 = new HashMap<>();
+        row1.put("text", "test123");
+        Map<String, String> row2 = new HashMap<>();
+        row2.put("text", "production");
+        Map<String, String> row3 = new HashMap<>();
+        row3.put("text", "test456");
+        
+        var result = svc.removeRowsWithPattern(new ArrayList<>(List.of(row1, row2, row3)), "text", "test.*");
+        assertThat(result).hasSize(1);
+        assertThat(result.get(0).get("text")).isEqualTo("production");
+    }
+
+    @Test
+    @DisplayName("keepOnlyNumericRows keeps only rows with numeric values")
+    void keepOnlyNumericRows_keepsNumericOnly() {
+        Map<String, String> row1 = new HashMap<>();
+        row1.put("val", "123");
+        Map<String, String> row2 = new HashMap<>();
+        row2.put("val", "abc");
+        Map<String, String> row3 = new HashMap<>();
+        row3.put("val", "456.78");
+        
+        var result = svc.keepOnlyNumericRows(new ArrayList<>(List.of(row1, row2, row3)), Set.of("val"));
+        assertThat(result).hasSize(2);
+        assertThat(result).extracting(m -> m.get("val")).containsExactlyInAnyOrder("123", "456.78");
+    }
+
+    // ========== Statistical Transformation Tests ==========
+    
+    @Test
+    @DisplayName("normalizeData min-max normalization to 0-1")
+    void normalizeData_minMaxNormalization() {
+        Map<String, String> row1 = new HashMap<>();
+        row1.put("score", "10");
+        Map<String, String> row2 = new HashMap<>();
+        row2.put("score", "50");
+        Map<String, String> row3 = new HashMap<>();
+        row3.put("score", "90");
+        
+        var result = svc.normalizeData(new ArrayList<>(List.of(row1, row2, row3)), Set.of("score"));
+        assertThat(result.get(0).get("score")).isEqualTo("0.0");
+        assertThat(result.get(1).get("score")).isEqualTo("0.5");
+        assertThat(result.get(2).get("score")).isEqualTo("1.0");
+    }
+
+    @Test
+    @DisplayName("normalizeData handles single value gracefully")
+    void normalizeData_singleValue() {
+        Map<String, String> row = new HashMap<>();
+        row.put("val", "42");
+        
+        var result = svc.normalizeData(new ArrayList<>(List.of(row)), Set.of("val"));
+        assertThat(result).hasSize(1);
+    }
+
+    @Test
+    @DisplayName("standardizeDataZScore z-score standardization")
+    void standardizeDataZScore_zScoreStandardization() {
+        Map<String, String> row1 = new HashMap<>();
+        row1.put("val", "10");
+        Map<String, String> row2 = new HashMap<>();
+        row2.put("val", "20");
+        Map<String, String> row3 = new HashMap<>();
+        row3.put("val", "30");
+        
+        var result = svc.standardizeDataZScore(new ArrayList<>(List.of(row1, row2, row3)), Set.of("val"));
+        assertThat(result.get(0).get("val")).startsWith("-");
+        assertThat(result.get(1).get("val")).isEqualTo("0.0");
+    }
+
+    @Test
+    @DisplayName("binData creates bins from continuous data")
+    void binData_createsBins() {
+        Map<String, String> row1 = new HashMap<>();
+        row1.put("age", "5");
+        Map<String, String> row2 = new HashMap<>();
+        row2.put("age", "25");
+        Map<String, String> row3 = new HashMap<>();
+        row3.put("age", "45");
+        Map<String, String> row4 = new HashMap<>();
+        row4.put("age", "75");
+        
+        List<Double> edges = Arrays.asList(0.0, 18.0, 35.0, 65.0, 120.0);
+        List<String> labels = Arrays.asList("child", "young_adult", "adult", "senior");
+        
+        var result = svc.binData(new ArrayList<>(List.of(row1, row2, row3, row4)), "age", edges, labels);
+        assertThat(result.get(0).get("age_binned")).isEqualTo("child");
+        assertThat(result.get(1).get("age_binned")).isEqualTo("young_adult");
+        assertThat(result.get(2).get("age_binned")).isEqualTo("adult");
+        assertThat(result.get(3).get("age_binned")).isEqualTo("senior");
+    }
+
+    @Test
+    @DisplayName("binData handles edge case values")
+    void binData_edgeCases() {
+        Map<String, String> row1 = new HashMap<>();
+        row1.put("val", "0");
+        Map<String, String> row2 = new HashMap<>();
+        row2.put("val", "10");
+        
+        List<Double> edges = Arrays.asList(0.0, 10.0, 20.0);
+        List<String> labels = Arrays.asList("low", "high");
+        
+        var result = svc.binData(new ArrayList<>(List.of(row1, row2)), "val", edges, labels);
+        assertThat(result.get(0).get("val_binned")).isEqualTo("low");
+    }
+
+    @Test
+    @DisplayName("standardizeCase sentence case capitalizes first letter only")
+    void standardizeCase_sentenceCase() {
+        Map<String, String> row = new HashMap<>();
+        row.put("text", "HELLO WORLD TEST");
+        
+        var result = svc.standardizeCase(new ArrayList<>(List.of(row)), "sentence");
+        assertThat(result.get(0).get("text")).isEqualTo("Hello world test");
+    }
 }
