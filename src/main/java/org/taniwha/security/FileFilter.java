@@ -39,7 +39,7 @@ public class FileFilter {
         String name = path.getFileName().toString();
         String ext  = getExtension(name);
 
-        if (!AllowedExtensions.isAllowed(ext)) {
+        if (AllowedExtensions.isAllowed(ext)) {
             logger.warn("Disallowed path extension: {}", name);
             return true;
         }
@@ -71,7 +71,7 @@ public class FileFilter {
         String name = file.getOriginalFilename();
         String ext  = getExtension(name);
 
-        if (!AllowedExtensions.isAllowed(ext)) {
+        if (AllowedExtensions.isAllowed(ext)) {
             logger.warn("Disallowed file extension: {}", name);
             return true;
         }

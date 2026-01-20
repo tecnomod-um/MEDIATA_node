@@ -4,6 +4,7 @@ import org.apache.commons.csv.CSVFormat;
 import org.apache.commons.csv.CSVPrinter;
 import org.apache.commons.text.similarity.JaroWinklerSimilarity;
 import org.apache.commons.text.similarity.LevenshteinDistance;
+import org.jetbrains.annotations.NotNull;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -14,9 +15,10 @@ import org.taniwha.util.NumberUtil;
 
 import java.io.BufferedWriter;
 import java.io.IOException;
+import java.nio.charset.Charset;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.*;
 import java.text.Normalizer;
-import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.*;
 import java.util.regex.Matcher;
@@ -43,7 +45,6 @@ public class DataCleaningService {
 
         Path file = fileService.resolveExistingFilePath(category, fileName);
 
-        // no options => no-op (or throw; but no-op is safer for UI)
         if (opts == null || !anyEnabled(opts)) {
             logger.debug("No cleaning options enabled; skipping {}", file);
             return;
@@ -51,7 +52,6 @@ public class DataCleaningService {
 
         String lower = file.getFileName().toString().toLowerCase(Locale.ROOT);
 
-        // Read all records using existing processing service (handles delimiter + xlsx)
         final List<Map<String, String>> records;
         try {
             records = dataProcessingService.extractDataFromPath(file);
@@ -87,7 +87,7 @@ public class DataCleaningService {
         
         // Character cleaning
         if (opts.isRemoveSpecialCharacters()) {
-            cleaned = removeSpecialCharacters(cleaned, opts.getSpecialCharColumnsPattern());
+            cleaned = removeSpecialCharacters(cleaned);
         }
         if (opts.isRemovePunctuation()) cleaned = removePunctuation(cleaned);
         if (opts.isRemoveNonPrintableChars()) cleaned = removeNonPrintableChars(cleaned);
@@ -183,7 +183,7 @@ public class DataCleaningService {
         if (opts.isBinData() && opts.getBinColumn() != null) {
             cleaned = binData(cleaned, opts.getBinColumn(), opts.getBinEdges(), opts.getBinLabels());
         }
-        
+
         // Fuzzy matching and value merging
         if (opts.isMergeSimilarValues() && opts.getFuzzyMatchColumns() != null) {
             cleaned = mergeSimilarValues(cleaned, 
@@ -387,9 +387,6 @@ public class DataCleaningService {
         }
     }
 
-    /**
-     * Trims leading and trailing whitespace from all values in all rows.
-     */
     public List<Map<String, String>> trimWhitespace(List<Map<String, String>> records) {
         logger.debug("Trimming whitespace from {} records", records.size());
         for (Map<String, String> row : records) {
@@ -403,9 +400,6 @@ public class DataCleaningService {
         return records;
     }
 
-    /**
-     * Removes extra spaces (multiple consecutive spaces become single space).
-     */
     public List<Map<String, String>> removeExtraSpaces(List<Map<String, String>> records) {
         logger.debug("Removing extra spaces from {} records", records.size());
         for (Map<String, String> row : records) {
@@ -419,9 +413,6 @@ public class DataCleaningService {
         return records;
     }
 
-    /**
-     * Removes line breaks and replaces them with spaces.
-     */
     public List<Map<String, String>> removeLineBreaks(List<Map<String, String>> records) {
         logger.debug("Removing line breaks from {} records", records.size());
         for (Map<String, String> row : records) {
@@ -435,9 +426,6 @@ public class DataCleaningService {
         return records;
     }
 
-    /**
-     * Standardizes text case according to the specified mode: upper, lower, title, or sentence.
-     */
     public List<Map<String, String>> standardizeCase(List<Map<String, String>> records, String caseMode) {
         logger.debug("Standardizing case to {} for {} records", caseMode, records.size());
         for (Map<String, String> row : records) {
@@ -463,7 +451,7 @@ public class DataCleaningService {
         StringBuilder result = new StringBuilder();
         for (String word : words) {
             if (!word.isEmpty()) {
-                if (result.length() > 0) result.append(" ");
+                if (!result.isEmpty()) result.append(" ");
                 result.append(Character.toTitleCase(word.charAt(0)));
                 if (word.length() > 1) {
                     result.append(word.substring(1).toLowerCase(Locale.ROOT));
@@ -479,49 +467,29 @@ public class DataCleaningService {
         return Character.toUpperCase(lower.charAt(0)) + (lower.length() > 1 ? lower.substring(1) : "");
     }
 
-    /**
-     * Removes special characters from text values, keeping only alphanumeric and basic punctuation.
-     */
-    public List<Map<String, String>> removeSpecialCharacters(List<Map<String, String>> records, String pattern) {
+    public List<Map<String, String>> removeSpecialCharacters(List<Map<String, String>> records) {
         logger.debug("Removing special characters from {} records", records.size());
         String regex = "[^a-zA-Z0-9\\s.,\\-_]";
-        
-        for (Map<String, String> row : records) {
-            for (Map.Entry<String, String> entry : row.entrySet()) {
-                String value = entry.getValue();
-                if (value != null && !value.isEmpty()) {
-                    entry.setValue(value.replaceAll(regex, ""));
-                }
-            }
-        }
-        return records;
+
+        return getMaps(records, regex);
     }
 
-    /**
-     * Removes all punctuation characters.
-     */
     public List<Map<String, String>> removePunctuation(List<Map<String, String>> records) {
         logger.debug("Removing punctuation from {} records", records.size());
-        String regex = "[\\p{Punct}]";
-        
-        for (Map<String, String> row : records) {
-            for (Map.Entry<String, String> entry : row.entrySet()) {
-                String value = entry.getValue();
-                if (value != null && !value.isEmpty()) {
-                    entry.setValue(value.replaceAll(regex, ""));
-                }
-            }
-        }
-        return records;
+        String regex = "\\p{Punct}";
+
+        return getMaps(records, regex);
     }
 
-    /**
-     * Removes non-printable characters.
-     */
     public List<Map<String, String>> removeNonPrintableChars(List<Map<String, String>> records) {
         logger.debug("Removing non-printable characters from {} records", records.size());
-        String regex = "[\\p{C}]";
-        
+        String regex = "\\p{C}";
+
+        return getMaps(records, regex);
+    }
+
+    @NotNull
+    private List<Map<String, String>> getMaps(List<Map<String, String>> records, String regex) {
         for (Map<String, String> row : records) {
             for (Map.Entry<String, String> entry : row.entrySet()) {
                 String value = entry.getValue();
@@ -533,9 +501,6 @@ public class DataCleaningService {
         return records;
     }
 
-    /**
-     * Normalizes text by removing extra whitespace and standardizing line breaks.
-     */
     public List<Map<String, String>> normalizeText(List<Map<String, String>> records) {
         logger.debug("Normalizing text for {} records", records.size());
         for (Map<String, String> row : records) {
@@ -550,31 +515,94 @@ public class DataCleaningService {
         return records;
     }
 
-    /**
-     * Fixes encoding issues by attempting to detect and correct common problems.
-     */
     public List<Map<String, String>> fixEncoding(List<Map<String, String>> records) {
         logger.debug("Fixing encoding issues for {} records", records.size());
-        // This is a simplified encoding fix - in practice you'd use charset detection
+
         for (Map<String, String> row : records) {
             for (Map.Entry<String, String> entry : row.entrySet()) {
                 String value = entry.getValue();
-                if (value != null && !value.isEmpty()) {
-                    // Replace common mojibake patterns
-                    value = value.replace("Ã©", "é")
-                               .replace("Ã¨", "è")
-                               .replace("Ã¡", "á")
-                               .replace("Ã ", "à");
-                    entry.setValue(value);
-                }
+                if (value == null || value.isEmpty()) continue;
+                if (!looksLikeMojibake(value)) continue;
+                String candidate1252 = recode(value, Charset.forName("windows-1252"));
+                String candidateLatin1 = recode(value, StandardCharsets.ISO_8859_1);
+                String best = chooseBest(value, candidate1252, candidateLatin1);
+                entry.setValue(best);
             }
         }
+
         return records;
     }
 
-    /**
-     * Normalizes Unicode strings (NFC, NFD, NFKC, NFKD).
-     */
+    private static String recode(String s, Charset assumedWrong) {
+        return new String(s.getBytes(assumedWrong), StandardCharsets.UTF_8);
+    }
+
+    private static boolean looksLikeMojibake(String s) {
+        return s.indexOf('Ã') >= 0
+                || s.indexOf('Â') >= 0
+                || s.contains("â€")
+                || s.contains("â€™")
+                || s.contains("ï¿½");
+    }
+
+    private static String chooseBest(String original, String... candidates) {
+        String best = original;
+        int bestScore = score(original);
+
+        for (String c : candidates) {
+            int s = score(c);
+            if (s > bestScore && isSane(c)) {
+                best = c;
+                bestScore = s;
+            }
+        }
+        return best;
+    }
+
+    private static int score(String s) {
+        int score = 0;
+
+        score -= 5 * countOf(s, 'Ã');
+        score -= 5 * countOf(s, 'Â');
+        score -= 5 * countSubstring(s, "â€");
+        score -= 5 * countSubstring(s, "ï¿½");
+        score += countLetters(s);
+        return score;
+    }
+
+    private static boolean isSane(String s) {
+        for (int i = 0; i < s.length(); i++) {
+            char ch = s.charAt(i);
+            if (Character.isISOControl(ch) && ch != '\n' && ch != '\r' && ch != '\t') {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private static int countOf(String s, char ch) {
+        int n = 0;
+        for (int i = 0; i < s.length(); i++) if (s.charAt(i) == ch) n++;
+        return n;
+    }
+
+    private static int countSubstring(String s, String sub) {
+        int n = 0, idx = 0;
+        while ((idx = s.indexOf(sub, idx)) >= 0) {
+            n++;
+            idx += sub.length();
+        }
+        return n;
+    }
+
+    private static int countLetters(String s) {
+        int n = 0;
+        for (int i = 0; i < s.length(); i++) {
+            if (Character.isLetter(s.charAt(i))) n++;
+        }
+        return n;
+    }
+
     public List<Map<String, String>> normalizeUnicode(List<Map<String, String>> records, String normalizationForm) {
         logger.debug("Normalizing Unicode to {} for {} records", normalizationForm, records.size());
         Normalizer.Form form = switch (normalizationForm.toUpperCase()) {
@@ -595,9 +623,6 @@ public class DataCleaningService {
         return records;
     }
 
-    /**
-     * Removes leading zeros from numeric strings.
-     */
     public List<Map<String, String>> removeLeadingZeros(List<Map<String, String>> records) {
         logger.debug("Removing leading zeros from {} records", records.size());
         for (Map<String, String> row : records) {
@@ -611,9 +636,6 @@ public class DataCleaningService {
         return records;
     }
 
-    /**
-     * Rounds decimal numbers to specified decimal places.
-     */
     public List<Map<String, String>> roundDecimals(List<Map<String, String>> records, int decimalPlaces) {
         logger.debug("Rounding decimals to {} places for {} records", decimalPlaces, records.size());
         double factor = Math.pow(10, decimalPlaces);
@@ -635,9 +657,6 @@ public class DataCleaningService {
         return records;
     }
 
-    /**
-     * Replaces values based on a replacement map.
-     */
     public List<Map<String, String>> replaceValues(List<Map<String, String>> records, Map<String, String> replacementMap) {
         logger.debug("Replacing values for {} records", records.size());
         for (Map<String, String> row : records) {
@@ -651,9 +670,6 @@ public class DataCleaningService {
         return records;
     }
 
-    /**
-     * Strips a prefix from all values.
-     */
     public List<Map<String, String>> stripPrefix(List<Map<String, String>> records, String prefix) {
         logger.debug("Stripping prefix '{}' from {} records", prefix, records.size());
         for (Map<String, String> row : records) {
@@ -667,9 +683,6 @@ public class DataCleaningService {
         return records;
     }
 
-    /**
-     * Strips a suffix from all values.
-     */
     public List<Map<String, String>> stripSuffix(List<Map<String, String>> records, String suffix) {
         logger.debug("Stripping suffix '{}' from {} records", suffix, records.size());
         for (Map<String, String> row : records) {
@@ -683,9 +696,6 @@ public class DataCleaningService {
         return records;
     }
 
-    /**
-     * Pads values to a specified length.
-     */
     public List<Map<String, String>> padValues(List<Map<String, String>> records, String direction, 
                                                 int length, String padChar) {
         logger.debug("Padding values to length {} ({}) for {} records", length, direction, records.size());
@@ -704,9 +714,6 @@ public class DataCleaningService {
         return records;
     }
 
-    /**
-     * Extracts date components (year, month, day) into separate columns.
-     */
     public List<Map<String, String>> extractDateComponents(List<Map<String, String>> records) {
         logger.debug("Extracting date components for {} records", records.size());
         
@@ -728,9 +735,6 @@ public class DataCleaningService {
         return records;
     }
 
-    /**
-     * Fills missing values using various strategies with optional column filtering.
-     */
     public List<Map<String, String>> fillMissingValues(List<Map<String, String>> records, String strategy, 
                                                         String constantValue, List<String> targetColumns) {
         if (records.isEmpty()) return records;
@@ -898,9 +902,6 @@ public class DataCleaningService {
         }
     }
 
-    /**
-     * Extracts email domain from email addresses.
-     */
     public List<Map<String, String>> extractEmailDomain(List<Map<String, String>> records) {
         logger.debug("Extracting email domains for {} records", records.size());
         Pattern emailPattern = Pattern.compile("([a-zA-Z0-9._%+-]+)@([a-zA-Z0-9.-]+\\.[a-zA-Z]{2,})");
@@ -921,9 +922,6 @@ public class DataCleaningService {
         return records;
     }
 
-    /**
-     * Validates and filters email addresses.
-     */
     public List<Map<String, String>> validateEmails(List<Map<String, String>> records) {
         logger.debug("Validating emails for {} records", records.size());
         Pattern emailPattern = Pattern.compile("^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$");
@@ -942,9 +940,6 @@ public class DataCleaningService {
         return records;
     }
 
-    /**
-     * Extracts URL components (protocol, domain, path, query).
-     */
     public List<Map<String, String>> extractURLComponents(List<Map<String, String>> records) {
         logger.debug("Extracting URL components for {} records", records.size());
         Pattern urlPattern = Pattern.compile("(https?://)([^/]+)(/[^?]*)?(\\?.*)?");
@@ -969,9 +964,6 @@ public class DataCleaningService {
         return records;
     }
 
-    /**
-     * Normalizes URLs to lowercase and removes trailing slashes.
-     */
     public List<Map<String, String>> normalizeURLs(List<Map<String, String>> records) {
         logger.debug("Normalizing URLs for {} records", records.size());
         
@@ -990,9 +982,6 @@ public class DataCleaningService {
         return records;
     }
 
-    /**
-     * Standardizes phone numbers to a specified format.
-     */
     public List<Map<String, String>> standardizePhoneNumbers(List<Map<String, String>> records, 
                                                               String format, String countryCode) {
         logger.debug("Standardizing phone numbers to {} format for {} records", format, records.size());
@@ -1026,9 +1015,6 @@ public class DataCleaningService {
         return digits;
     }
 
-    /**
-     * Splits a column by delimiter into multiple new columns.
-     */
     public List<Map<String, String>> splitColumn(List<Map<String, String>> records, String columnName, 
                                                   String delimiter, List<String> newNames) {
         logger.debug("Splitting column '{}' for {} records", columnName, records.size());
@@ -1049,9 +1035,6 @@ public class DataCleaningService {
         return records;
     }
 
-    /**
-     * Merges multiple columns into one.
-     */
     public List<Map<String, String>> mergeColumns(List<Map<String, String>> records, List<String> columns, 
                                                    String delimiter, String newColumnName) {
         logger.debug("Merging columns {} for {} records", columns, records.size());
@@ -1063,7 +1046,7 @@ public class DataCleaningService {
             for (String col : columns) {
                 String val = row.get(col);
                 if (val != null && !val.isEmpty()) {
-                    if (merged.length() > 0) merged.append(delim);
+                    if (!merged.isEmpty()) merged.append(delim);
                     merged.append(val);
                 }
             }
@@ -1072,9 +1055,6 @@ public class DataCleaningService {
         return records;
     }
 
-    /**
-     * Converts data types based on type conversion map.
-     */
     public List<Map<String, String>> convertDataTypes(List<Map<String, String>> records, 
                                                        Map<String, String> typeMap) {
         logger.debug("Converting data types for {} records", records.size());
@@ -1104,13 +1084,9 @@ public class DataCleaningService {
         return records;
     }
 
-    /**
-     * Removes rows matching a specific pattern in a column.
-     */
     public List<Map<String, String>> removeRowsWithPattern(List<Map<String, String>> records, 
                                                             String column, String patternStr) {
         if (column == null || patternStr == null) return records;
-        
         logger.debug("Removing rows with pattern '{}' in column '{}' from {} records", 
                     patternStr, column, records.size());
         Pattern pattern = Pattern.compile(patternStr);
@@ -1123,9 +1099,6 @@ public class DataCleaningService {
                 .collect(Collectors.toList());
     }
 
-    /**
-     * Keeps only rows where specified columns contain valid numeric values.
-     */
     public List<Map<String, String>> keepOnlyNumericRows(List<Map<String, String>> records, 
                                                           Set<String> columns) {
         if (columns.isEmpty()) return records;
@@ -1148,9 +1121,7 @@ public class DataCleaningService {
                 .collect(Collectors.toList());
     }
 
-    /**
-     * Normalizes data using min-max normalization (scales to 0-1 range).
-     */
+
     public List<Map<String, String>> normalizeData(List<Map<String, String>> records, Set<String> columns) {
         logger.debug("Normalizing data for columns {} in {} records", columns, records.size());
         
@@ -1187,9 +1158,6 @@ public class DataCleaningService {
         return records;
     }
 
-    /**
-     * Standardizes data using Z-score standardization (mean=0, std=1).
-     */
     public List<Map<String, String>> standardizeDataZScore(List<Map<String, String>> records, Set<String> columns) {
         logger.debug("Standardizing data (Z-score) for columns {} in {} records", columns, records.size());
         
@@ -1229,9 +1197,6 @@ public class DataCleaningService {
         return records;
     }
 
-    /**
-     * Bins continuous data into discrete categories.
-     */
     public List<Map<String, String>> binData(List<Map<String, String>> records, String column, 
                                               List<Double> edges, List<String> labels) {
         if (edges == null || edges.isEmpty()) return records;
@@ -1264,20 +1229,7 @@ public class DataCleaningService {
         }
         return records;
     }
-    
-    /**
-     * Merge similar values in specified columns using fuzzy matching.
-     * Detects values that are similar and transforms them to a single canonical value.
-     * 
-     * @param records Data records
-     * @param columns Columns to apply fuzzy matching
-     * @param algorithm Similarity algorithm: "levenshtein", "jaro_winkler", "cosine"
-     * @param threshold Similarity threshold (0.0-1.0), higher means stricter matching
-     * @param caseInsensitive Whether to ignore case when comparing
-     * @param trimValues Whether to trim whitespace before comparing
-     * @param preferredValue How to choose canonical value: "most_frequent", "shortest", "longest", "first", "alphabetical"
-     * @return Cleaned records
-     */
+
     List<Map<String, String>> mergeSimilarValues(List<Map<String, String>> records, 
                                                          Set<String> columns,
                                                          String algorithm,
@@ -1378,15 +1330,7 @@ public class DataCleaningService {
         
         return records;
     }
-    
-    /**
-     * Calculate similarity between two strings using specified algorithm.
-     * 
-     * @param s1 First string
-     * @param s2 Second string
-     * @param algorithm "levenshtein", "jaro_winkler", or "cosine"
-     * @return Similarity score between 0.0 and 1.0
-     */
+
     private double calculateSimilarity(String s1, String s2, String algorithm) {
         if (s1 == null || s2 == null) return 0.0;
         if (s1.equals(s2)) return 1.0;
@@ -1409,10 +1353,7 @@ public class DataCleaningService {
                 return 1.0 - ((double) distance / maxLen);
         }
     }
-    
-    /**
-     * Calculate cosine similarity between two strings based on character trigrams.
-     */
+
     private double cosineSimilarity(String s1, String s2) {
         Set<String> trigrams1 = getTrigrams(s1);
         Set<String> trigrams2 = getTrigrams(s2);
@@ -1429,10 +1370,7 @@ public class DataCleaningService {
         
         return dotProduct / (magnitude1 * magnitude2);
     }
-    
-    /**
-     * Extract character trigrams from a string.
-     */
+
     private Set<String> getTrigrams(String s) {
         Set<String> trigrams = new HashSet<>();
         if (s.length() < 3) {
@@ -1445,46 +1383,27 @@ public class DataCleaningService {
         }
         return trigrams;
     }
-    
-    /**
-     * Choose the canonical value from a group of similar values.
-     * 
-     * @param group Group of similar values
-     * @param counts Frequency counts for each value
-     * @param strategy Strategy: "most_frequent", "shortest", "longest", "first", "alphabetical"
-     * @return Canonical value
-     */
+
     private String chooseCanonicalValue(List<String> group, Map<String, Integer> counts, String strategy) {
         if (group.isEmpty()) return "";
         if (group.size() == 1) return group.get(0);
-        
-        switch (strategy.toLowerCase()) {
-            case "most_frequent":
-                return group.stream()
+
+        return switch (strategy.toLowerCase()) {
+            case "most_frequent" -> group.stream()
                     .max(Comparator.comparingInt(v -> counts.getOrDefault(v, 0)))
                     .orElse(group.get(0));
-                    
-            case "shortest":
-                return group.stream()
+            case "shortest" -> group.stream()
                     .min(Comparator.comparingInt(String::length))
                     .orElse(group.get(0));
-                    
-            case "longest":
-                return group.stream()
+            case "longest" -> group.stream()
                     .max(Comparator.comparingInt(String::length))
                     .orElse(group.get(0));
-                    
-            case "alphabetical":
-                return group.stream()
+            case "alphabetical" -> group.stream()
                     .min(String::compareTo)
                     .orElse(group.get(0));
-                    
-            case "first":
-            default:
-                return group.get(0);
-        }
+            default -> group.get(0);
+        };
     }
-
     private boolean isNullOrEmpty(String value) {
         return value == null || value.trim().isEmpty();
     }
