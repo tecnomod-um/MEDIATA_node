@@ -59,52 +59,82 @@ public class DataCleaningService {
             throw new RuntimeException("Failed to read file for cleaning", e);
         }
 
-        List<Map<String, String>> cleaned = records;
+        List<Map<String, String>> cleaned = applyAllCleaningOperations(records, opts);
 
-        // Row-level cleaning operations
-        if (opts.isRemoveEmptyRows()) cleaned = removeEmptyRows(cleaned);
-        if (opts.isRemoveDuplicates()) cleaned = removeDuplicates(cleaned);
+        writeCleanedData(file, lower, cleaned);
+    }
+
+    private List<Map<String, String>> applyAllCleaningOperations(List<Map<String, String>> records, DataCleaningOptionsDTO opts) {
+        List<Map<String, String>> cleaned = records;
+        
+        cleaned = applyRowLevelOperations(cleaned, opts);
+        cleaned = applyTextOperations(cleaned, opts);
+        cleaned = applyDateAndNumericOperations(cleaned, opts);
+        cleaned = applyStringManipulation(cleaned, opts);
+        cleaned = applyEmailUrlPhoneOperations(cleaned, opts);
+        cleaned = applyColumnAndTypeOperations(cleaned, opts);
+        cleaned = applyStatisticalOperations(cleaned, opts);
+        cleaned = applyFuzzyMatching(cleaned, opts);
+        
+        return cleaned;
+    }
+
+    private List<Map<String, String>> applyRowLevelOperations(List<Map<String, String>> records, DataCleaningOptionsDTO opts) {
+        List<Map<String, String>> result = records;
+        
+        if (opts.isRemoveEmptyRows()) result = removeEmptyRows(result);
+        if (opts.isRemoveDuplicates()) result = removeDuplicates(result);
         if (opts.isRemoveRowsWithPattern()) {
-            cleaned = removeRowsWithPattern(cleaned, opts.getRowFilterColumn(), opts.getRowFilterPattern());
+            result = removeRowsWithPattern(result, opts.getRowFilterColumn(), opts.getRowFilterPattern());
         }
         if (opts.isKeepOnlyNumericRows()) {
-            cleaned = keepOnlyNumericRows(cleaned, extractColumnList(opts.getNumericValidationColumns()));
+            result = keepOnlyNumericRows(result, extractColumnList(opts.getNumericValidationColumns()));
         }
+        
+        return result;
+    }
 
+    private List<Map<String, String>> applyTextOperations(List<Map<String, String>> records, DataCleaningOptionsDTO opts) {
+        List<Map<String, String>> result = records;
+        
         // Basic text operations
-        if (opts.isTrimWhitespace()) cleaned = trimWhitespace(cleaned);
-        if (opts.isRemoveExtraSpaces()) cleaned = removeExtraSpaces(cleaned);
-        if (opts.isRemoveLineBreaks()) cleaned = removeLineBreaks(cleaned);
-        if (opts.isNormalizeText()) cleaned = normalizeText(cleaned);
+        if (opts.isTrimWhitespace()) result = trimWhitespace(result);
+        if (opts.isRemoveExtraSpaces()) result = removeExtraSpaces(result);
+        if (opts.isRemoveLineBreaks()) result = removeLineBreaks(result);
+        if (opts.isNormalizeText()) result = normalizeText(result);
         
         // Case standardization
         if (opts.isStandardizeCase()) {
             String caseMode = Objects.toString(opts.getCaseMode(), "").trim();
             if (!caseMode.isEmpty()) {
-                cleaned = standardizeCase(cleaned, caseMode);
+                result = standardizeCase(result, caseMode);
             }
         }
         
         // Character cleaning
-        if (opts.isRemoveSpecialCharacters()) {
-            cleaned = removeSpecialCharacters(cleaned);
-        }
-        if (opts.isRemovePunctuation()) cleaned = removePunctuation(cleaned);
-        if (opts.isRemoveNonPrintableChars()) cleaned = removeNonPrintableChars(cleaned);
+        if (opts.isRemoveSpecialCharacters()) result = removeSpecialCharacters(result);
+        if (opts.isRemovePunctuation()) result = removePunctuation(result);
+        if (opts.isRemoveNonPrintableChars()) result = removeNonPrintableChars(result);
         
         // Encoding operations
-        if (opts.isFixEncoding()) cleaned = fixEncoding(cleaned);
+        if (opts.isFixEncoding()) result = fixEncoding(result);
         if (opts.isNormalizeUnicode()) {
             String norm = Objects.toString(opts.getUnicodeNormalization(), "NFC");
-            cleaned = normalizeUnicode(cleaned, norm);
+            result = normalizeUnicode(result, norm);
         }
+        
+        return result;
+    }
 
+    private List<Map<String, String>> applyDateAndNumericOperations(List<Map<String, String>> records, DataCleaningOptionsDTO opts) {
+        List<Map<String, String>> result = records;
+        
         // Date operations
         if (opts.isStandardizeDates()) {
-            cleaned = standardizeDates(cleaned, opts.getDateOutputFormat());
+            result = standardizeDates(result, opts.getDateOutputFormat());
         }
         if (opts.isExtractDateComponents()) {
-            cleaned = extractDateComponents(cleaned);
+            result = extractDateComponents(result);
         }
 
         // Numeric operations
@@ -112,29 +142,34 @@ public class DataCleaningService {
             Set<String> numericCols = extractNumericColumns(opts);
             String mode = Objects.toString(opts.getNumericMode(), "").trim();
             if (!numericCols.isEmpty() && !mode.isEmpty()) {
-                for (Map<String, String> row : cleaned) {
+                for (Map<String, String> row : result) {
                     standardizeNumericInPlace(row, numericCols, mode);
                 }
             }
         }
-        if (opts.isRemoveLeadingZeros()) cleaned = removeLeadingZeros(cleaned);
+        if (opts.isRemoveLeadingZeros()) result = removeLeadingZeros(result);
         if (opts.isRoundDecimals()) {
             int places = opts.getDecimalPlaces();
-            cleaned = roundDecimals(cleaned, places);
+            result = roundDecimals(result, places);
         }
+        
+        return result;
+    }
 
-        // String manipulation
+    private List<Map<String, String>> applyStringManipulation(List<Map<String, String>> records, DataCleaningOptionsDTO opts) {
+        List<Map<String, String>> result = records;
+        
         if (opts.isReplaceValues() && opts.getReplacementMap() != null) {
-            cleaned = replaceValues(cleaned, opts.getReplacementMap());
+            result = replaceValues(result, opts.getReplacementMap());
         }
         if (opts.isStripPrefix() && opts.getPrefixToStrip() != null) {
-            cleaned = stripPrefix(cleaned, opts.getPrefixToStrip());
+            result = stripPrefix(result, opts.getPrefixToStrip());
         }
         if (opts.isStripSuffix() && opts.getSuffixToStrip() != null) {
-            cleaned = stripSuffix(cleaned, opts.getSuffixToStrip());
+            result = stripSuffix(result, opts.getSuffixToStrip());
         }
         if (opts.isPadValues()) {
-            cleaned = padValues(cleaned, opts.getPadDirection(), opts.getPadLength(), 
+            result = padValues(result, opts.getPadDirection(), opts.getPadLength(), 
                               Objects.toString(opts.getPadCharacter(), " "));
         }
 
@@ -143,50 +178,72 @@ public class DataCleaningService {
             String strategy = Objects.toString(opts.getFillStrategy(), "").trim();
             List<String> fillCols = opts.getFillColumns();
             if (!strategy.isEmpty()) {
-                cleaned = fillMissingValues(cleaned, strategy, opts.getFillConstantValue(), fillCols);
+                result = fillMissingValues(result, strategy, opts.getFillConstantValue(), fillCols);
             }
         }
+        
+        return result;
+    }
 
+    private List<Map<String, String>> applyEmailUrlPhoneOperations(List<Map<String, String>> records, DataCleaningOptionsDTO opts) {
+        List<Map<String, String>> result = records;
+        
         // Email and URL operations
-        if (opts.isExtractEmailDomain()) cleaned = extractEmailDomain(cleaned);
-        if (opts.isValidateEmails()) cleaned = validateEmails(cleaned);
-        if (opts.isExtractURLComponents()) cleaned = extractURLComponents(cleaned);
-        if (opts.isNormalizeURLs()) cleaned = normalizeURLs(cleaned);
+        if (opts.isExtractEmailDomain()) result = extractEmailDomain(result);
+        if (opts.isValidateEmails()) result = validateEmails(result);
+        if (opts.isExtractURLComponents()) result = extractURLComponents(result);
+        if (opts.isNormalizeURLs()) result = normalizeURLs(result);
 
         // Phone number standardization
         if (opts.isStandardizePhoneNumbers()) {
-            cleaned = standardizePhoneNumbers(cleaned, opts.getPhoneFormat(), opts.getDefaultCountryCode());
+            result = standardizePhoneNumbers(result, opts.getPhoneFormat(), opts.getDefaultCountryCode());
         }
+        
+        return result;
+    }
 
+    private List<Map<String, String>> applyColumnAndTypeOperations(List<Map<String, String>> records, DataCleaningOptionsDTO opts) {
+        List<Map<String, String>> result = records;
+        
         // Column operations
         if (opts.isSplitColumn() && opts.getColumnToSplit() != null) {
-            cleaned = splitColumn(cleaned, opts.getColumnToSplit(), opts.getSplitDelimiter(), 
+            result = splitColumn(result, opts.getColumnToSplit(), opts.getSplitDelimiter(), 
                                 opts.getNewColumnNames());
         }
         if (opts.isMergeColumns() && opts.getColumnsToMerge() != null) {
-            cleaned = mergeColumns(cleaned, opts.getColumnsToMerge(), opts.getMergeDelimiter(), 
+            result = mergeColumns(result, opts.getColumnsToMerge(), opts.getMergeDelimiter(), 
                                  opts.getMergedColumnName());
         }
 
         // Data type conversion
         if (opts.isConvertDataTypes() && opts.getTypeConversionMap() != null) {
-            cleaned = convertDataTypes(cleaned, opts.getTypeConversionMap());
+            result = convertDataTypes(result, opts.getTypeConversionMap());
         }
+        
+        return result;
+    }
 
-        // Statistical transformations
+    private List<Map<String, String>> applyStatisticalOperations(List<Map<String, String>> records, DataCleaningOptionsDTO opts) {
+        List<Map<String, String>> result = records;
+        
         if (opts.isNormalizeData() && opts.getNormalizeColumns() != null) {
-            cleaned = normalizeData(cleaned, extractColumnList(opts.getNormalizeColumns()));
+            result = normalizeData(result, extractColumnList(opts.getNormalizeColumns()));
         }
         if (opts.isStandardizeData() && opts.getStandardizeColumns() != null) {
-            cleaned = standardizeDataZScore(cleaned, extractColumnList(opts.getStandardizeColumns()));
+            result = standardizeDataZScore(result, extractColumnList(opts.getStandardizeColumns()));
         }
         if (opts.isBinData() && opts.getBinColumn() != null) {
-            cleaned = binData(cleaned, opts.getBinColumn(), opts.getBinEdges(), opts.getBinLabels());
+            result = binData(result, opts.getBinColumn(), opts.getBinEdges(), opts.getBinLabels());
         }
+        
+        return result;
+    }
 
-        // Fuzzy matching and value merging
+    private List<Map<String, String>> applyFuzzyMatching(List<Map<String, String>> records, DataCleaningOptionsDTO opts) {
+        List<Map<String, String>> result = records;
+        
         if (opts.isMergeSimilarValues() && opts.getFuzzyMatchColumns() != null) {
-            cleaned = mergeSimilarValues(cleaned, 
+            result = mergeSimilarValues(result, 
                 extractColumnList(opts.getFuzzyMatchColumns()),
                 Objects.toString(opts.getMergeSimilarityAlgorithm(), "levenshtein"),
                 opts.getMergeSimilarityThreshold() > 0 ? opts.getMergeSimilarityThreshold() : 0.85,
@@ -195,13 +252,17 @@ public class DataCleaningService {
                 Objects.toString(opts.getMergePreferredValue(), "most_frequent")
             );
         }
+        
+        return result;
+    }
 
-        if (lower.endsWith(".csv")) {
+    private void writeCleanedData(Path file, String lowerFileName, List<Map<String, String>> cleaned) {
+        if (lowerFileName.endsWith(".csv")) {
             writeCsvAtomically(file, cleaned);
             return;
         }
 
-        if (lower.endsWith(".xlsx") || lower.endsWith(".xls")) {
+        if (lowerFileName.endsWith(".xlsx") || lowerFileName.endsWith(".xls")) {
             Path out = file.resolveSibling(stripExt(file.getFileName().toString()) + "_cleaned.csv");
             writeCsvAtomically(out, cleaned);
             return;
