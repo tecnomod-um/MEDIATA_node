@@ -270,7 +270,7 @@ class DataCleaningServiceTest {
         Map<String, String> row = new HashMap<>();
         row.put("text", "Hello@World#123!");
         
-        var result = svc.removeSpecialCharacters(new ArrayList<>(List.of(row)), null);
+        var result = svc.removeSpecialCharacters(new ArrayList<>(List.of(row)));
         assertThat(result.get(0).get("text")).isEqualTo("HelloWorld123");
     }
 
@@ -459,7 +459,7 @@ class DataCleaningServiceTest {
         
         // With case insensitive mode, BOSTON/Boston/boston should all become the same
         long bostonVariants = uniqueValues.stream()
-            .filter(v -> v.toLowerCase().equals("boston"))
+            .filter(v -> v.equalsIgnoreCase("boston"))
             .count();
         
         // Should merge to just 1 Boston variant + Los Angeles = 2 total unique values

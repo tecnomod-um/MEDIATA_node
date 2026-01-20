@@ -16,7 +16,6 @@ import org.taniwha.security.FileFilter;
 
 import java.io.IOException;
 import java.io.StringReader;
-import java.nio.charset.StandardCharsets;
 import java.nio.file.*;
 import java.nio.file.attribute.BasicFileAttributes;
 import java.util.ArrayList;
@@ -108,7 +107,7 @@ public class FileService {
         ds.setModified(getStringValue(dsRes, "http://purl.org/dc/terms/modified"));
         ds.setAccrualPeriodicity(getStringValue(dsRes, "http://purl.org/dc/terms/accrualPeriodicity"));
 
-        ds.setKeyword(getStringObjects(dsRes, "http://www.w3.org/ns/dcat#keyword"));
+        ds.setKeyword(getStringObjects(dsRes));
         ds.setTheme(getResourceURIs(dsRes, "http://www.w3.org/ns/dcat#theme"));
         ds.setLanguage(getResourceURIs(dsRes, "http://purl.org/dc/terms/language"));
 
@@ -224,7 +223,7 @@ public class FileService {
             Path outPath = Paths.get(filePath).normalize();
             fileFilter.validate(outPath);
 
-            Files.write(outPath, csvData.getBytes(StandardCharsets.UTF_8));
+            Files.writeString(outPath, csvData);
             logger.info("Saved dataset elements to {}", filePath);
             return filePath;
         } catch (IOException e) {
@@ -264,9 +263,9 @@ public class FileService {
         return null;
     }
 
-    private List<String> getStringObjects(Resource subject, String propertyUri) {
+    private List<String> getStringObjects(Resource subject) {
         List<String> results = new ArrayList<>();
-        Property prop = ResourceFactory.createProperty(propertyUri);
+        Property prop = ResourceFactory.createProperty("http://www.w3.org/ns/dcat#keyword");
         StmtIterator it = subject.listProperties(prop);
         while (it.hasNext()) {
             Statement st = it.nextStatement();
@@ -302,7 +301,7 @@ public class FileService {
     public Path resolveExistingFilePath(FileCategory category, String fileName) {
         return resolveSafeExistingFile(category, fileName);
     }
-    
+
     private Path resolveSafePath(FileCategory category, String fileName) {
         String safeName = String.valueOf(fileName).replace("\\", "/");
         if (safeName.contains("/")) {
@@ -416,10 +415,5 @@ public class FileService {
         } catch (IOException e) {
             throw new RuntimeException("Delete failed", e);
         }
-    }
-
-    public void cleanFilePlaceholder(FileCategory category, String name) {
-        // TODO
-        resolveSafeExistingFile(category, name);
     }
 }
