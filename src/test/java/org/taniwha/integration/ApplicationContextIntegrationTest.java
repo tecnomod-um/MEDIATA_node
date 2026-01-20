@@ -3,12 +3,20 @@ package org.taniwha.integration;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.test.context.TestConfiguration;
+import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.context.ApplicationContext;
+import org.springframework.context.annotation.Bean;
 import org.springframework.test.context.TestPropertySource;
+import org.taniwha.config.RestTemplateHolder;
 import org.taniwha.service.*;
 import org.taniwha.util.JwtTokenUtil;
+import org.springframework.web.client.RestTemplate;
+
+import java.util.function.Supplier;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.Mockito.mock;
 
 /**
  * Integration tests for Spring Boot application context.
@@ -18,9 +26,29 @@ import static org.assertj.core.api.Assertions.assertThat;
 @TestPropertySource(properties = {
     "jwt.secret=test-secret-key-must-be-256-bits-or-more-for-security-purposes",
     "jwt.expiration=3600000",
-    "app.path=/tmp/test-taniwha"
+    "app.path=/tmp/test-taniwha",
+    "spring.main.allow-bean-definition-overriding=true"
 })
 class ApplicationContextIntegrationTest {
+
+    @TestConfiguration
+    static class TestConfig {
+        @Bean
+        public RestTemplate restTemplate() {
+            return mock(RestTemplate.class);
+        }
+        
+        @Bean
+        public Supplier<RestTemplate> restTemplateSupplier() {
+            RestTemplate mockRestTemplate = mock(RestTemplate.class);
+            return () -> mockRestTemplate;
+        }
+        
+        @Bean
+        public RestTemplateHolder restTemplateHolder() {
+            return mock(RestTemplateHolder.class);
+        }
+    }
 
     @Autowired
     private ApplicationContext applicationContext;
