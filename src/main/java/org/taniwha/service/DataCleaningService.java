@@ -648,7 +648,8 @@ public class DataCleaningService {
                         double num = NumberUtil.parseDouble(value);
                         double rounded = Math.round(num * factor) / factor;
                         entry.setValue(String.valueOf(rounded));
-                    } catch (Exception ignored) {
+                    } catch (Exception e) {
+                        logger.debug("Cannot round non-numeric value: {}", e.getMessage());
                         // Not a number, leave as is
                     }
                 }
@@ -775,7 +776,8 @@ public class DataCleaningService {
             if (!isNullOrEmpty(val)) {
                 try {
                     values.add(NumberUtil.parseDouble(val));
-                } catch (Exception ignored) {
+                } catch (Exception e) {
+                    logger.debug("Non-numeric value found in column {}, skipping mean fill: {}", column, e.getMessage());
                     return;
                 }
             }
@@ -799,7 +801,8 @@ public class DataCleaningService {
             if (!isNullOrEmpty(val)) {
                 try {
                     values.add(NumberUtil.parseDouble(val));
-                } catch (Exception ignored) {
+                } catch (Exception e) {
+                    logger.debug("Non-numeric value found in column {}, skipping median fill: {}", column, e.getMessage());
                     return;
                 }
             }
@@ -883,7 +886,9 @@ public class DataCleaningService {
                         prev = NumberUtil.parseDouble(records.get(j).get(column));
                         prevIdx = j;
                         break;
-                    } catch (Exception ignored) {}
+                    } catch (Exception e) {
+                        logger.debug("Skipping non-numeric value for interpolation at row {}: {}", j, e.getMessage());
+                    }
                 }
                 
                 for (int j = i + 1; j < records.size(); j++) {
@@ -891,7 +896,9 @@ public class DataCleaningService {
                         next = NumberUtil.parseDouble(records.get(j).get(column));
                         nextIdx = j;
                         break;
-                    } catch (Exception ignored) {}
+                    } catch (Exception e) {
+                        logger.debug("Skipping non-numeric value for interpolation at row {}: {}", j, e.getMessage());
+                    }
                 }
                 
                 if (prev != null && next != null) {
@@ -1132,7 +1139,9 @@ public class DataCleaningService {
                 if (!isNullOrEmpty(val)) {
                     try {
                         values.add(NumberUtil.parseDouble(val));
-                    } catch (Exception ignored) {}
+                    } catch (Exception e) {
+                        logger.debug("Skipping non-numeric value in column {} for normalization: {}", column, e.getMessage());
+                    }
                 }
             }
             
@@ -1151,7 +1160,9 @@ public class DataCleaningService {
                         double num = NumberUtil.parseDouble(val);
                         double normalized = (num - min) / range;
                         row.put(column, String.valueOf(normalized));
-                    } catch (Exception ignored) {}
+                    } catch (Exception e) {
+                        logger.debug("Cannot normalize value in column {}: {}", column, e.getMessage());
+                    }
                 }
             }
         }
@@ -1168,7 +1179,9 @@ public class DataCleaningService {
                 if (!isNullOrEmpty(val)) {
                     try {
                         values.add(NumberUtil.parseDouble(val));
-                    } catch (Exception ignored) {}
+                    } catch (Exception e) {
+                        logger.debug("Skipping non-numeric value in column {} for z-score standardization: {}", column, e.getMessage());
+                    }
                 }
             }
             
@@ -1190,7 +1203,9 @@ public class DataCleaningService {
                         double num = NumberUtil.parseDouble(val);
                         double standardized = (num - mean) / stdDev;
                         row.put(column, String.valueOf(standardized));
-                    } catch (Exception ignored) {}
+                    } catch (Exception e) {
+                        logger.debug("Cannot standardize value in column {}: {}", column, e.getMessage());
+                    }
                 }
             }
         }
@@ -1224,7 +1239,9 @@ public class DataCleaningService {
                     }
                     
                     row.put(newColumnName, bin);
-                } catch (Exception ignored) {}
+                } catch (Exception e) {
+                    logger.debug("Cannot bin value in column {}: {}", column, e.getMessage());
+                }
             }
         }
         return records;
