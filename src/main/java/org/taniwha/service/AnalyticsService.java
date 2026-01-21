@@ -12,6 +12,7 @@ import org.taniwha.util.AggregateCalculator;
 import org.taniwha.util.DateUtil;
 import org.taniwha.util.NumberUtil;
 
+import jakarta.annotation.PreDestroy;
 import java.io.BufferedInputStream;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
@@ -56,9 +57,9 @@ public class AnalyticsService {
     private final DataProcessingService dataProcessingService;
     private final FileService fileService;
     private final AnalyticsProcessingJobs jobs;
-    private final ExecutorService discoveryJobExecutor = Executors.newCachedThreadPool();
+    private final ExecutorService discoveryJobExecutor;
 
-    private static final String successMsg = "Data processed successfully";
+    private static final String SUCCESS_MSG = "Data processed successfully";
 
     public AnalyticsService(DataProcessingService dataProcessingService,
                             FileService fileService,
@@ -66,6 +67,34 @@ public class AnalyticsService {
         this.dataProcessingService = dataProcessingService;
         this.fileService = fileService;
         this.jobs = jobs;
+        // Use a thread factory with meaningful thread names for debugging
+        AtomicLong threadCounter = new AtomicLong(0);
+        ThreadFactory threadFactory = r -> {
+            Thread t = new Thread(r);
+            t.setName("analytics-discovery-" + threadCounter.incrementAndGet());
+            t.setDaemon(true); // Daemon threads won't prevent JVM shutdown
+            return t;
+        };
+        this.discoveryJobExecutor = Executors.newCachedThreadPool(threadFactory);
+    }
+
+    @PreDestroy
+    public void shutdown() {
+        logger.info("Shutting down AnalyticsService executor...");
+        discoveryJobExecutor.shutdown();
+        try {
+            if (!discoveryJobExecutor.awaitTermination(60, TimeUnit.SECONDS)) {
+                logger.warn("Executor did not terminate in time, forcing shutdown");
+                discoveryJobExecutor.shutdownNow();
+                if (!discoveryJobExecutor.awaitTermination(10, TimeUnit.SECONDS)) {
+                    logger.error("Executor did not terminate after forced shutdown");
+                }
+            }
+        } catch (InterruptedException e) {
+            logger.error("Interrupted while waiting for executor shutdown", e);
+            discoveryJobExecutor.shutdownNow();
+            Thread.currentThread().interrupt();
+        }
     }
 
     // -------------------------------------------------------------------------
@@ -377,7 +406,7 @@ public class AnalyticsService {
                 return CompletableFuture.completedFuture(response);
             }
             processData(records, Optional.of(featureName), Optional.of(featureType), response, categoryCombinationCounts);
-            response.setMessage(successMsg);
+            response.setMessage(SUCCESS_MSG);
         } catch (Exception e) {
             String errMsg = e.getMessage() != null ? e.getMessage() : "Unknown error";
             if (errMsg.toLowerCase().contains("valuemap") && errMsg.toLowerCase().contains("null"))
@@ -676,7 +705,7 @@ public class AnalyticsService {
             }
 
             processData(records, Optional.empty(), Optional.empty(), response, categoryCombinationCounts);
-            response.setMessage(successMsg);
+            response.setMessage(SUCCESS_MSG);
         } catch (Exception e) {
             logger.error("Error filtering file by name {}", fileName, e);
             response.setMessage("Error filtering file " + fileName + ": " + e.getMessage());
@@ -704,7 +733,7 @@ public class AnalyticsService {
         Map<String, Long> missingValueCounts = new ConcurrentHashMap<>();
         List<OmittedFeatureStatistics> omittedFeatures = new CopyOnWriteArrayList<>();
 
-        records.stream().forEach(rowData ->
+        records.forEach(rowData ->
                 processRecord(rowData, continuousData, categoricalData, dateData, missingValueCounts,
                         overrideFeatureName, overrideFeatureType, categoryCombinationCounts, forcedMapping)
         );
@@ -746,7 +775,7 @@ public class AnalyticsService {
         response.setSpearmanCorrelations(calculator.calculateSpearmanCorrelations(continuousData));
         response.setChiSquareTest(calculator.calculateChiSquaredTest(categoricalData, categoryCombinationCounts));
 
-        response.setMessage(successMsg);
+        response.setMessage(SUCCESS_MSG);
     }
 
     private void processRecord(Map<String, String> rowData,
@@ -790,11 +819,7 @@ public class AnalyticsService {
                         if (overrideFeatureType.isPresent() &&
                                 overrideFeatureType.get().equalsIgnoreCase(CONTINUOUS_TYPE)) {
                             Map<String, Double> mapping = forcedMapping.computeIfAbsent(effectiveColumn, k -> new ConcurrentHashMap<>());
-                            Double numericValue = mapping.get(trimmedValue);
-                            if (numericValue == null) {
-                                numericValue = mapping.size() + 1.0;
-                                mapping.put(trimmedValue, numericValue);
-                            }
+                            Double numericValue = mapping.computeIfAbsent(trimmedValue, k -> mapping.size() + 1.0);
                             continuousData.computeIfAbsent(effectiveColumn, k -> new CopyOnWriteArrayList<>()).add(numericValue);
                         } else {
                             logger.debug("Error parsing number from string: {}", trimmedValue);

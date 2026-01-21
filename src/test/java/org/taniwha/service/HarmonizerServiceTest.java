@@ -30,7 +30,7 @@ class HarmonizerServiceTest {
 
         FileService fileService = new FileService(fileFilter, baseDir.toString());
         DataProcessingService dataProcessingService = new DataProcessingService(fileFilter);
-        DataCleaningService dataCleaningService = new DataCleaningService();
+        DataCleaningService dataCleaningService = new DataCleaningService(fileService, dataProcessingService);
         harmonizerService = new HarmonizerService(dataProcessingService, dataCleaningService, fileService);
     }
 
