@@ -21,13 +21,13 @@ public class FileFilter {
     private static final int QUICK_SCAN_BYTES = 4 * 1024;
 
     public void validate(MultipartFile file) {
-        if (isFileInvalid(file))
-            throw new InvalidFileException("Dangerous upload: " + file.getOriginalFilename());
+        if (file == null || isFileInvalid(file))
+            throw new InvalidFileException("Dangerous upload: " + (file != null ? file.getOriginalFilename() : "null"));
     }
 
     public void validate(Path path) {
-        if (isFileInvalid(path))
-            throw new InvalidFileException("Dangerous server file: " + path);
+        if (path == null || isFileInvalid(path))
+            throw new InvalidFileException("Dangerous server file: " + (path != null ? path : "null"));
     }
 
     public boolean isFileInvalid(Path path) {
@@ -39,7 +39,7 @@ public class FileFilter {
         String name = path.getFileName().toString();
         String ext  = getExtension(name);
 
-        if (!AllowedExtensions.isAllowed(ext)) {
+        if (AllowedExtensions.isAllowed(ext)) {
             logger.warn("Disallowed path extension: {}", name);
             return true;
         }
@@ -49,7 +49,11 @@ public class FileFilter {
                 try (BufferedReader reader = Files.newBufferedReader(path, StandardCharsets.UTF_8)) {
                     return scanAsText(reader, path.toString());
                 }
-            } else if ("xlsx".equals(ext)) return scanXlsxHead(Files.newInputStream(path), path.toString());
+            } else if ("xlsx".equals(ext)) {
+                try (InputStream in = Files.newInputStream(path)) {
+                    return scanXlsxHead(in, path.toString());
+                }
+            }
 
             return false;
         } catch (IOException e) {
@@ -67,7 +71,7 @@ public class FileFilter {
         String name = file.getOriginalFilename();
         String ext  = getExtension(name);
 
-        if (!AllowedExtensions.isAllowed(ext)) {
+        if (AllowedExtensions.isAllowed(ext)) {
             logger.warn("Disallowed file extension: {}", name);
             return true;
         }
@@ -124,6 +128,6 @@ public class FileFilter {
     }
 
     private boolean isTextExtension(String ext) {
-        return ext.equals("csv") || ext.equals("txt") || ext.equals("log");
+        return "csv".equals(ext) || "txt".equals(ext) || "log".equals(ext);
     }
 }

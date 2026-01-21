@@ -50,7 +50,7 @@ public class RestTemplateConfig {
         defaultTmf.init((KeyStore) null);
 
         logger.info("Fetching certificate chain from {}", TARGET_HOST);
-        X509Certificate[] serverCerts = fetchServerCertificateChain(TARGET_HOST, TARGET_PORT);
+        X509Certificate[] serverCerts = fetchServerCertificateChain();
         logger.info("Fetched {} certificates from server", serverCerts.length);
 
         KeyStore combinedKeyStore = KeyStore.getInstance(KeyStore.getDefaultType());
@@ -96,7 +96,7 @@ public class RestTemplateConfig {
         return new RestTemplate(new org.springframework.http.client.HttpComponentsClientHttpRequestFactory(httpClient));
     }
 
-    private X509Certificate[] fetchServerCertificateChain(String host, int port) {
+    private X509Certificate[] fetchServerCertificateChain() {
         try {
             logger.info("Creating SSL context to fetch server certificate chain...");
             SSLContext trustAllContext = SSLContext.getInstance("TLS");
@@ -111,12 +111,12 @@ public class RestTemplateConfig {
             }, new java.security.SecureRandom());
 
             SSLSocketFactory factory = trustAllContext.getSocketFactory();
-            try (SSLSocket socket = (SSLSocket) factory.createSocket(host, port)) {
+            try (SSLSocket socket = (SSLSocket) factory.createSocket(RestTemplateConfig.TARGET_HOST, RestTemplateConfig.TARGET_PORT)) {
                 socket.startHandshake();
                 SSLSession session = socket.getSession();
                 return (X509Certificate[]) session.getPeerCertificates();
             } catch (IOException e) {
-                logger.error("Failed during SSL handshake with {}:{}", host, port, e);
+                logger.error("Failed during SSL handshake with {}:{}", RestTemplateConfig.TARGET_HOST, RestTemplateConfig.TARGET_PORT, e);
                 throw new RuntimeException(e);
             }
         } catch (NoSuchAlgorithmException | KeyManagementException e) {
