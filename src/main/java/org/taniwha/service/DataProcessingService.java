@@ -404,8 +404,9 @@ public class DataProcessingService {
 
     private String stripFileSuffix(String columnOrFeatureName) {
         // Pattern to match file name inside parentheses: "(FileName.ext)"
-        // Assumes filenames typically have alphanumeric characters, underscores, dashes, and an extension
-        return columnOrFeatureName.replaceFirst("\\s*\\([\\w\\-.]+\\.(csv|xlsx)\\)$", "");
+        // Matches any characters except closing parenthesis, followed by .csv or .xlsx extension
+        // This handles filenames with spaces, special characters, dots, etc.
+        return columnOrFeatureName.replaceFirst("\\s*\\([^)]+\\.(csv|xlsx)\\)$", "");
     }
 
     private boolean applyFeatureFilter(Map<String, String> rowData, String feature, Object criteriaObject) {
