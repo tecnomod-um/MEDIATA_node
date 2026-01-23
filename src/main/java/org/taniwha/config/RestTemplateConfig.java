@@ -8,6 +8,7 @@ import org.apache.hc.client5.http.ssl.DefaultHostnameVerifier;
 import org.apache.hc.client5.http.ssl.SSLConnectionSocketFactory;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.web.client.RestTemplate;
@@ -24,8 +25,16 @@ import java.util.function.Supplier;
 public class RestTemplateConfig {
 
     private static final Logger logger = LoggerFactory.getLogger(RestTemplateConfig.class);
-    private static final String TARGET_HOST = "semantics.inf.um.es";
-    private static final int TARGET_PORT = 443;
+
+    @Value("${tls.probe.enabled:false}")
+    private boolean tlsProbeEnabled;
+
+    @Value("${tls.probe.host:semantics.inf.um.es}")
+    private String targetHost;
+
+    @Value("${tls.probe.port:443}")
+    private int targetPort;
+
 
     @Bean
     public RestTemplate restTemplate() {
@@ -45,11 +54,15 @@ public class RestTemplateConfig {
     }
 
     private RestTemplate buildRestTemplate() throws Exception {
+        if (!tlsProbeEnabled) {
+            logger.info("TLS probe disabled; using default RestTemplate");
+            return new RestTemplate();
+        }
         logger.info("Initializing default TrustManagerFactory...");
         TrustManagerFactory defaultTmf = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm());
         defaultTmf.init((KeyStore) null);
 
-        logger.info("Fetching certificate chain from {}", TARGET_HOST);
+        logger.info("Fetching certificate chain from {}", targetHost);
         X509Certificate[] serverCerts = fetchServerCertificateChain();
         logger.info("Fetched {} certificates from server", serverCerts.length);
 
@@ -111,12 +124,12 @@ public class RestTemplateConfig {
             }, new java.security.SecureRandom());
 
             SSLSocketFactory factory = trustAllContext.getSocketFactory();
-            try (SSLSocket socket = (SSLSocket) factory.createSocket(RestTemplateConfig.TARGET_HOST, RestTemplateConfig.TARGET_PORT)) {
+            try (SSLSocket socket = (SSLSocket) factory.createSocket(targetHost, targetPort)) {
                 socket.startHandshake();
                 SSLSession session = socket.getSession();
                 return (X509Certificate[]) session.getPeerCertificates();
             } catch (IOException e) {
-                logger.error("Failed during SSL handshake with {}:{}", RestTemplateConfig.TARGET_HOST, RestTemplateConfig.TARGET_PORT, e);
+                logger.error("Failed during SSL handshake with {}:{}", targetHost, targetPort, e);
                 throw new RuntimeException(e);
             }
         } catch (NoSuchAlgorithmException | KeyManagementException e) {

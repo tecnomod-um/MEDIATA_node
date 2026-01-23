@@ -14,4 +14,14 @@ NAME=${NAME:-SCUBA}
 DESC=${DESC:-This is the description for the new node}
 COLOR=${COLOR:-#21c2c3}
 
-exec java -jar /app/TANIWHA_Backend_node.jar --PORT=$PORT --NODE_IP=$NODE_IP --NAME="$NAME" --DESC="$DESC" --COLOR=$COLOR
+HOST_URL=${HOST_URL:-http://localhost:18088}
+HOST_SERVICE=${HOST_SERVICE:-/taniwha}
+
+exec java -jar /app/TANIWHA_Backend_node.jar \
+  --server.port=$PORT \
+  --node.ip="$NODE_IP" \
+  --name="$NAME" \
+  --desc="$DESC" \
+  --node.color="$COLOR" \
+  --host.url="$HOST_URL" \
+  --host.service="$HOST_SERVICE"
