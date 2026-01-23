@@ -1,8 +1,16 @@
-# Build from JAR
+# Build from source
+FROM maven:3.9-eclipse-temurin-17 AS builder
+WORKDIR /build
+
+COPY pom.xml .
+COPY src ./src
+
+RUN mvn -q -DskipTests package
+
 FROM eclipse-temurin:17-jdk-alpine
 WORKDIR /app
 
-COPY target/TANIWHA_Backend_node.jar /app/TANIWHA_Backend_node.jar
+COPY --from=builder /build/target/TANIWHA_Backend_node.jar /app/TANIWHA_Backend_node.jar
 COPY entrypoint.sh /app/entrypoint.sh
 
 RUN chmod +x /app/entrypoint.sh \
