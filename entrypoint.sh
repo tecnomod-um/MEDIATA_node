@@ -1,5 +1,24 @@
 #!/bin/sh
-mkdir -p /taniwha/datasets /taniwha/mapped_datasets /taniwha/fhir_mappings /taniwha/dataset_elements /taniwha/dataset_metadata
+set -eu
+
+WORKDIRS="
+/taniwha/datasets
+/taniwha/mapped_datasets
+/taniwha/fhir_mappings
+/taniwha/dataset_elements
+/taniwha/dataset_metadata
+"
+
+for d in $WORKDIRS; do
+  if [ -d "$d" ]; then
+    echo "Exists: $d"
+  else
+    echo "Creating: $d"
+    mkdir -p "$d"
+  fi
+done
+
+# Permissions (avoid failing if already set)
 chmod 777 /taniwha/datasets \
   && chmod 777 /taniwha/mapped_datasets \
   && chmod 777 /taniwha/fhir_mappings \
