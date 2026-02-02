@@ -31,6 +31,9 @@ public class DateUtil {
     }
 
     public static Optional<LocalDateTime> parseDate(String value) {
+        if (value == null || value.isEmpty()) {
+            return Optional.empty();
+        }
         for (String pattern : DATE_TIME_FORMATS) {
             DateTimeFormatter formatter = DateTimeFormatter.ofPattern(pattern);
             try {

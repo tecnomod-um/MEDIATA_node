@@ -34,7 +34,7 @@ public class NodeSyncService {
     private final String publicKeyBase64;
     private final PrincipalService principalService;
 
-    @Value("${host.url}" + "${host.service}")
+    @Value("${host.url}${host.service}")
     private String centralBackendUrl;
 
     @Value("${node.ip}")

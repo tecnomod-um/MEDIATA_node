@@ -7,17 +7,19 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
+import org.taniwha.dto.FileInfoDto;
 import org.taniwha.model.Dataset;
 import org.taniwha.model.Distribution;
+import org.taniwha.model.FileCategory;
 import org.taniwha.model.NodeMetadata;
 import org.taniwha.security.FileFilter;
 
 import java.io.IOException;
 import java.io.StringReader;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.nio.file.Paths;
+import java.nio.file.*;
+import java.nio.file.attribute.BasicFileAttributes;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
 import java.util.stream.Collectors;
 
@@ -25,6 +27,7 @@ import java.util.stream.Collectors;
 public class FileService {
 
     private static final Logger logger = LoggerFactory.getLogger(FileService.class);
+
     private final FileFilter fileFilter;
     private final String datasetsFolder;
     @Getter
@@ -32,14 +35,27 @@ public class FileService {
     private final String fhirMappingsFolder;
     private final String elementsFolder;
     private final String metadataFolder;
+    private final Path datasetsDir;
+    private final Path mappedDatasetsDir;
+    private final Path fhirMappingsDir;
+    private final Path elementsDir;
+    private final Path metadataDir;
 
     public FileService(FileFilter fileFilter, @Value("${app.path}") String basePath) {
         this.fileFilter = fileFilter;
+
         this.datasetsFolder = basePath + "/datasets";
         this.mappedDatasetsFolder = this.datasetsFolder;
         this.fhirMappingsFolder = basePath + "/fhir_mappings";
         this.elementsFolder = basePath + "/dataset_elements";
         this.metadataFolder = basePath + "/dataset_metadata";
+
+        Path base = Paths.get(basePath).normalize();
+        this.datasetsDir = base.resolve("datasets").normalize();
+        this.mappedDatasetsDir = this.datasetsDir; // keep your current behavior
+        this.fhirMappingsDir = base.resolve("fhir_mappings").normalize();
+        this.elementsDir = base.resolve("dataset_elements").normalize();
+        this.metadataDir = base.resolve("dataset_metadata").normalize();
     }
 
     public NodeMetadata parseNodeMetadata() {
@@ -49,19 +65,20 @@ public class FileService {
                 logger.warn("No metadata files found in {}", metadataFolder);
                 return null;
             }
-            
+
             String firstFileName = files.get(0);
             Path metaPath = Paths.get(metadataFolder, firstFileName);
+
             fileFilter.validate(metaPath);
+
             String rdfContent = Files.readString(metaPath);
 
-            // parse it with Jena as TTL
             Model model = ModelFactory.createDefaultModel();
             model.read(new StringReader(rdfContent), null, "TTL");
+
             NodeMetadata nm = new NodeMetadata();
             nm.setContext("https://www.w3.org/ns/dcat.jsonld");
 
-            // find all DCAT datasets
             Resource dcatDataset = model.createResource("http://www.w3.org/ns/dcat#Dataset");
             ResIterator dsIter = model.listResourcesWithProperty(RDF.type, dcatDataset);
 
@@ -90,33 +107,27 @@ public class FileService {
         ds.setModified(getStringValue(dsRes, "http://purl.org/dc/terms/modified"));
         ds.setAccrualPeriodicity(getStringValue(dsRes, "http://purl.org/dc/terms/accrualPeriodicity"));
 
-        // multi-valued fields
-        ds.setKeyword(getStringObjects(dsRes, "http://www.w3.org/ns/dcat#keyword"));
+        ds.setKeyword(getStringObjects(dsRes));
         ds.setTheme(getResourceURIs(dsRes, "http://www.w3.org/ns/dcat#theme"));
         ds.setLanguage(getResourceURIs(dsRes, "http://purl.org/dc/terms/language"));
 
-        // publisher (like a foaf:Organization)
         Resource pubRes = getResourceObject(dsRes, "http://purl.org/dc/terms/publisher");
         if (pubRes != null) {
             String pubName = getStringValue(pubRes, "http://xmlns.com/foaf/0.1/name");
             ds.setPublisher(pubName != null ? pubName : pubRes.getURI());
         }
 
-        // contact point
         Resource cpRes = getResourceObject(dsRes, "http://www.w3.org/ns/dcat#contactPoint");
         if (cpRes != null) {
             ds.setContactPoint(cpRes.getURI());
         }
 
-        // spatial coverage
         Resource spatialRes = getResourceObject(dsRes, "http://purl.org/dc/terms/spatial");
         if (spatialRes != null) {
-            // e.g. geometry
             String geometry = getStringValue(spatialRes, "http://www.w3.org/ns/locn#geometry");
             ds.setSpatial(geometry != null ? geometry : spatialRes.getURI());
         }
 
-        // temporal coverage
         Resource temporalRes = getResourceObject(dsRes, "http://purl.org/dc/terms/temporal");
         if (temporalRes != null) {
             String start = getStringValue(temporalRes, "http://www.w3.org/ns/dcat#startDate");
@@ -128,7 +139,6 @@ public class FileService {
             }
         }
 
-        // distributions
         ds.setDistribution(parseDistributions(dsRes));
         return ds;
     }
@@ -204,11 +214,16 @@ public class FileService {
 
     public String saveDatasetElements(String fileName, String csvData) {
         try {
-            String sanitizedFileName = fileName.replaceAll("[^a-zA-Z0-9._-]", "_");
+            String sanitizedFileName = sanitizeFileName(fileName);
             sanitizedFileName = sanitizedFileName.replaceAll("(?i)\\.(csv|xlsx)$", "");
             String finalFileName = sanitizedFileName + "_elements.csv";
+
             String filePath = Paths.get(elementsFolder, finalFileName).toString();
-            Files.write(Paths.get(filePath), csvData.getBytes());
+
+            Path outPath = Paths.get(filePath).normalize();
+            fileFilter.validate(outPath);
+
+            Files.writeString(outPath, csvData);
             logger.info("Saved dataset elements to {}", filePath);
             return filePath;
         } catch (IOException e) {
@@ -219,8 +234,20 @@ public class FileService {
 
     private List<String> listFilesInFolder(String folderPath) {
         try {
-            return Files.list(Paths.get(folderPath))
+            Path dir = Paths.get(folderPath);
+            if (!Files.exists(dir)) return new ArrayList<>();
+
+            return Files.list(dir)
                     .filter(Files::isRegularFile)
+                    .filter(p -> {
+                        try {
+                            fileFilter.validate(p);
+                            return true;
+                        } catch (Exception e) {
+                            logger.debug("File validation failed for {}: {}", p, e.getMessage());
+                            return false;
+                        }
+                    })
                     .map(path -> path.getFileName().toString())
                     .collect(Collectors.toList());
         } catch (IOException e) {
@@ -232,14 +259,13 @@ public class FileService {
     private String getStringValue(Resource subject, String propertyUri) {
         Property prop = ResourceFactory.createProperty(propertyUri);
         Statement st = subject.getProperty(prop);
-        if (st != null && st.getObject().isLiteral())
-            return st.getObject().asLiteral().getString();
+        if (st != null && st.getObject().isLiteral()) return st.getObject().asLiteral().getString();
         return null;
     }
 
-    private List<String> getStringObjects(Resource subject, String propertyUri) {
+    private List<String> getStringObjects(Resource subject) {
         List<String> results = new ArrayList<>();
-        Property prop = ResourceFactory.createProperty(propertyUri);
+        Property prop = ResourceFactory.createProperty("http://www.w3.org/ns/dcat#keyword");
         StmtIterator it = subject.listProperties(prop);
         while (it.hasNext()) {
             Statement st = it.nextStatement();
@@ -253,9 +279,7 @@ public class FileService {
     private Resource getResourceObject(Resource subject, String propertyUri) {
         Property prop = ResourceFactory.createProperty(propertyUri);
         Statement st = subject.getProperty(prop);
-        if (st != null && st.getObject().isResource()) {
-            return st.getObject().asResource();
-        }
+        if (st != null && st.getObject().isResource()) return st.getObject().asResource();
         return null;
     }
 
@@ -264,4 +288,132 @@ public class FileService {
         return (r != null) ? r.getURI() : null;
     }
 
+    private Path dirFor(FileCategory category) {
+        return switch (category) {
+            case DATASETS -> datasetsDir;
+            case MAPPED_DATASETS -> mappedDatasetsDir;
+            case FHIR_MAPPINGS -> fhirMappingsDir;
+            case DATASET_ELEMENTS -> elementsDir;
+            case DATASET_METADATA -> metadataDir;
+        };
+    }
+
+    public Path resolveExistingFilePath(FileCategory category, String fileName) {
+        return resolveSafeExistingFile(category, fileName);
+    }
+
+    private Path resolveSafePath(FileCategory category, String fileName) {
+        String safeName = String.valueOf(fileName).replace("\\", "/");
+        if (safeName.contains("/")) {
+            throw new IllegalArgumentException("Invalid file name");
+        }
+
+        Path dir = dirFor(category);
+        Path resolved = dir.resolve(safeName).normalize();
+
+        if (!resolved.startsWith(dir)) {
+            throw new IllegalArgumentException("Invalid path");
+        }
+
+        return resolved;
+    }
+
+    private Path resolveSafeExistingFile(FileCategory category, String fileName) {
+        Path p = resolveSafePath(category, fileName);
+
+        fileFilter.validate(p);
+
+        if (!Files.exists(p)) {
+            throw new IllegalArgumentException("File does not exist");
+        }
+        if (!Files.isRegularFile(p)) {
+            throw new IllegalArgumentException("Not a file");
+        }
+        return p;
+    }
+
+    private String sanitizeFileName(String name) {
+        return String.valueOf(name).replaceAll("[^a-zA-Z0-9._-]", "_");
+    }
+
+    public List<FileInfoDto> listFilesWithInfo(FileCategory category) {
+        Path dir = dirFor(category);
+
+        try {
+            if (!Files.exists(dir)) return List.of();
+
+            List<FileInfoDto> out = new ArrayList<>();
+            try (var stream = Files.list(dir)) {
+                stream
+                        .filter(Files::isRegularFile)
+                        .forEach(p -> {
+                            try {
+                                fileFilter.validate(p);
+                                BasicFileAttributes attrs = Files.readAttributes(p, BasicFileAttributes.class);
+
+                                long createdMs = (attrs.creationTime() != null)
+                                        ? attrs.creationTime().toMillis()
+                                        : attrs.lastModifiedTime().toMillis();
+
+                                long modifiedMs = (attrs.lastModifiedTime() != null)
+                                        ? attrs.lastModifiedTime().toMillis()
+                                        : createdMs;
+
+                                out.add(new FileInfoDto(
+                                        p.getFileName().toString(),
+                                        attrs.size(),
+                                        createdMs,
+                                        modifiedMs
+                                ));
+                            } catch (Exception e) {
+                                logger.warn("Skipping file due to validation/read error: {}", p, e);
+                            }
+                        });
+            }
+
+            out.sort(Comparator.comparing(FileInfoDto::getName, String.CASE_INSENSITIVE_ORDER));
+            return out;
+
+        } catch (IOException e) {
+            logger.error("Failed to list files with info for category={}", category, e);
+            return List.of();
+        }
+    }
+
+    public void renameFile(FileCategory category, String from, String to) {
+        Path src = resolveSafeExistingFile(category, from);
+
+        String sanitizedTo = sanitizeFileName(to).trim();
+        if (sanitizedTo.isEmpty()) {
+            throw new IllegalArgumentException("Invalid destination name");
+        }
+
+        if (sanitizedTo.equals(from)) return;
+
+        Path dst = resolveSafePath(category, sanitizedTo);
+
+        try {
+            if (Files.exists(dst)) throw new IllegalArgumentException("Destination already exists");
+
+            try {
+                Files.move(src, dst, StandardCopyOption.ATOMIC_MOVE);
+            } catch (AtomicMoveNotSupportedException e) {
+                Files.move(src, dst);
+            }
+        } catch (IOException e) {
+            throw new RuntimeException("Rename failed", e);
+        }
+    }
+
+    public void deleteFile(FileCategory category, String name) {
+        Path p = resolveSafePath(category, name);
+        try {
+            if (!Files.exists(p))
+                return;
+            fileFilter.validate(p);
+            Files.delete(p);
+        } catch (IOException e) {
+            throw new RuntimeException("Delete failed", e);
+        }
+    }
 }

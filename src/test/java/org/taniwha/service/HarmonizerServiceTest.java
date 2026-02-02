@@ -30,7 +30,7 @@ class HarmonizerServiceTest {
 
         FileService fileService = new FileService(fileFilter, baseDir.toString());
         DataProcessingService dataProcessingService = new DataProcessingService(fileFilter);
-        DataCleaningService dataCleaningService = new DataCleaningService();
+        DataCleaningService dataCleaningService = new DataCleaningService(fileService, dataProcessingService);
         harmonizerService = new HarmonizerService(dataProcessingService, dataCleaningService, fileService);
     }
 
@@ -42,32 +42,41 @@ class HarmonizerServiceTest {
     }
 
     @Test
-    void parseFiles_emptyConfig_doesNotCreateAnyParsedFile() throws Exception {
+    void parseFiles_emptyConfig_createsEmptyParsedFile() throws Exception {
         makeCsv("d1.csv", "x;y\n1;2\n");
         String configs = "[]";
         var mappings = Map.of("cfgX", List.of("d1.csv"));
 
         String result = harmonizerService.parseFiles(configs, mappings, null);
         assertThat(result).isEqualTo("Files processed successfully.");
+
         Path out = baseDir.resolve("datasets").resolve("parsed_d1.csv");
-        assertThat(out).doesNotExist();
+        assertThat(out).exists();
+
+        // With no configs, outputHeaders is empty, so file should be empty (or just a newline)
+        String content = Files.readString(out);
+        assertThat(content.trim()).isEmpty();
     }
 
     @Test
     void parseFiles_withMatchingConfig_writesParsedCsv() throws Exception {
-
         makeCsv("d1.csv", "x;y\n1;2\n");
+
+        // IMPORTANT: headers come from groups[].column now
         String configs = """
-                [
-                  {
-                    "cfg1": {
-                      "fileName":"cfg1",
-                      "columns":["x","y"],
-                      "groups":[]
-                    }
-                  }
-                ]
-                """;
+            [
+              {
+                "cfg1": {
+                  "fileName":"cfg1",
+                  "columns":["x","y"],
+                  "groups":[
+                    { "column":"x", "values":[] },
+                    { "column":"y", "values":[] }
+                  ]
+                }
+              }
+            ]
+            """;
 
         var mappings = Map.of("cfg1", List.of("d1.csv"));
 
@@ -78,31 +87,37 @@ class HarmonizerServiceTest {
         assertThat(out).exists();
 
         List<String> lines = Files.readAllLines(out);
-        assertThat(lines).hasSize(2).element(0).isEqualTo("x;y");
-        assertThat(lines).element(1).isEqualTo("1;2");
+        assertThat(lines).hasSize(2);
+        assertThat(lines.get(0)).isEqualTo("x;y");
+        assertThat(lines.get(1)).isEqualTo("1;2");
     }
 
     @Test
     void parseFiles_withCleaningOptions_removesEmptyAndDuplicates_andStandardizesDates() throws Exception {
         makeCsv("d1.csv", """
-                a;b;date
-                1;foo;2025/07/11
-                1;foo;2025/07/11
-                ;;
-                2;bar;11-07-2025
-                """);
+            a;b;date
+            1;foo;2025/07/11
+            1;foo;2025/07/11
+            ;;
+            2;bar;11-07-2025
+            """);
 
+        // IMPORTANT: headers come from groups[].column now
         String configs = """
-                [
-                  {
-                    "cfg1": {
-                      "fileName":"cfg1",
-                      "columns":["a","b","date"],
-                      "groups":[]
-                    }
-                  }
-                ]
-                """;
+            [
+              {
+                "cfg1": {
+                  "fileName":"cfg1",
+                  "columns":["a","b","date"],
+                  "groups":[
+                    { "column":"a", "values":[] },
+                    { "column":"b", "values":[] },
+                    { "column":"date", "values":[] }
+                  ]
+                }
+              }
+            ]
+            """;
 
         var mappings = Map.of("cfg1", List.of("d1.csv"));
 
@@ -127,38 +142,43 @@ class HarmonizerServiceTest {
 
     @Test
     void parseFiles_withStandardGroupMapping_appliesGroupColumnLogic() throws Exception {
-
         makeCsv("d1.csv", "a;b\nfoo;bar\n");
+
+        // IMPORTANT: include passthrough headers via groups
         String configs = """
-                [
-                  {
-                    "cfg1": {
-                      "fileName":"cfg1",
-                      "columns":["a","b"],
-                      "groups":[
+            [
+              {
+                "cfg1": {
+                  "fileName":"cfg1",
+                  "columns":["a","b"],
+                  "groups":[
+                    { "column":"a", "values":[] },
+                    { "column":"b", "values":[] },
+                    {
+                      "column":"mapped",
+                      "values":[
                         {
-                          "column":"mapped",
-                          "values":[
-                            {
-                              "name":"YES",
-                              "mapping":[
-                                { "groupColumn":"a", "value":"foo" }
-                              ]
-                            }
+                          "name":"YES",
+                          "mapping":[
+                            { "groupColumn":"a", "value":"foo" }
                           ]
                         }
                       ]
                     }
-                  }
-                ]
-                """;
+                  ]
+                }
+              }
+            ]
+            """;
 
         var mappings = Map.of("cfg1", List.of("d1.csv"));
 
         String result = harmonizerService.parseFiles(configs, mappings, null);
         assertThat(result).isEqualTo("Files processed successfully.");
+
         Path out = baseDir.resolve("datasets").resolve("parsed_d1.csv");
         assertThat(out).exists();
+
         List<String> lines = Files.readAllLines(out);
         assertThat(lines.get(0)).isEqualTo("a;b;mapped");
         assertThat(lines.get(1)).isEqualTo("foo;bar;YES");
@@ -167,61 +187,72 @@ class HarmonizerServiceTest {
     @Test
     void parseFiles_withCustomOneHotAndRangeMapping_combinesCorrectly() throws Exception {
         makeCsv("d2.csv", """
-                age;score;when
-                25;88;2025-07-11T10:00:00Z
-                42;55;2025-07-12T11:00:00Z
-                70;30;2025-07-13T12:00:00Z
-                """);
+            age;score;when
+            25;88;2025-07-11T10:00:00Z
+            42;55;2025-07-12T11:00:00Z
+            70;30;2025-07-13T12:00:00Z
+            """);
 
+        // IMPORTANT:
+        // - cfg2 must define headers via groups (age/score/when passthrough)
+        // - range mapping must be in mapping.value as an object {type,minValue,maxValue}
         String configs = """
-                [
-                  {
-                    "cfg2": {
-                      "fileName":"cfg2",
-                      "columns":["age","score","when"],
-                      "groups":[]
-                    }
-                  },
-                  {
-                    "age_group": {
-                      "fileName":"custom_mapping",
-                      "mappingType":"one-hot",
-                      "columns":["age"],
-                      "groups":[
+            [
+              {
+                "cfg2": {
+                  "fileName":"cfg2",
+                  "columns":["age","score","when"],
+                  "groups":[
+                    { "column":"age", "values":[] },
+                    { "column":"score", "values":[] },
+                    { "column":"when", "values":[] }
+                  ]
+                }
+              },
+              {
+                "age_group": {
+                  "fileName":"custom_mapping",
+                  "mappingType":"one-hot",
+                  "columns":["age"],
+                  "groups":[
+                    {
+                      "values":[
                         {
-                          "values":[
+                          "name":"MID",
+                          "mapping":[
                             {
-                              "name":"MID",
-                              "mapping":[
-                                { "groupColumn":"age", "value":40, "minValue":40, "maxValue":60, "type":"integer" }
-                              ]
+                              "groupColumn":"age",
+                              "value": { "type":"integer", "minValue":40, "maxValue":60 }
                             }
                           ]
                         }
                       ]
                     }
-                  },
-                  {
-                    "high_score": {
-                      "fileName":"custom_mapping",
-                      "mappingType":"default",
-                      "columns":["score"],
-                      "groups":[
+                  ]
+                }
+              },
+              {
+                "high_score": {
+                  "fileName":"custom_mapping",
+                  "mappingType":"default",
+                  "columns":["score"],
+                  "groups":[
+                    {
+                      "values":[
                         {
-                          "values":[
-                            {
-                              "name":"TOP",
-                              "mapping":[
-                                { "groupColumn":"score", "value":"88" }
-                              ]
-                            }
+                          "name":"TOP",
+                          "mapping":[
+                            { "groupColumn":"score", "value":"88" }
                           ]
                         }
                       ]
                     }
-                  }
-                ]
-                """;
+                  ]
+                }
+              }
+            ]
+            """;
+
         var mappings = Map.of("cfg2", List.of("d2.csv"));
 
         String msg = harmonizerService.parseFiles(configs, mappings, null);
@@ -229,11 +260,13 @@ class HarmonizerServiceTest {
 
         Path out = baseDir.resolve("datasets").resolve("parsed_d2.csv");
         assertThat(out).exists();
+
         List<String> rows = Files.readAllLines(out);
 
         assertThat(rows.get(0)).isEqualTo("age;score;when;age_group;high_score");
+        // age_group "one-hot": hit -> 1 else 0
         assertThat(rows.get(1)).isEqualTo("25;88;2025-07-11T10:00:00Z;0;TOP");
-        assertThat(rows.get(2)).isEqualTo("42;55;2025-07-12T11:00:00Z;0;");
+        assertThat(rows.get(2)).isEqualTo("42;55;2025-07-12T11:00:00Z;1;");
         assertThat(rows.get(3)).isEqualTo("70;30;2025-07-13T12:00:00Z;0;");
     }
 

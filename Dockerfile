@@ -1,4 +1,5 @@
-FROM openjdk:17-jdk-alpine
+# Build from JAR
+FROM eclipse-temurin:17-jdk-alpine
 WORKDIR /app
 
 COPY target/TANIWHA_Backend_node.jar /app/TANIWHA_Backend_node.jar

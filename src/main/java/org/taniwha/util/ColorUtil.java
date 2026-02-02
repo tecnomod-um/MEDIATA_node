@@ -1,10 +1,10 @@
 package org.taniwha.util;
 
-import java.util.Random;
+import java.security.SecureRandom;
 
 public class ColorUtil {
 
-    private static final Random RANDOM = new Random();
+    private static final SecureRandom RANDOM = new SecureRandom();
 
     private ColorUtil() {
     }
