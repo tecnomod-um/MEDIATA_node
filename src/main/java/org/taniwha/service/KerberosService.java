@@ -29,30 +29,30 @@ public class KerberosService {
 
     public KrbTicket decodeSgtTicket(String encodedTicket) throws IOException {
         byte[] combinedBytes = Base64.getDecoder().decode(encodedTicket);
-        ByteArrayInputStream byteStream = new ByteArrayInputStream(combinedBytes);
-        ObjectInputStream objStream = new ObjectInputStream(byteStream);
+        try (ByteArrayInputStream byteStream = new ByteArrayInputStream(combinedBytes);
+             ObjectInputStream objStream = new ObjectInputStream(byteStream)) {
 
-        int ticketLength = objStream.readInt();
-        byte[] ticketBytes = new byte[ticketLength];
-        objStream.readFully(ticketBytes);
-        Ticket ticket = new Ticket();
-        ticket.decode(ticketBytes);
+            int ticketLength = objStream.readInt();
+            byte[] ticketBytes = new byte[ticketLength];
+            objStream.readFully(ticketBytes);
+            Ticket ticket = new Ticket();
+            ticket.decode(ticketBytes);
 
-        int encKdcRepPartLength = objStream.readInt();
-        byte[] encKdcRepPartBytes = new byte[encKdcRepPartLength];
-        objStream.readFully(encKdcRepPartBytes);
-        EncTgsRepPart encKdcRepPart = new EncTgsRepPart();
-        encKdcRepPart.decode(encKdcRepPartBytes);
+            int encKdcRepPartLength = objStream.readInt();
+            byte[] encKdcRepPartBytes = new byte[encKdcRepPartLength];
+            objStream.readFully(encKdcRepPartBytes);
+            EncTgsRepPart encKdcRepPart = new EncTgsRepPart();
+            encKdcRepPart.decode(encKdcRepPartBytes);
 
-        int clientPrincipalLength = objStream.readInt();
-        byte[] clientPrincipalBytes = new byte[clientPrincipalLength];
-        objStream.readFully(clientPrincipalBytes);
-        PrincipalName clientPrincipal = new PrincipalName(new String(clientPrincipalBytes));
-        objStream.close();
+            int clientPrincipalLength = objStream.readInt();
+            byte[] clientPrincipalBytes = new byte[clientPrincipalLength];
+            objStream.readFully(clientPrincipalBytes);
+            PrincipalName clientPrincipal = new PrincipalName(new String(clientPrincipalBytes));
 
-        SgtTicket sgtTicket = new SgtTicket(ticket, encKdcRepPart);
-        sgtTicket.setClientPrincipal(clientPrincipal);
-        return sgtTicket;
+            SgtTicket sgtTicket = new SgtTicket(ticket, encKdcRepPart);
+            sgtTicket.setClientPrincipal(clientPrincipal);
+            return sgtTicket;
+        }
     }
 
     public EncryptionKey loadKeyFromKeytab(String principal, byte[] keytabData, EncryptionType encryptionType) throws KrbException {

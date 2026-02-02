@@ -19,7 +19,7 @@ public class ErrorLoggingService {
 
     private static final Logger logger = LoggerFactory.getLogger(ErrorLoggingService.class);
     private final RestTemplate restTemplate;
-    @Value("${host.url}" + "${host.service}")
+    @Value("${host.url}${host.service}")
     private String centralBackendUrl;
 
     public ErrorLoggingService(RestTemplate restTemplate) {

@@ -174,7 +174,7 @@ public class Gui extends javafx.application.Application {
     private void handleConnect(TextField portField, TextField nodeIpField, TextField nameField, TextField descField, String color) {
         isAppRunning = true;
         progressBar.setVisible(true);
-        Task<Void> task = new Task<Void>() {
+        Task<Void> task = new Task<>() {
             @Override
             protected Void call() {
                 try {

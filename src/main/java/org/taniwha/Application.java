@@ -10,6 +10,11 @@ import org.taniwha.service.NodeSyncService;
 import org.taniwha.view.Gui;
 
 import java.awt.*;
+import java.io.PrintWriter;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.time.LocalDateTime;
+import java.util.Arrays;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ThreadFactory;
@@ -26,11 +31,19 @@ public class Application {
     private long heartbeatInterval;
 
     public static void main(String[] args) {
-        // Conditionally switch launch modes based on the environment
-        if (!GraphicsEnvironment.isHeadless() && System.console() == null)
-            Gui.main(args);
-        else
-            launchSpringBootApp(args);
+        boolean forceCli = Arrays.stream(args).anyMatch(a -> a.equalsIgnoreCase("--cli") || a.equalsIgnoreCase("--nogui")) || "cli".equalsIgnoreCase(System.getenv("TANIWHA_MODE"));
+        boolean canShowGui = !GraphicsEnvironment.isHeadless();
+
+        if (canShowGui && !forceCli) {
+            try {
+                Gui.main(args);
+                return;
+            } catch (Throwable guiFailure) {
+                logger.error("GUI startup failed; falling back to CLI mode.", guiFailure);
+                // Continue to Spring Boot below
+            }
+        }
+        launchSpringBootApp(args);
     }
 
     // Main starting point of the app
