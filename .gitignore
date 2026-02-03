@@ -1,5 +1,6 @@
 ### Sensitive data###
 .env
+node-secrets.env
 nohup.out
 target/
 taniwha.log
