@@ -26,6 +26,9 @@ import java.util.stream.Stream;
 public class HarmonizerService {
     private static final Logger logger = LoggerFactory.getLogger(HarmonizerService.class);
 
+    private static final String GROUPS_KEY = "groups";
+    private static final String VALUES_KEY = "values";
+
     private final DataProcessingService dataProcessingService;
     private final DataCleaningService dataCleaningService;
     private final FileService fileService;
@@ -98,7 +101,7 @@ public class HarmonizerService {
                             Map<String, Object> m = (Map<String, Object>) cc;
 
                             @SuppressWarnings("unchecked")
-                            List<Map<String, Object>> groups = (List<Map<String, Object>>) m.get("groups");
+                            List<Map<String, Object>> groups = (List<Map<String, Object>>) m.get(GROUPS_KEY);
                             if (groups != null) {
                                 groups.forEach(g -> headerSet.add((String) g.get("column")));
                             }
@@ -164,14 +167,14 @@ public class HarmonizerService {
                                     var m = (Map<String, Object>) obj;
 
                                     @SuppressWarnings("unchecked")
-                                    List<Map<String, Object>> groups = (List<Map<String, Object>>) m.get("groups");
+                                    List<Map<String, Object>> groups = (List<Map<String, Object>>) m.get(GROUPS_KEY);
                                     if (groups == null) return;
 
                                     for (var grp : groups) {
                                         String tgt = (String) grp.get("column");
 
                                         @SuppressWarnings("unchecked")
-                                        List<Map<String, Object>> vals = (List<Map<String, Object>>) grp.get("values");
+                                        List<Map<String, Object>> vals = (List<Map<String, Object>>) grp.get(VALUES_KEY);
                                         if (vals == null) continue;
 
                                         vals.stream()
@@ -190,7 +193,7 @@ public class HarmonizerService {
                                 String type = (String) m.get("mappingType");
 
                                 @SuppressWarnings("unchecked")
-                                List<Map<String, Object>> groups = (List<Map<String, Object>>) m.get("groups");
+                                List<Map<String, Object>> groups = (List<Map<String, Object>>) m.get(GROUPS_KEY);
                                 if (groups == null) return;
 
                                 @SuppressWarnings("unchecked")
@@ -201,7 +204,7 @@ public class HarmonizerService {
                                     boolean hit = groups.stream()
                                             .flatMap(g -> {
                                                 @SuppressWarnings("unchecked")
-                                                List<Map<String, Object>> values = (List<Map<String, Object>>) g.get("values");
+                                                List<Map<String, Object>> values = (List<Map<String, Object>>) g.get(VALUES_KEY);
                                                 return values == null ? Stream.empty() : values.stream();
                                             })
                                             .anyMatch(vo -> mapValueForRecord(row, vo, allowedSet).findFirst().isPresent());
@@ -210,7 +213,7 @@ public class HarmonizerService {
                                 } else {
                                     for (var grp : groups) {
                                         @SuppressWarnings("unchecked")
-                                        List<Map<String, Object>> vals = (List<Map<String, Object>>) grp.get("values");
+                                        List<Map<String, Object>> vals = (List<Map<String, Object>>) grp.get(VALUES_KEY);
                                         if (vals == null) continue;
 
                                         Optional<String> mapped = vals.stream()
@@ -239,8 +242,7 @@ public class HarmonizerService {
             }
             return "Files processed successfully.";
         } catch (Exception ex) {
-            logger.error("Error in parseFiles:", ex);
-            throw new RuntimeException("Error processing files", ex);
+            throw new IllegalStateException("Error processing files", ex);
         }
     }
 
@@ -273,18 +275,18 @@ public class HarmonizerService {
         return Collections.emptyMap();
     }
 
-    private Stream<String> mapValueForRecord(Map<String, String> record,
+    private Stream<String> mapValueForRecord(Map<String, String> row,
                                              Map<String, Object> valueObj) {
-        return mapValueForRecordInternal(record, valueObj, null);
+        return mapValueForRecordInternal(row, valueObj, null);
     }
 
-    private Stream<String> mapValueForRecord(Map<String, String> record,
+    private Stream<String> mapValueForRecord(Map<String, String> row,
                                              Map<String, Object> valueObj,
                                              Set<String> allowedGroupColumns) {
-        return mapValueForRecordInternal(record, valueObj, allowedGroupColumns);
+        return mapValueForRecordInternal(row, valueObj, allowedGroupColumns);
     }
 
-    private Stream<String> mapValueForRecordInternal(Map<String, String> record,
+    private Stream<String> mapValueForRecordInternal(Map<String, String> row,
                                                      Map<String, Object> valueObj,
                                                      Set<String> allowedGroupColumnsOrNull) {
         String mappedName = Objects.toString(valueObj.get("name"), "");
@@ -301,16 +303,16 @@ public class HarmonizerService {
                     if (allowedGroupColumnsOrNull != null && !allowedGroupColumnsOrNull.contains(groupColumn)) {
                         return false;
                     }
-                    if (!record.containsKey(groupColumn)) {
-                        logger.debug("[mapValueForRecord] record missing column '{}' (available={})",
-                                groupColumn, record.keySet());
+                    if (!row.containsKey(groupColumn)) {
+                        logger.debug("[mapValueForRecord] row missing column '{}' (available={})",
+                                groupColumn, row.keySet());
                         return false;
                     }
 
-                    String raw = record.get(groupColumn);
+                    String raw = row.get(groupColumn);
                     Object mv = mapping.get("value");
 
-                    // range/date mapping: value is an object with {type,minValue,maxValue}
+                    // range/date mapping: value is an object with type, minValue and maxValue fields
                     if (mv instanceof Map<?, ?>) {
                         @SuppressWarnings("unchecked")
                         var rm = (Map<String, Object>) mv;

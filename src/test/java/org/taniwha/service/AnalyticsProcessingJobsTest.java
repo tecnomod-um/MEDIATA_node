@@ -37,7 +37,7 @@ class AnalyticsProcessingJobsTest {
         
         assertThat(state).isNotNull();
         assertThat(state.jobId).isEqualTo(jobId);
-        assertThat(state.state).isEqualTo(ProcessingStatusDTO.State.RUNNING);
+        assertThat(state.getState()).isEqualTo(ProcessingStatusDTO.State.RUNNING);
         assertThat(state.percent.get()).isZero();
     }
 
@@ -84,7 +84,7 @@ class AnalyticsProcessingJobsTest {
         jobs.fail(jobId, "Test error message");
         
         AnalyticsProcessingJobs.JobState state = jobs.getJob(jobId);
-        assertThat(state.state).isEqualTo(ProcessingStatusDTO.State.ERROR);
+        assertThat(state.getState()).isEqualTo(ProcessingStatusDTO.State.ERROR);
         assertThat(state.message).isEqualTo("Test error message");
         assertThat(state.percent.get()).isEqualTo(50); // Should preserve progress
     }
@@ -106,8 +106,8 @@ class AnalyticsProcessingJobsTest {
         jobs.complete(jobId, results);
         
         AnalyticsProcessingJobs.JobState state = jobs.getJob(jobId);
-        assertThat(state.state).isEqualTo(ProcessingStatusDTO.State.DONE);
-        assertThat(state.results).isEqualTo(results);
+        assertThat(state.getState()).isEqualTo(ProcessingStatusDTO.State.DONE);
+        assertThat(state.getResults()).isEqualTo(results);
         assertThat(state.percent.get()).isEqualTo(100);
     }
 

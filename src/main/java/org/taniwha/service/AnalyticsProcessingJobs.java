@@ -15,13 +15,18 @@ public class AnalyticsProcessingJobs {
 
     public static class JobState {
         final String jobId;
-        public volatile ProcessingStatusDTO.State state = ProcessingStatusDTO.State.RUNNING;
+        private volatile ProcessingStatusDTO.State state = ProcessingStatusDTO.State.RUNNING;
         final AtomicInteger percent = new AtomicInteger(0);
         volatile String currentFile = null;
         volatile String message = null;
-        public volatile List<AnalyticsResponseDTO> results = null;
+        private volatile List<AnalyticsResponseDTO> results = null;
 
         JobState(String jobId) { this.jobId = jobId; }
+
+        public ProcessingStatusDTO.State getState() { return state; }
+        public List<AnalyticsResponseDTO> getResults() { return results; }
+        void setState(ProcessingStatusDTO.State state) { this.state = state; }
+        void setResults(List<AnalyticsResponseDTO> results) { this.results = results; }
     }
 
     private final Map<String, JobState> jobs = new ConcurrentHashMap<>();
@@ -40,11 +45,11 @@ public class AnalyticsProcessingJobs {
         if (s == null) return null;
         return new ProcessingStatusDTO(
                 s.jobId,
-                s.state,
+                s.getState(),
                 s.percent.get(),
                 s.currentFile,
                 s.message,
-                includeResults ? s.results : null
+                includeResults ? s.getResults() : null
         );
     }
 
@@ -62,7 +67,7 @@ public class AnalyticsProcessingJobs {
     public void fail(String jobId, String message) {
         JobState s = jobs.get(jobId);
         if (s == null) return;
-        s.state = ProcessingStatusDTO.State.ERROR;
+        s.setState(ProcessingStatusDTO.State.ERROR);
         s.message = message;
         s.percent.set(Math.max(s.percent.get(), 0));
     }
@@ -70,8 +75,8 @@ public class AnalyticsProcessingJobs {
     public void complete(String jobId, List<AnalyticsResponseDTO> results) {
         JobState s = jobs.get(jobId);
         if (s == null) return;
-        s.state = ProcessingStatusDTO.State.DONE;
-        s.results = results;
+        s.setState(ProcessingStatusDTO.State.DONE);
+        s.setResults(results);
         s.percent.set(100);
     }
 }

@@ -195,7 +195,7 @@ class HarmonizerServiceTest {
 
         // IMPORTANT:
         // - cfg2 must define headers via groups (age/score/when passthrough)
-        // - range mapping must be in mapping.value as an object {type,minValue,maxValue}
+        // - range mapping must be in mapping.value as an object with type, minValue and maxValue fields
         String configs = """
             [
               {

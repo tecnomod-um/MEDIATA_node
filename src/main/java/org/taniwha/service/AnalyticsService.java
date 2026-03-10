@@ -14,6 +14,7 @@ import org.taniwha.util.NumberUtil;
 
 import jakarta.annotation.PreDestroy;
 import java.io.BufferedInputStream;
+import java.io.IOException;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -44,6 +45,7 @@ public class AnalyticsService {
     private static final String DATE_TYPE = "date";
     private static final String BINS = "bins";
     private static final String BIN_RANGES = "binRanges";
+    private static final String NO_DATA_FOUND_MSG = "No data found in file: ";
     private static final int MIN_RECORDS_FOR_UNIQUE_FILTER = 10;
 
     // Huge detection thresholds (tune as needed)
@@ -129,7 +131,7 @@ public class AnalyticsService {
         });
     }
 
-    private boolean isHugeFile(Path p) throws Exception {
+    private boolean isHugeFile(Path p) throws IOException {
         long size = Files.size(p);
         if (size >= HUGE_BYTES_THRESHOLD) return true;
 
@@ -137,14 +139,14 @@ public class AnalyticsService {
         return estRows >= HUGE_ROWS_THRESHOLD;
     }
 
-    private long estimateRowsFast(Path p) throws Exception {
+    private long estimateRowsFast(Path p) throws IOException {
         String name = p.getFileName().toString().toLowerCase();
         if (name.endsWith(".csv")) return estimateCsvRows(p);
         if (name.endsWith(".xlsx")) return estimateXlsxRowsFromDimensions(p);
         return 0;
     }
 
-    private long estimateCsvRows(Path p) throws Exception {
+    private long estimateCsvRows(Path p) throws IOException {
         // Count '\n' quickly; subtract 1 header line. Approximate but good enough for progress.
         try (InputStream in = new BufferedInputStream(Files.newInputStream(p))) {
             byte[] buf = new byte[64 * 1024];
@@ -159,7 +161,7 @@ public class AnalyticsService {
         }
     }
 
-    private long estimateXlsxRowsFromDimensions(Path p) throws Exception {
+    private long estimateXlsxRowsFromDimensions(Path p) throws IOException {
         long maxRow = 0;
         try (ZipFile zip = new ZipFile(p.toFile())) {
             Enumeration<? extends ZipEntry> en = zip.entries();
@@ -189,7 +191,7 @@ public class AnalyticsService {
         return (int) Math.max(0, Math.min(100, Math.round(p)));
     }
 
-    private List<AnalyticsResponseDTO> processDatasetsOnDiskWithProgress(String jobId, List<String> fileNames) throws Exception {
+    private List<AnalyticsResponseDTO> processDatasetsOnDiskWithProgress(String jobId, List<String> fileNames) throws IOException {
         logger.info("Async discovery job {} set to process {} file(s)", jobId, fileNames.size());
 
         // Build estimated "work" from row estimates (fallback to 1 per file)
@@ -285,7 +287,7 @@ public class AnalyticsService {
                             + dateData.values().stream().mapToLong(List::size).sum()
                             + missingValueCounts.values().stream().mapToLong(Long::longValue).sum();
             if (totalRows == 0) {
-                response.setMessage("No data found in file: " + filename);
+                response.setMessage(NO_DATA_FOUND_MSG + filename);
                 return response;
             }
 
@@ -345,7 +347,7 @@ public class AnalyticsService {
                             + dateData.values().stream().mapToLong(List::size).sum()
                             + missingValueCounts.values().stream().mapToLong(Long::longValue).sum();
             if (totalRows == 0) {
-                response.setMessage("No data found in file: " + filename);
+                response.setMessage(NO_DATA_FOUND_MSG + filename);
                 return CompletableFuture.completedFuture(response);
             }
 
@@ -402,7 +404,7 @@ public class AnalyticsService {
             String fullPath = fileService.getDatasetFilePath(fileName);
             List<Map<String, String>> records = dataProcessingService.extractDataFromPath(Paths.get(fullPath));
             if (records.isEmpty()) {
-                response.setMessage("No data found in file: " + fileName);
+                response.setMessage(NO_DATA_FOUND_MSG + fileName);
                 return CompletableFuture.completedFuture(response);
             }
             processData(records, Optional.of(featureName), Optional.of(featureType), response, categoryCombinationCounts);
@@ -462,10 +464,13 @@ public class AnalyticsService {
                                         String column,
                                         String value) {
         boolean isDate = DateUtil.parseDate(value).isPresent();
-        if (overrideFeatureName.isPresent() && getOriginalFeatureName(overrideFeatureName.get()).equals(column)) {
-            if (isDate && !overrideFeatureType.orElse("unknown").equalsIgnoreCase(CATEGORICAL_TYPE))
-                return DATE_TYPE;
-            return overrideFeatureType.orElse("unknown").toLowerCase();
+        if (overrideFeatureName.isPresent()) {
+            String originalName = getOriginalFeatureName(overrideFeatureName.get());
+            if (column.equals(originalName)) {
+                if (isDate && !overrideFeatureType.orElse("unknown").equalsIgnoreCase(CATEGORICAL_TYPE))
+                    return DATE_TYPE;
+                return overrideFeatureType.orElse("unknown").toLowerCase();
+            }
         }
         if (isDate) return DATE_TYPE;
         if (value.matches("-?\\d+([.,]\\d+)?")) return CONTINUOUS_TYPE;
@@ -547,7 +552,7 @@ public class AnalyticsService {
         List<DateFeatureStatistics> dateStatisticsList = new ArrayList<>();
         dateData.forEach((key, dateStringList) -> {
             List<LocalDate> dates = dateStringList.stream().map(LocalDate::parse).toList();
-            List<Double> dateValues = dates.stream().mapToDouble(LocalDate::toEpochDay).boxed().collect(Collectors.toList());
+            List<Double> dateValues = dates.stream().mapToDouble(LocalDate::toEpochDay).boxed().toList();
             List<Double> outliers = identifyOutliers(dateValues);
 
             LocalDate earliestDate = dates.stream().min(LocalDate::compareTo).orElse(null);
@@ -654,9 +659,10 @@ public class AnalyticsService {
     }
 
     private List<Double> identifyOutliers(List<Double> data) {
-        Collections.sort(data);
-        double q1 = getPercentile(data, 25);
-        double q3 = getPercentile(data, 75);
+        List<Double> sorted = new ArrayList<>(data);
+        Collections.sort(sorted);
+        double q1 = getPercentile(sorted, 25);
+        double q3 = getPercentile(sorted, 75);
         double iqr = q3 - q1;
         double lowerBound = q1 - 1.5 * iqr;
         double upperBound = q3 + 1.5 * iqr;

@@ -28,7 +28,7 @@ public class AnalyticsController {
     }
 
     @PostMapping("/processList")
-    public ResponseEntity<?> processList(@RequestBody FileNamesDTO dto) {
+    public ResponseEntity<Object> processList(@RequestBody FileNamesDTO dto) {
         try {
             List<String> fileNames = dto.getFileNames();
             boolean huge = analyticsService.isAnyHugeForDiscovery(fileNames);
@@ -64,10 +64,10 @@ public class AnalyticsController {
         AnalyticsProcessingJobs.JobState s = jobs.getJob(jobId);
         if (s == null) return ResponseEntity.notFound().build();
 
-        if (s.state != ProcessingStatusDTO.State.DONE)
+        if (s.getState() != ProcessingStatusDTO.State.DONE)
             return ResponseEntity.status(HttpStatus.CONFLICT).build();
 
-        List<AnalyticsResponseDTO> out = s.results == null ? List.of() : s.results;
+        List<AnalyticsResponseDTO> out = s.getResults() == null ? List.of() : s.getResults();
         jobs.clear(jobId);
 
         return ResponseEntity.ok(out);
