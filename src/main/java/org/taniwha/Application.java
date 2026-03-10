@@ -10,10 +10,6 @@ import org.taniwha.service.NodeSyncService;
 import org.taniwha.view.Gui;
 
 import java.awt.*;
-import java.io.PrintWriter;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.time.LocalDateTime;
 import java.util.Arrays;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
@@ -38,7 +34,7 @@ public class Application {
             try {
                 Gui.main(args);
                 return;
-            } catch (Throwable guiFailure) {
+            } catch (Exception guiFailure) {
                 logger.error("GUI startup failed; falling back to CLI mode.", guiFailure);
                 // Continue to Spring Boot below
             }

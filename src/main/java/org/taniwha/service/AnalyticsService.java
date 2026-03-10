@@ -44,6 +44,7 @@ public class AnalyticsService {
     private static final String DATE_TYPE = "date";
     private static final String BINS = "bins";
     private static final String BIN_RANGES = "binRanges";
+    private static final String NO_DATA_FOUND_MSG = "No data found in file: ";
     private static final int MIN_RECORDS_FOR_UNIQUE_FILTER = 10;
 
     // Huge detection thresholds (tune as needed)
@@ -285,7 +286,7 @@ public class AnalyticsService {
                             + dateData.values().stream().mapToLong(List::size).sum()
                             + missingValueCounts.values().stream().mapToLong(Long::longValue).sum();
             if (totalRows == 0) {
-                response.setMessage("No data found in file: " + filename);
+                response.setMessage(NO_DATA_FOUND_MSG + filename);
                 return response;
             }
 
@@ -345,7 +346,7 @@ public class AnalyticsService {
                             + dateData.values().stream().mapToLong(List::size).sum()
                             + missingValueCounts.values().stream().mapToLong(Long::longValue).sum();
             if (totalRows == 0) {
-                response.setMessage("No data found in file: " + filename);
+                response.setMessage(NO_DATA_FOUND_MSG + filename);
                 return CompletableFuture.completedFuture(response);
             }
 
@@ -402,7 +403,7 @@ public class AnalyticsService {
             String fullPath = fileService.getDatasetFilePath(fileName);
             List<Map<String, String>> records = dataProcessingService.extractDataFromPath(Paths.get(fullPath));
             if (records.isEmpty()) {
-                response.setMessage("No data found in file: " + fileName);
+                response.setMessage(NO_DATA_FOUND_MSG + fileName);
                 return CompletableFuture.completedFuture(response);
             }
             processData(records, Optional.of(featureName), Optional.of(featureType), response, categoryCombinationCounts);
@@ -462,10 +463,13 @@ public class AnalyticsService {
                                         String column,
                                         String value) {
         boolean isDate = DateUtil.parseDate(value).isPresent();
-        if (overrideFeatureName.isPresent() && getOriginalFeatureName(overrideFeatureName.get()).equals(column)) {
-            if (isDate && !overrideFeatureType.orElse("unknown").equalsIgnoreCase(CATEGORICAL_TYPE))
-                return DATE_TYPE;
-            return overrideFeatureType.orElse("unknown").toLowerCase();
+        if (overrideFeatureName.isPresent()) {
+            String originalName = getOriginalFeatureName(overrideFeatureName.get());
+            if (column.equals(originalName)) {
+                if (isDate && !overrideFeatureType.orElse("unknown").equalsIgnoreCase(CATEGORICAL_TYPE))
+                    return DATE_TYPE;
+                return overrideFeatureType.orElse("unknown").toLowerCase();
+            }
         }
         if (isDate) return DATE_TYPE;
         if (value.matches("-?\\d+([.,]\\d+)?")) return CONTINUOUS_TYPE;
@@ -547,7 +551,7 @@ public class AnalyticsService {
         List<DateFeatureStatistics> dateStatisticsList = new ArrayList<>();
         dateData.forEach((key, dateStringList) -> {
             List<LocalDate> dates = dateStringList.stream().map(LocalDate::parse).toList();
-            List<Double> dateValues = dates.stream().mapToDouble(LocalDate::toEpochDay).boxed().collect(Collectors.toList());
+            List<Double> dateValues = dates.stream().mapToDouble(LocalDate::toEpochDay).boxed().toList();
             List<Double> outliers = identifyOutliers(dateValues);
 
             LocalDate earliestDate = dates.stream().min(LocalDate::compareTo).orElse(null);
@@ -654,9 +658,10 @@ public class AnalyticsService {
     }
 
     private List<Double> identifyOutliers(List<Double> data) {
-        Collections.sort(data);
-        double q1 = getPercentile(data, 25);
-        double q3 = getPercentile(data, 75);
+        List<Double> sorted = new ArrayList<>(data);
+        Collections.sort(sorted);
+        double q1 = getPercentile(sorted, 25);
+        double q3 = getPercentile(sorted, 75);
         double iqr = q3 - q1;
         double lowerBound = q1 - 1.5 * iqr;
         double upperBound = q3 + 1.5 * iqr;
