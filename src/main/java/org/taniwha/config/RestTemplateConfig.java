@@ -15,6 +15,7 @@ import org.springframework.web.client.RestTemplate;
 
 import javax.net.ssl.*;
 import java.io.IOException;
+import java.security.GeneralSecurityException;
 import java.security.KeyManagementException;
 import java.security.KeyStore;
 import java.security.NoSuchAlgorithmException;
@@ -49,13 +50,12 @@ public class RestTemplateConfig {
             } catch (IllegalStateException e) {
                 throw e;
             } catch (Exception e) {
-                logger.error("Failed to build RestTemplate", e);
                 throw new IllegalStateException("Failed to build RestTemplate", e);
             }
         };
     }
 
-    private RestTemplate buildRestTemplate() throws Exception {
+    private RestTemplate buildRestTemplate() throws GeneralSecurityException, IOException {
         if (!tlsProbeEnabled) {
             logger.info("TLS probe disabled; using default RestTemplate");
             return new RestTemplate();
@@ -132,7 +132,6 @@ public class RestTemplateConfig {
             SSLSocketFactory factory = trustAllContext.getSocketFactory();
             return doSslHandshake(factory);
         } catch (NoSuchAlgorithmException | KeyManagementException e) {
-            logger.error("Error creating trust-all SSL context", e);
             throw new IllegalStateException("Error creating trust-all SSL context", e);
         }
     }
