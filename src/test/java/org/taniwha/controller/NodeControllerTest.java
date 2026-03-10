@@ -8,7 +8,6 @@ import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 import org.taniwha.dto.NodeAuthRequestDTO;
 import org.taniwha.dto.NodeValidationRequestDTO;
-import org.taniwha.dto.NodeValidationResponseDTO;
 import org.taniwha.model.NodeMetadata;
 import org.taniwha.service.NodeAccessService;
 import org.taniwha.util.JwtTokenUtil;

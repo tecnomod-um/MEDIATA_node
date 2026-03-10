@@ -43,7 +43,7 @@ public class DataProcessingService {
         String name = path.getFileName().toString().toLowerCase();
         if (name.endsWith(".csv")) {
             streamCsv(path, rowConsumer);
-        } else if (name.endsWith(".xlsx")) {
+        } else if (name.endsWith(XLSX_EXTENSION)) {
             try (InputStream in = Files.newInputStream(path)) {
                 streamXlsx(in, rowConsumer);
             }
@@ -54,7 +54,8 @@ public class DataProcessingService {
 
     public void streamRows(MultipartFile file, Consumer<Map<String,String>> rowConsumer) throws IOException {
         fileFilter.validate(file);
-        String name = file.getOriginalFilename().toLowerCase();
+        String originalFilename = file.getOriginalFilename();
+        String name = originalFilename != null ? originalFilename.toLowerCase() : "";
         if (name.endsWith(".csv")) {
             try (BufferedReader reader = new BufferedReader(new InputStreamReader(file.getInputStream()))) {
                 streamCsv(reader, rowConsumer);
@@ -97,12 +98,6 @@ public class DataProcessingService {
         }
     }
 
-    private void streamXlsx(Path path, Consumer<Map<String,String>> rowConsumer) throws IOException {
-        try (InputStream in = Files.newInputStream(path)) {
-            streamXlsx(in, rowConsumer);
-        }
-    }
-
     private void streamXlsx(InputStream in, Consumer<Map<String,String>> rowConsumer) {
         DataFormatter fmt = new DataFormatter(LOCALE);
 
@@ -135,14 +130,13 @@ public class DataProcessingService {
                 }
             }
         } catch (IOException e) {
-            logger.error("Error streaming XLSX", e);
-            throw new UncheckedIOException(e);
+            throw new UncheckedIOException("Error streaming XLSX", e);
         }
     }
     public List<Map<String, String>> extractDataFromPath(Path path) throws IOException {
         fileFilter.validate(path);
         String fileName = path.getFileName().toString().toLowerCase();
-        if (fileName.endsWith(".xlsx"))
+        if (fileName.endsWith(XLSX_EXTENSION))
             return readXlsxFile(path);
         else
             return readCsvFile(path);
@@ -151,7 +145,7 @@ public class DataProcessingService {
     public List<Map<String, String>> extractData(MultipartFile file) throws IOException {
         fileFilter.validate(file);
         String fileName = file.getOriginalFilename();
-        if (fileName != null && fileName.toLowerCase().endsWith(".xlsx")) {
+        if (fileName != null && fileName.toLowerCase().endsWith(XLSX_EXTENSION)) {
             return readXlsxFile(file);
         } else {
             return readCsvFile(file);
@@ -161,7 +155,7 @@ public class DataProcessingService {
     public List<Map<String, String>> extractFilteredDataFromPath(Path path, Map<String, Object> filters) throws IOException {
         fileFilter.validate(path);
         String fileName = path.getFileName().toString().toLowerCase();
-        if (fileName.endsWith(".xlsx")) {
+        if (fileName.endsWith(XLSX_EXTENSION)) {
             return readAndFilterXlsxFile(path, filters);
         } else {
             return readAndFilterCsvFile(path, filters);
@@ -479,12 +473,12 @@ public class DataProcessingService {
 
         try {
             return switch (filterType) {
-                case "categorical" -> evaluateCategorical(type, featureValue, criteriaMap.get("value"));
-                case "continuous", "date" -> evaluateValueCondition(type, featureValue, criteriaMap.get("value"));
+                case "categorical" -> evaluateCategorical(type, featureValue, criteriaMap.get(VALUE_KEY));
+                case "continuous", "date" -> evaluateValueCondition(type, featureValue, criteriaMap.get(VALUE_KEY));
                 default -> throw new IllegalArgumentException("Unknown filter type: " + filterType);
             };
         } catch (Exception e) {
-            logger.debug("Cannot evaluate condition: {} and {}", featureValue, criteriaMap.get("value"));
+            logger.debug("Cannot evaluate condition: {} and {}", featureValue, criteriaMap.get(VALUE_KEY));
             return false;
         }
     }

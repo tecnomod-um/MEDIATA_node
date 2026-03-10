@@ -648,7 +648,8 @@ public class DataCleaningService {
     }
 
     private static int countSubstring(String s, String sub) {
-        int n = 0, idx = 0;
+        int n = 0;
+        int idx = 0;
         while ((idx = s.indexOf(sub, idx)) >= 0) {
             n++;
             idx += sub.length();
@@ -939,8 +940,10 @@ public class DataCleaningService {
         for (int i = 0; i < records.size(); i++) {
             if (isNullOrEmpty(records.get(i).get(column))) {
                 // Find previous and next non-null values
-                Double prev = null, next = null;
-                int prevIdx = -1, nextIdx = -1;
+                Double prev = null;
+                Double next = null;
+                int prevIdx = -1;
+                int nextIdx = -1;
                 
                 for (int j = i - 1; j >= 0; j--) {
                     try {
@@ -1060,7 +1063,7 @@ public class DataCleaningService {
                 String value = entry.getValue();
                 if (value != null && !value.isEmpty()) {
                     // Remove all non-digit characters
-                    String digits = value.replaceAll("[^0-9]", "");
+                    String digits = value.replaceAll("\\D", "");
                     if (digits.length() >= 10) {
                         String formatted = switch (format != null ? format.toLowerCase() : "national") {
                             case "international" -> code + " " + formatPhoneDigits(digits);
