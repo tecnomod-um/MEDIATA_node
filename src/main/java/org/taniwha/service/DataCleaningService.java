@@ -15,6 +15,7 @@ import org.taniwha.util.NumberUtil;
 
 import java.io.BufferedWriter;
 import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.*;
@@ -56,7 +57,7 @@ public class DataCleaningService {
         try {
             records = dataProcessingService.extractDataFromPath(file);
         } catch (IOException e) {
-            throw new RuntimeException("Failed to read file for cleaning", e);
+            throw new UncheckedIOException("Failed to read file for cleaning", e);
         }
 
         List<Map<String, String>> cleaned = applyAllCleaningOperations(records, opts);
@@ -327,7 +328,7 @@ public class DataCleaningService {
         try {
             if (dir != null) Files.createDirectories(dir);
         } catch (IOException e) {
-            throw new RuntimeException("Failed to create output directory", e);
+            throw new UncheckedIOException("Failed to create output directory", e);
         }
 
         Path tmp = (dir == null)
@@ -354,22 +355,27 @@ public class DataCleaningService {
             } catch (IOException cleanupEx) {
                 logger.debug("Failed to delete temp file during cleanup: {}", tmp, cleanupEx);
             }
-            throw new RuntimeException("Failed to write cleaned CSV", e);
+            throw new UncheckedIOException("Failed to write cleaned CSV", e);
         }
 
         try {
-            try {
-                Files.move(tmp, target, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
-            } catch (AtomicMoveNotSupportedException e) {
-                Files.move(tmp, target, StandardCopyOption.REPLACE_EXISTING);
-            }
+            moveWithFallback(tmp, target);
         } catch (IOException e) {
             try { 
                 Files.deleteIfExists(tmp); 
             } catch (IOException cleanupEx) {
                 logger.debug("Failed to delete temp file during cleanup: {}", tmp, cleanupEx);
             }
-            throw new RuntimeException("Failed to replace original file with cleaned version", e);
+            throw new UncheckedIOException("Failed to replace original file with cleaned version", e);
+        }
+    }
+
+    private void moveWithFallback(Path src, Path dst) throws IOException {
+        try {
+            Files.move(src, dst, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
+        } catch (AtomicMoveNotSupportedException e) {
+            logger.debug("Atomic move not supported, falling back: {}", e.getMessage());
+            Files.move(src, dst, StandardCopyOption.REPLACE_EXISTING);
         }
     }
 
@@ -648,7 +654,8 @@ public class DataCleaningService {
     }
 
     private static int countSubstring(String s, String sub) {
-        int n = 0, idx = 0;
+        int n = 0;
+        int idx = 0;
         while ((idx = s.indexOf(sub, idx)) >= 0) {
             n++;
             idx += sub.length();
@@ -939,8 +946,10 @@ public class DataCleaningService {
         for (int i = 0; i < records.size(); i++) {
             if (isNullOrEmpty(records.get(i).get(column))) {
                 // Find previous and next non-null values
-                Double prev = null, next = null;
-                int prevIdx = -1, nextIdx = -1;
+                Double prev = null;
+                Double next = null;
+                int prevIdx = -1;
+                int nextIdx = -1;
                 
                 for (int j = i - 1; j >= 0; j--) {
                     try {
@@ -997,12 +1006,10 @@ public class DataCleaningService {
         for (Map<String, String> row : records) {
             for (Map.Entry<String, String> entry : row.entrySet()) {
                 String value = entry.getValue();
-                if (value != null && !value.isEmpty()) {
-                    if (!emailPattern.matcher(value).matches() && value.contains("@")) {
+                if (value != null && !value.isEmpty() && !emailPattern.matcher(value).matches() && value.contains("@")) {
                         // Mark invalid emails
                         entry.setValue("");
                     }
-                }
             }
         }
         return records;
@@ -1060,7 +1067,7 @@ public class DataCleaningService {
                 String value = entry.getValue();
                 if (value != null && !value.isEmpty()) {
                     // Remove all non-digit characters
-                    String digits = value.replaceAll("[^0-9]", "");
+                    String digits = value.replaceAll("\\D", "");
                     if (digits.length() >= 10) {
                         String formatted = switch (format != null ? format.toLowerCase() : "national") {
                             case "international" -> code + " " + formatPhoneDigits(digits);

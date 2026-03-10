@@ -87,32 +87,33 @@ class FileServiceTest {
     void parseNodeMetadata_readsSingleTtlFile_andParsesAllFields() throws Exception {
         Path md = tempBase.resolve("dataset_metadata");
         Files.createDirectories(md);
-        String ttl =
-                "@prefix dcat: <http://www.w3.org/ns/dcat#> .\n" +
-                        "@prefix dct: <http://purl.org/dc/terms/> .\n" +
-                        "@prefix foaf: <http://xmlns.com/foaf/0.1/> .\n" +
-                        "<http://example.org/ds1> a dcat:Dataset ;\n" +
-                        "  dct:title \"MyTitle\" ;\n" +
-                        "  dct:description \"MyDesc\" ;\n" +
-                        "  dct:identifier \"ID-123\" ;\n" +
-                        "  dct:issued \"2025-01-01\" ;\n" +
-                        "  dct:modified \"2025-02-02\" ;\n" +
-                        "  dct:accrualPeriodicity \"monthly\" ;\n" +
-                        "  dcat:keyword \"k1\", \"k2\" ;\n" +
-                        "  dcat:theme <http://th1> ;\n" +
-                        "  dct:language <http://lang1> ;\n" +
-                        "  dct:publisher <http://pub1> ;\n" +
-                        "  dcat:contactPoint <http://cp1> ;\n" +
-                        "  dct:spatial <http://sp1> ;\n" +
-                        "  dct:temporal <http://tmp1> ;\n" +
-                        "  dcat:distribution <http://ex.org/dist1> .\n" +
-                        "<http://pub1> foaf:name \"PubName\" .\n" +
-                        "<http://ex.org/dist1> a dcat:Distribution ;\n" +
-                        "  dct:title \"DistTitle\" ;\n" +
-                        "  dct:description \"DistDesc\" ;\n" +
-                        "  dct:format \"csv\" ;\n" +
-                        "  dct:license <http://lic1> ;\n" +
-                        "  dcat:downloadURL <http://dl1> .\n";
+        String ttl = """
+                @prefix dcat: <http://www.w3.org/ns/dcat#> .
+                @prefix dct: <http://purl.org/dc/terms/> .
+                @prefix foaf: <http://xmlns.com/foaf/0.1/> .
+                <http://example.org/ds1> a dcat:Dataset ;
+                  dct:title "MyTitle" ;
+                  dct:description "MyDesc" ;
+                  dct:identifier "ID-123" ;
+                  dct:issued "2025-01-01" ;
+                  dct:modified "2025-02-02" ;
+                  dct:accrualPeriodicity "monthly" ;
+                  dcat:keyword "k1", "k2" ;
+                  dcat:theme <http://th1> ;
+                  dct:language <http://lang1> ;
+                  dct:publisher <http://pub1> ;
+                  dcat:contactPoint <http://cp1> ;
+                  dct:spatial <http://sp1> ;
+                  dct:temporal <http://tmp1> ;
+                  dcat:distribution <http://ex.org/dist1> .
+                <http://pub1> foaf:name "PubName" .
+                <http://ex.org/dist1> a dcat:Distribution ;
+                  dct:title "DistTitle" ;
+                  dct:description "DistDesc" ;
+                  dct:format "csv" ;
+                  dct:license <http://lic1> ;
+                  dcat:downloadURL <http://dl1> .
+                """;
         Path ttlFile = md.resolve("meta.ttl");
         Files.writeString(ttlFile, ttl, StandardOpenOption.CREATE);
 
@@ -210,11 +211,12 @@ class FileServiceTest {
     void parseNodeMetadata_publisherWithoutName_fallsBackToUri() throws Exception {
         Path md = tempBase.resolve("dataset_metadata");
         Files.createDirectories(md);
-        String ttl =
-                "@prefix dcat: <http://www.w3.org/ns/dcat#> .\n" +
-                        "@prefix dct:  <http://purl.org/dc/terms/> .\n" +
-                        "<http://example.org/ds> a dcat:Dataset ;\n" +
-                        "  dct:publisher <http://example.org/org> .\n";
+        String ttl = """
+                @prefix dcat: <http://www.w3.org/ns/dcat#> .
+                @prefix dct:  <http://purl.org/dc/terms/> .
+                <http://example.org/ds> a dcat:Dataset ;
+                  dct:publisher <http://example.org/org> .
+                """;
         Path f = md.resolve("onlypub.ttl");
         Files.writeString(f, ttl);
         NodeMetadata nm = fileService.parseNodeMetadata();
@@ -227,11 +229,12 @@ class FileServiceTest {
     void parseNodeMetadata_temporalNoDates_usesResourceUri() throws Exception {
         Path md = tempBase.resolve("dataset_metadata");
         Files.createDirectories(md);
-        String ttl =
-                "@prefix dcat: <http://www.w3.org/ns/dcat#> .\n" +
-                        "@prefix dct:  <http://purl.org/dc/terms/> .\n" +
-                        "<http://example.org/ds> a dcat:Dataset ;\n" +
-                        "  dct:temporal <http://example.org/period> .\n";
+        String ttl = """
+                @prefix dcat: <http://www.w3.org/ns/dcat#> .
+                @prefix dct:  <http://purl.org/dc/terms/> .
+                <http://example.org/ds> a dcat:Dataset ;
+                  dct:temporal <http://example.org/period> .
+                """;
         Path f = md.resolve("temp.ttl");
         Files.writeString(f, ttl);
         NodeMetadata nm = fileService.parseNodeMetadata();
@@ -243,11 +246,12 @@ class FileServiceTest {
     void parseNodeMetadata_noDistribution_returnsNullDistribution() throws Exception {
         Path md = tempBase.resolve("dataset_metadata");
         Files.createDirectories(md);
-        String ttl =
-                "@prefix dcat: <http://www.w3.org/ns/dcat#> .\n" +
-                        "@prefix dct:  <http://purl.org/dc/terms/> .\n" +
-                        "<http://example.org/ds> a dcat:Dataset ;\n" +
-                        "  dct:title \"T\" .\n";
+        String ttl = """
+                @prefix dcat: <http://www.w3.org/ns/dcat#> .
+                @prefix dct:  <http://purl.org/dc/terms/> .
+                <http://example.org/ds> a dcat:Dataset ;
+                  dct:title "T" .
+                """;
         Path f = md.resolve("nodist.ttl");
         Files.writeString(f, ttl);
         NodeMetadata nm = fileService.parseNodeMetadata();
