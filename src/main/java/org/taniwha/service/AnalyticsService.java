@@ -14,6 +14,7 @@ import org.taniwha.util.NumberUtil;
 
 import jakarta.annotation.PreDestroy;
 import java.io.BufferedInputStream;
+import java.io.IOException;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -130,7 +131,7 @@ public class AnalyticsService {
         });
     }
 
-    private boolean isHugeFile(Path p) throws Exception {
+    private boolean isHugeFile(Path p) throws IOException {
         long size = Files.size(p);
         if (size >= HUGE_BYTES_THRESHOLD) return true;
 
@@ -138,14 +139,14 @@ public class AnalyticsService {
         return estRows >= HUGE_ROWS_THRESHOLD;
     }
 
-    private long estimateRowsFast(Path p) throws Exception {
+    private long estimateRowsFast(Path p) throws IOException {
         String name = p.getFileName().toString().toLowerCase();
         if (name.endsWith(".csv")) return estimateCsvRows(p);
         if (name.endsWith(".xlsx")) return estimateXlsxRowsFromDimensions(p);
         return 0;
     }
 
-    private long estimateCsvRows(Path p) throws Exception {
+    private long estimateCsvRows(Path p) throws IOException {
         // Count '\n' quickly; subtract 1 header line. Approximate but good enough for progress.
         try (InputStream in = new BufferedInputStream(Files.newInputStream(p))) {
             byte[] buf = new byte[64 * 1024];
@@ -160,7 +161,7 @@ public class AnalyticsService {
         }
     }
 
-    private long estimateXlsxRowsFromDimensions(Path p) throws Exception {
+    private long estimateXlsxRowsFromDimensions(Path p) throws IOException {
         long maxRow = 0;
         try (ZipFile zip = new ZipFile(p.toFile())) {
             Enumeration<? extends ZipEntry> en = zip.entries();
@@ -190,7 +191,7 @@ public class AnalyticsService {
         return (int) Math.max(0, Math.min(100, Math.round(p)));
     }
 
-    private List<AnalyticsResponseDTO> processDatasetsOnDiskWithProgress(String jobId, List<String> fileNames) throws Exception {
+    private List<AnalyticsResponseDTO> processDatasetsOnDiskWithProgress(String jobId, List<String> fileNames) throws IOException {
         logger.info("Async discovery job {} set to process {} file(s)", jobId, fileNames.size());
 
         // Build estimated "work" from row estimates (fallback to 1 per file)
