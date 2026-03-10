@@ -46,9 +46,11 @@ public class RestTemplateConfig {
         return () -> {
             try {
                 return buildRestTemplate();
+            } catch (IllegalStateException e) {
+                throw e;
             } catch (Exception e) {
                 logger.error("Failed to build RestTemplate", e);
-                throw new RuntimeException(e);
+                throw new IllegalStateException("Failed to build RestTemplate", e);
             }
         };
     }
@@ -109,14 +111,18 @@ public class RestTemplateConfig {
         return new RestTemplate(new org.springframework.http.client.HttpComponentsClientHttpRequestFactory(httpClient));
     }
 
-    private X509Certificate[] fetchServerCertificateChain() {
+    private X509Certificate[] fetchServerCertificateChain() throws IOException {
         try {
             logger.info("Creating SSL context to fetch server certificate chain...");
             SSLContext trustAllContext = SSLContext.getInstance("TLS");
             trustAllContext.init(null, new TrustManager[]{
                     new X509TrustManager() {
-                        public void checkClientTrusted(X509Certificate[] chain, String authType) {}
-                        public void checkServerTrusted(X509Certificate[] chain, String authType) {}
+                        public void checkClientTrusted(X509Certificate[] chain, String authType) {
+                            // Trust all clients: only used to fetch the server's certificate chain for bootstrap.
+                        }
+                        public void checkServerTrusted(X509Certificate[] chain, String authType) {
+                            // Trust all servers: only used to fetch the server's certificate chain for bootstrap.
+                        }
                         public X509Certificate[] getAcceptedIssuers() {
                             return new X509Certificate[0];
                         }
@@ -124,17 +130,18 @@ public class RestTemplateConfig {
             }, new java.security.SecureRandom());
 
             SSLSocketFactory factory = trustAllContext.getSocketFactory();
-            try (SSLSocket socket = (SSLSocket) factory.createSocket(targetHost, targetPort)) {
-                socket.startHandshake();
-                SSLSession session = socket.getSession();
-                return (X509Certificate[]) session.getPeerCertificates();
-            } catch (IOException e) {
-                logger.error("Failed during SSL handshake with {}:{}", targetHost, targetPort, e);
-                throw new RuntimeException(e);
-            }
+            return doSslHandshake(factory);
         } catch (NoSuchAlgorithmException | KeyManagementException e) {
             logger.error("Error creating trust-all SSL context", e);
-            throw new RuntimeException(e);
+            throw new IllegalStateException("Error creating trust-all SSL context", e);
+        }
+    }
+
+    private X509Certificate[] doSslHandshake(SSLSocketFactory factory) throws IOException {
+        try (SSLSocket socket = (SSLSocket) factory.createSocket(targetHost, targetPort)) {
+            socket.startHandshake();
+            SSLSession session = socket.getSession();
+            return (X509Certificate[]) session.getPeerCertificates();
         }
     }
 }

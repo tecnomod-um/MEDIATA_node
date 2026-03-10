@@ -31,6 +31,8 @@ public class DataProcessingService {
     private static final Logger logger = LoggerFactory.getLogger(DataProcessingService.class);
     private static final Locale LOCALE = Locale.GERMANY;
     private static final NumberFormat NUMBER_FORMAT = NumberFormat.getInstance(LOCALE);
+    private static final String XLSX_EXTENSION = ".xlsx";
+    private static final String VALUE_KEY = "value";
 
     public DataProcessingService(FileFilter fileFilter) {
         this.fileFilter = fileFilter;
