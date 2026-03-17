@@ -66,8 +66,8 @@ class ProcessingStatusDTOTest {
     void state_values_shouldReturnAllStates() {
         State[] states = State.values();
         
-        assertThat(states).hasSize(3);
-        assertThat(states).contains(State.RUNNING, State.DONE, State.ERROR);
+        assertThat(states).hasSize(4);
+        assertThat(states).contains(State.RUNNING, State.DONE, State.ERROR, State.CANCELED);
     }
 
     @Test

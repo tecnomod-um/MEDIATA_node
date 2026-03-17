@@ -1,4 +1,4 @@
-package org.taniwha.service;
+package org.taniwha.service.jobs;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -32,42 +32,41 @@ class AnalyticsProcessingJobsTest {
     @Test
     void getJob_withValidJobId_shouldReturnJobState() {
         String jobId = jobs.createJob();
-        
+
         AnalyticsProcessingJobs.JobState state = jobs.getJob(jobId);
-        
+
         assertThat(state).isNotNull();
-        assertThat(state.jobId).isEqualTo(jobId);
+        assertThat(state.getJobId()).isEqualTo(jobId);
         assertThat(state.getState()).isEqualTo(ProcessingStatusDTO.State.RUNNING);
-        assertThat(state.percent.get()).isZero();
+        assertThat(state.getPercent().get()).isZero();
     }
 
     @Test
     void getJob_withInvalidJobId_shouldReturnNull() {
         AnalyticsProcessingJobs.JobState state = jobs.getJob("non-existent");
-        
         assertThat(state).isNull();
     }
 
     @Test
     void update_shouldUpdateProgressAndCurrentFile() {
         String jobId = jobs.createJob();
-        
+
         jobs.update(jobId, 50, "test-file.csv");
-        
+
         AnalyticsProcessingJobs.JobState state = jobs.getJob(jobId);
-        assertThat(state.percent.get()).isEqualTo(50);
-        assertThat(state.currentFile).isEqualTo("test-file.csv");
+        assertThat(state.getPercent().get()).isEqualTo(50);
+        assertThat(state.getCurrentFile()).isEqualTo("test-file.csv");
     }
 
     @Test
     void update_shouldClampPercentageTo0_100Range() {
         String jobId = jobs.createJob();
-        
+
         jobs.update(jobId, 150, "file.csv");
-        assertThat(jobs.getJob(jobId).percent.get()).isEqualTo(100);
-        
+        assertThat(jobs.getJob(jobId).getPercent().get()).isEqualTo(100);
+
         jobs.update(jobId, -50, "file.csv");
-        assertThat(jobs.getJob(jobId).percent.get()).isZero();
+        assertThat(jobs.getJob(jobId).getPercent().get()).isZero();
     }
 
     @Test
@@ -80,13 +79,13 @@ class AnalyticsProcessingJobsTest {
     void fail_shouldSetErrorState() {
         String jobId = jobs.createJob();
         jobs.update(jobId, 50, "file.csv");
-        
+
         jobs.fail(jobId, "Test error message");
-        
+
         AnalyticsProcessingJobs.JobState state = jobs.getJob(jobId);
         assertThat(state.getState()).isEqualTo(ProcessingStatusDTO.State.ERROR);
-        assertThat(state.message).isEqualTo("Test error message");
-        assertThat(state.percent.get()).isEqualTo(50); // Should preserve progress
+        assertThat(state.getMessage()).isEqualTo("Test error message");
+        assertThat(state.getPercent().get()).isEqualTo(50);
     }
 
     @Test
@@ -102,13 +101,13 @@ class AnalyticsProcessingJobsTest {
                 new AnalyticsResponseDTO(),
                 new AnalyticsResponseDTO()
         );
-        
+
         jobs.complete(jobId, results);
-        
+
         AnalyticsProcessingJobs.JobState state = jobs.getJob(jobId);
         assertThat(state.getState()).isEqualTo(ProcessingStatusDTO.State.DONE);
         assertThat(state.getResults()).isEqualTo(results);
-        assertThat(state.percent.get()).isEqualTo(100);
+        assertThat(state.getPercent().get()).isEqualTo(100);
     }
 
     @Test
@@ -120,9 +119,9 @@ class AnalyticsProcessingJobsTest {
     @Test
     void clear_shouldRemoveJob() {
         String jobId = jobs.createJob();
-        
+
         jobs.clear(jobId);
-        
+
         assertThat(jobs.getJob(jobId)).isNull();
     }
 
@@ -131,15 +130,15 @@ class AnalyticsProcessingJobsTest {
         String jobId = jobs.createJob();
         jobs.update(jobId, 75, "file.csv");
         AnalyticsProcessingJobs.JobState state = jobs.getJob(jobId);
-        
+
         ProcessingStatusDTO dto = jobs.toDto(state, false);
-        
+
         assertThat(dto).isNotNull();
         assertThat(dto.getJobId()).isEqualTo(jobId);
         assertThat(dto.getState()).isEqualTo(ProcessingStatusDTO.State.RUNNING);
         assertThat(dto.getPercent()).isEqualTo(75);
         assertThat(dto.getCurrentFile()).isEqualTo("file.csv");
-        assertThat(dto.getResults()).isNull(); // includeResults = false
+        assertThat(dto.getResults()).isNull();
     }
 
     @Test
@@ -148,24 +147,22 @@ class AnalyticsProcessingJobsTest {
         List<AnalyticsResponseDTO> results = Arrays.asList(new AnalyticsResponseDTO());
         jobs.complete(jobId, results);
         AnalyticsProcessingJobs.JobState state = jobs.getJob(jobId);
-        
+
         ProcessingStatusDTO dto = jobs.toDto(state, true);
-        
+
         assertThat(dto.getResults()).isEqualTo(results);
     }
 
     @Test
     void toDto_withNullState_shouldReturnNull() {
         ProcessingStatusDTO dto = jobs.toDto(null, true);
-        
         assertThat(dto).isNull();
     }
 
     @Test
     void concurrentAccess_shouldBeSafe() throws InterruptedException {
         String jobId = jobs.createJob();
-        
-        // Simulate concurrent updates from multiple threads
+
         Thread[] threads = new Thread[10];
         for (int i = 0; i < threads.length; i++) {
             final int threadId = i;
@@ -176,14 +173,13 @@ class AnalyticsProcessingJobsTest {
             });
             threads[i].start();
         }
-        
+
         for (Thread thread : threads) {
             thread.join();
         }
-        
-        // Job should still be accessible and in valid state
+
         AnalyticsProcessingJobs.JobState state = jobs.getJob(jobId);
         assertThat(state).isNotNull();
-        assertThat(state.percent.get()).isBetween(0, 100);
+        assertThat(state.getPercent().get()).isBetween(0, 100);
     }
 }

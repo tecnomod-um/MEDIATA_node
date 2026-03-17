@@ -12,7 +12,9 @@ import org.taniwha.dto.DataCleaningOptionsDTO;
 import org.taniwha.model.FileCategory;
 import org.taniwha.util.DateUtil;
 import org.taniwha.util.NumberUtil;
-
+import org.taniwha.service.jobs.CleaningProcessingJobs;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import java.io.BufferedWriter;
 import java.io.IOException;
 import java.io.UncheckedIOException;
@@ -33,10 +35,68 @@ public class DataCleaningService {
 
     private final FileService fileService;
     private final DataProcessingService dataProcessingService;
+    private final CleaningProcessingJobs cleaningJobs;
+    private final ExecutorService cleaningExecutor = Executors.newCachedThreadPool();
 
-    public DataCleaningService(FileService fileService, DataProcessingService dataProcessingService) {
+    public DataCleaningService(FileService fileService,
+                               DataProcessingService dataProcessingService,
+                               CleaningProcessingJobs cleaningJobs) {
         this.fileService = fileService;
         this.dataProcessingService = dataProcessingService;
+        this.cleaningJobs = cleaningJobs;
+    }
+
+    public void startCleanJob(String jobId,
+                              FileCategory category,
+                              String name,
+                              DataCleaningOptionsDTO opts) {
+        cleaningExecutor.submit(() -> {
+            try {
+                cleaningJobs.update(jobId, 10, name, "Preparing cleaning: " + name);
+                cleanInPlaceWithProgress(jobId, category, name, opts);
+                cleaningJobs.complete(jobId, "Cleaning completed successfully.");
+            } catch (Exception e) {
+                logger.error("Cleaning job failed jobId={}", jobId, e);
+                cleaningJobs.fail(jobId, "Error cleaning file: " + (e.getMessage() == null ? "Unknown error" : e.getMessage()));
+            }
+        });
+    }
+
+    public void cleanInPlaceWithProgress(String jobId,
+                                         FileCategory category,
+                                         String name,
+                                         DataCleaningOptionsDTO opts) {
+        Objects.requireNonNull(category, "category is required");
+        String fileName = Objects.toString(name, "").trim();
+        if (fileName.isEmpty()) throw new IllegalArgumentException("name is required");
+
+        Path file = fileService.resolveExistingFilePath(category, fileName);
+
+        if (opts == null || !anyEnabled(opts)) {
+            cleaningJobs.update(jobId, 100, fileName, "No cleaning options selected.");
+            return;
+        }
+
+        cleaningJobs.update(jobId, 20, fileName, "Reading file: " + fileName);
+
+        String lower = file.getFileName().toString().toLowerCase(Locale.ROOT);
+
+        final List<Map<String, String>> records;
+        try {
+            records = dataProcessingService.extractDataFromPath(file);
+        } catch (IOException e) {
+            throw new UncheckedIOException("Failed to read file for cleaning", e);
+        }
+
+        cleaningJobs.update(jobId, 50, fileName, "Applying cleaning rules: " + fileName);
+
+        List<Map<String, String>> cleaned = applyAllCleaningOperations(records, opts);
+
+        cleaningJobs.update(jobId, 85, fileName, "Writing cleaned file: " + fileName);
+
+        writeCleanedData(file, lower, cleaned);
+
+        cleaningJobs.update(jobId, 100, fileName, "Finished cleaning: " + fileName);
     }
 
     public void cleanInPlace(FileCategory category, String name, DataCleaningOptionsDTO opts) {
@@ -67,11 +127,11 @@ public class DataCleaningService {
 
     private List<Map<String, String>> applyAllCleaningOperations(List<Map<String, String>> records, DataCleaningOptionsDTO opts) {
         List<Map<String, String>> cleaned = records;
-        
+
         cleaned = applyRowLevelOperations(cleaned, opts);
+        cleaned = applyStringManipulation(cleaned, opts);
         cleaned = applyTextOperations(cleaned, opts);
         cleaned = applyDateAndNumericOperations(cleaned, opts);
-        cleaned = applyStringManipulation(cleaned, opts);
         cleaned = applyEmailUrlPhoneOperations(cleaned, opts);
         cleaned = applyColumnAndTypeOperations(cleaned, opts);
         cleaned = applyStatisticalOperations(cleaned, opts);

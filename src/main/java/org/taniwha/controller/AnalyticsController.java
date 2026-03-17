@@ -6,7 +6,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import org.taniwha.dto.*;
-import org.taniwha.service.AnalyticsProcessingJobs;
+import org.taniwha.service.jobs.AnalyticsProcessingJobs;
 import org.taniwha.service.AnalyticsService;
 
 import java.util.Collections;
@@ -59,17 +59,37 @@ public class AnalyticsController {
         return ResponseEntity.ok(jobs.toDto(s, false));
     }
 
+    @PostMapping("/processList/cancel/{jobId}")
+    public ResponseEntity<ProcessingStatusDTO> cancelProcessList(@PathVariable String jobId) {
+        AnalyticsProcessingJobs.JobState s = jobs.getJob(jobId);
+        if (s == null) {
+            logger.warn("Received cancel request for unknown discovery jobId={}", jobId);
+            return ResponseEntity.notFound().build();
+        }
+
+        logger.info("Received cancel request for discovery jobId={}", jobId);
+        jobs.cancel(jobId, "Discovery canceled because the user left the page");
+        logger.info("Discovery job marked as canceled jobId={}", jobId);
+
+        return ResponseEntity.ok(jobs.toDto(jobs.getJob(jobId), false));
+    }
+
     @GetMapping("/processList/result/{jobId}")
     public ResponseEntity<List<AnalyticsResponseDTO>> processListResult(@PathVariable String jobId) {
         AnalyticsProcessingJobs.JobState s = jobs.getJob(jobId);
         if (s == null) return ResponseEntity.notFound().build();
 
-        if (s.getState() != ProcessingStatusDTO.State.DONE)
+        if (s.getState() == ProcessingStatusDTO.State.CANCELED) {
+            jobs.clear(jobId);
+            return ResponseEntity.status(HttpStatus.GONE).build();
+        }
+
+        if (s.getState() != ProcessingStatusDTO.State.DONE) {
             return ResponseEntity.status(HttpStatus.CONFLICT).build();
+        }
 
         List<AnalyticsResponseDTO> out = s.getResults() == null ? List.of() : s.getResults();
         jobs.clear(jobId);
-
         return ResponseEntity.ok(out);
     }
 

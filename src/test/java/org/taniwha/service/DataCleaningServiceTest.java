@@ -4,6 +4,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.taniwha.security.FileFilter;
+import org.taniwha.service.jobs.CleaningProcessingJobs;
 
 import java.nio.file.Path;
 import java.time.LocalDate;
@@ -26,7 +27,9 @@ class DataCleaningServiceTest {
         doNothing().when(fileFilter).validate(any(Path.class));
         FileService fileService = mock(FileService.class);
         DataProcessingService dataProcessingService = mock(DataProcessingService.class);
-        svc = new DataCleaningService(fileService, dataProcessingService);
+        CleaningProcessingJobs cleaningJobs = new CleaningProcessingJobs();
+
+        svc = new DataCleaningService(fileService, dataProcessingService, cleaningJobs);
     }
 
     @Test
