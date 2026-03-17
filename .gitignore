@@ -2,6 +2,7 @@
 .env
 node-secrets.env
 nohup.out
+out/
 target/
 taniwha.log
 
