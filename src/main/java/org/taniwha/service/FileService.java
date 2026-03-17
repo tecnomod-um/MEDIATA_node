@@ -12,6 +12,7 @@ import org.taniwha.model.Dataset;
 import org.taniwha.model.Distribution;
 import org.taniwha.model.FileCategory;
 import org.taniwha.model.NodeMetadata;
+import org.taniwha.security.AllowedExtensions;
 import org.taniwha.security.FileFilter;
 
 import java.io.IOException;
@@ -95,6 +96,22 @@ public class FileService {
             logger.error("Error reading or parsing metadata file", e);
             return null;
         }
+    }
+
+    public Path resolveDatasetFilePath(String fileName) {
+        return resolveExistingFilePath(FileCategory.DATASETS, fileName);
+    }
+
+    public Path resolveElementFilePath(String fileName) {
+        return resolveExistingFilePath(FileCategory.DATASET_ELEMENTS, fileName);
+    }
+
+    public Path resolveMappedDatasetFilePath(String fileName) {
+        return resolveExistingFilePath(FileCategory.MAPPED_DATASETS, fileName);
+    }
+
+    public Path resolveMetadataFilePath(String fileName) {
+        return resolveExistingFilePath(FileCategory.DATASET_METADATA, fileName);
     }
 
     private Dataset parseDataset(Resource dsRes) {
@@ -218,14 +235,19 @@ public class FileService {
             sanitizedFileName = sanitizedFileName.replaceAll("(?i)\\.(csv|xlsx)$", "");
             String finalFileName = sanitizedFileName + "_elements.csv";
 
-            String filePath = Paths.get(elementsFolder, finalFileName).toString();
+            Path outPath = elementsDir.resolve(finalFileName).normalize();
 
-            Path outPath = Paths.get(filePath).normalize();
-            fileFilter.validate(outPath);
+            if (!outPath.startsWith(elementsDir)) {
+                throw new IllegalArgumentException("Invalid path");
+            }
+
+            if (!AllowedExtensions.isAllowed("csv")) {
+                throw new IllegalArgumentException("Invalid extension");
+            }
 
             Files.writeString(outPath, csvData);
-            logger.info("Saved dataset elements to {}", filePath);
-            return filePath;
+            logger.info("Saved dataset elements to {}", outPath);
+            return outPath.toString();
         } catch (IOException e) {
             throw new UncheckedIOException("Error saving dataset elements for file: " + fileName, e);
         }
