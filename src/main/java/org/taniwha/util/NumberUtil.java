@@ -9,6 +9,9 @@ import java.util.Locale;
 
 public class NumberUtil {
 
+    private NumberUtil() {
+    }
+
     private static final Logger logger = LoggerFactory.getLogger(NumberUtil.class);
     private static final Locale COMMA_LOCALE = Locale.GERMANY;
     private static final NumberFormat COMMA_FORMAT = NumberFormat.getInstance(COMMA_LOCALE);

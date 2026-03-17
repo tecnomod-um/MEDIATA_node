@@ -12,16 +12,17 @@ import org.taniwha.model.Dataset;
 import org.taniwha.model.Distribution;
 import org.taniwha.model.FileCategory;
 import org.taniwha.model.NodeMetadata;
+import org.taniwha.security.AllowedExtensions;
 import org.taniwha.security.FileFilter;
 
 import java.io.IOException;
 import java.io.StringReader;
+import java.io.UncheckedIOException;
 import java.nio.file.*;
 import java.nio.file.attribute.BasicFileAttributes;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
-import java.util.stream.Collectors;
 
 @Service
 public class FileService {
@@ -95,6 +96,22 @@ public class FileService {
             logger.error("Error reading or parsing metadata file", e);
             return null;
         }
+    }
+
+    public Path resolveDatasetFilePath(String fileName) {
+        return resolveExistingFilePath(FileCategory.DATASETS, fileName);
+    }
+
+    public Path resolveElementFilePath(String fileName) {
+        return resolveExistingFilePath(FileCategory.DATASET_ELEMENTS, fileName);
+    }
+
+    public Path resolveMappedDatasetFilePath(String fileName) {
+        return resolveExistingFilePath(FileCategory.MAPPED_DATASETS, fileName);
+    }
+
+    public Path resolveMetadataFilePath(String fileName) {
+        return resolveExistingFilePath(FileCategory.DATASET_METADATA, fileName);
     }
 
     private Dataset parseDataset(Resource dsRes) {
@@ -218,17 +235,21 @@ public class FileService {
             sanitizedFileName = sanitizedFileName.replaceAll("(?i)\\.(csv|xlsx)$", "");
             String finalFileName = sanitizedFileName + "_elements.csv";
 
-            String filePath = Paths.get(elementsFolder, finalFileName).toString();
+            Path outPath = elementsDir.resolve(finalFileName).normalize();
 
-            Path outPath = Paths.get(filePath).normalize();
-            fileFilter.validate(outPath);
+            if (!outPath.startsWith(elementsDir)) {
+                throw new IllegalArgumentException("Invalid path");
+            }
+
+            if (!AllowedExtensions.isAllowed("csv")) {
+                throw new IllegalArgumentException("Invalid extension");
+            }
 
             Files.writeString(outPath, csvData);
-            logger.info("Saved dataset elements to {}", filePath);
-            return filePath;
+            logger.info("Saved dataset elements to {}", outPath);
+            return outPath.toString();
         } catch (IOException e) {
-            logger.error("Error saving dataset elements for file: {}", fileName, e);
-            throw new RuntimeException("Error saving dataset elements for file: " + fileName, e);
+            throw new UncheckedIOException("Error saving dataset elements for file: " + fileName, e);
         }
     }
 
@@ -237,19 +258,21 @@ public class FileService {
             Path dir = Paths.get(folderPath);
             if (!Files.exists(dir)) return new ArrayList<>();
 
-            return Files.list(dir)
-                    .filter(Files::isRegularFile)
-                    .filter(p -> {
-                        try {
-                            fileFilter.validate(p);
-                            return true;
-                        } catch (Exception e) {
-                            logger.debug("File validation failed for {}: {}", p, e.getMessage());
-                            return false;
-                        }
-                    })
-                    .map(path -> path.getFileName().toString())
-                    .collect(Collectors.toList());
+            try (var files = Files.list(dir)) {
+                return files
+                        .filter(Files::isRegularFile)
+                        .filter(p -> {
+                            try {
+                                fileFilter.validate(p);
+                                return true;
+                            } catch (Exception e) {
+                                logger.debug("File validation failed for {}: {}", p, e.getMessage());
+                                return false;
+                            }
+                        })
+                        .map(path -> path.getFileName().toString())
+                        .toList();
+            }
         } catch (IOException e) {
             logger.error("Failed to list files in folder: {}", folderPath, e);
             return new ArrayList<>();
@@ -394,14 +417,18 @@ public class FileService {
 
         try {
             if (Files.exists(dst)) throw new IllegalArgumentException("Destination already exists");
-
-            try {
-                Files.move(src, dst, StandardCopyOption.ATOMIC_MOVE);
-            } catch (AtomicMoveNotSupportedException e) {
-                Files.move(src, dst);
-            }
+            moveFile(src, dst);
         } catch (IOException e) {
-            throw new RuntimeException("Rename failed", e);
+            throw new UncheckedIOException("Rename failed", e);
+        }
+    }
+
+    private void moveFile(Path src, Path dst) throws IOException {
+        try {
+            Files.move(src, dst, StandardCopyOption.ATOMIC_MOVE);
+        } catch (AtomicMoveNotSupportedException e) {
+            logger.debug("Atomic move not supported, falling back to regular move: {}", e.getMessage());
+            Files.move(src, dst);
         }
     }
 
@@ -413,7 +440,7 @@ public class FileService {
             fileFilter.validate(p);
             Files.delete(p);
         } catch (IOException e) {
-            throw new RuntimeException("Delete failed", e);
+            throw new UncheckedIOException("Delete failed", e);
         }
     }
 }

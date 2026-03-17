@@ -7,6 +7,7 @@ import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 import org.taniwha.dto.AnalyticsResponseDTO;
 import org.taniwha.dto.FileFilters;
+import org.taniwha.service.jobs.AnalyticsProcessingJobs;
 import org.taniwha.statistics.*;
 import org.taniwha.util.AggregateCalculator;
 import org.taniwha.util.DateUtil;
@@ -14,6 +15,7 @@ import org.taniwha.util.NumberUtil;
 
 import jakarta.annotation.PreDestroy;
 import java.io.BufferedInputStream;
+import java.io.IOException;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -44,6 +46,7 @@ public class AnalyticsService {
     private static final String DATE_TYPE = "date";
     private static final String BINS = "bins";
     private static final String BIN_RANGES = "binRanges";
+    private static final String NO_DATA_FOUND_MSG = "No data found in file: ";
     private static final int MIN_RECORDS_FOR_UNIQUE_FILTER = 10;
 
     // Huge detection thresholds (tune as needed)
@@ -118,18 +121,38 @@ public class AnalyticsService {
 
     /** Starts async processing and updates job progress via AnalyticsProcessingJobs. */
     public void startDiscoveryJob(String jobId, List<String> fileNames) {
-        discoveryJobExecutor.submit(() -> {
+        Future<?> future = discoveryJobExecutor.submit(() -> {
             try {
                 List<AnalyticsResponseDTO> results = processDatasetsOnDiskWithProgress(jobId, fileNames);
-                jobs.complete(jobId, results);
+                if (!jobs.isCanceled(jobId)) {
+                    jobs.complete(jobId, results);
+                }
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                logger.info("Discovery async job interrupted jobId={}", jobId);
+                jobs.cancel(jobId, "Discovery canceled because the user left the page");
+            } catch (CancellationException e) {
+                logger.info("Discovery async job canceled jobId={}", jobId);
+                jobs.cancel(jobId, "Discovery canceled because the user left the page");
             } catch (Exception e) {
                 logger.error("Discovery async job failed jobId={}", jobId, e);
-                jobs.fail(jobId, "Error processing files: " + (e.getMessage() == null ? "Unknown error" : e.getMessage()));
+                if (!jobs.isCanceled(jobId)) {
+                    jobs.fail(jobId, "Error processing files: " +
+                            (e.getMessage() == null ? "Unknown error" : e.getMessage()));
+                }
             }
         });
+
+        jobs.attachFuture(jobId, future);
     }
 
-    private boolean isHugeFile(Path p) throws Exception {
+    private void ensureJobActive(String jobId) throws InterruptedException {
+        if (jobs.isCanceled(jobId) || Thread.currentThread().isInterrupted()) {
+            throw new InterruptedException("Discovery job canceled");
+        }
+    }
+
+    private boolean isHugeFile(Path p) throws IOException {
         long size = Files.size(p);
         if (size >= HUGE_BYTES_THRESHOLD) return true;
 
@@ -137,14 +160,14 @@ public class AnalyticsService {
         return estRows >= HUGE_ROWS_THRESHOLD;
     }
 
-    private long estimateRowsFast(Path p) throws Exception {
+    private long estimateRowsFast(Path p) throws IOException {
         String name = p.getFileName().toString().toLowerCase();
         if (name.endsWith(".csv")) return estimateCsvRows(p);
         if (name.endsWith(".xlsx")) return estimateXlsxRowsFromDimensions(p);
         return 0;
     }
 
-    private long estimateCsvRows(Path p) throws Exception {
+    private long estimateCsvRows(Path p) throws IOException {
         // Count '\n' quickly; subtract 1 header line. Approximate but good enough for progress.
         try (InputStream in = new BufferedInputStream(Files.newInputStream(p))) {
             byte[] buf = new byte[64 * 1024];
@@ -159,7 +182,7 @@ public class AnalyticsService {
         }
     }
 
-    private long estimateXlsxRowsFromDimensions(Path p) throws Exception {
+    private long estimateXlsxRowsFromDimensions(Path p) throws IOException {
         long maxRow = 0;
         try (ZipFile zip = new ZipFile(p.toFile())) {
             Enumeration<? extends ZipEntry> en = zip.entries();
@@ -189,60 +212,75 @@ public class AnalyticsService {
         return (int) Math.max(0, Math.min(100, Math.round(p)));
     }
 
-    private List<AnalyticsResponseDTO> processDatasetsOnDiskWithProgress(String jobId, List<String> fileNames) throws Exception {
+    private List<AnalyticsResponseDTO> processDatasetsOnDiskWithProgress(String jobId, List<String> fileNames)
+            throws IOException, InterruptedException {
+
         logger.info("Async discovery job {} set to process {} file(s)", jobId, fileNames.size());
 
-        // Build estimated "work" from row estimates (fallback to 1 per file)
         List<Path> paths = new ArrayList<>();
         List<Long> estRowsPerFile = new ArrayList<>();
-        long totalEstRows = 0;
+        long totalEstRows = 0L;
 
         for (String fn : fileNames) {
+            ensureJobActive(jobId);
+
             Path p = Paths.get(fileService.getDatasetFilePath(fn));
             paths.add(p);
-            long est = Math.max(1, estimateRowsFast(p));
+
+            long est = Math.max(1L, estimateRowsFast(p));
             estRowsPerFile.add(est);
             totalEstRows += est;
         }
-        if (totalEstRows <= 0) totalEstRows = 1;
 
-        long doneRowsSoFar = 0;
+        if (totalEstRows <= 0L) totalEstRows = 1L;
+
+        long doneRowsSoFar = 0L;
         List<AnalyticsResponseDTO> results = new ArrayList<>();
 
         for (int i = 0; i < fileNames.size(); i++) {
+            ensureJobActive(jobId);
+
             String filename = fileNames.get(i);
             Path path = paths.get(i);
 
             jobs.update(jobId, percent(doneRowsSoFar, totalEstRows), filename);
 
-            long finalDoneRowsSoFar = doneRowsSoFar;
-            long finalTotalEstRows = totalEstRows;
-            AnalyticsResponseDTO r = processSingleFileOnDiskWithProgress(
+            AnalyticsResponseDTO result = processSingleFileOnDiskWithProgress(
+                    jobId,
                     filename,
                     path,
-                    processedInFile -> {
-                        long globalDone = finalDoneRowsSoFar + processedInFile;
-                        jobs.update(jobId, percent(globalDone, finalTotalEstRows), filename);
-                    }
+                    doneRowsSoFar,
+                    totalEstRows
             );
 
-            results.add(r);
+            results.add(result);
 
-            // Advance global progress by this file's estimate (keeps progress monotonic even if estimate is off)
             doneRowsSoFar += estRowsPerFile.get(i);
             jobs.update(jobId, percent(doneRowsSoFar, totalEstRows), filename);
         }
 
+        ensureJobActive(jobId);
         jobs.update(jobId, 100, null);
+
         return results;
     }
 
-    @FunctionalInterface
-    private interface RowProgress {
-        void onRowsProcessed(long rowsProcessedInThisFile);
+    private void updateJobProgressForFile(String jobId,
+                                          String filename,
+                                          long doneRowsBeforeFile,
+                                          long processedInFile,
+                                          long totalEstRows) {
+        long globalDone = doneRowsBeforeFile + processedInFile;
+        jobs.update(jobId, percent(globalDone, totalEstRows), filename);
     }
 
-    private AnalyticsResponseDTO processSingleFileOnDiskWithProgress(String filename, Path path, RowProgress progress) {
+    private AnalyticsResponseDTO processSingleFileOnDiskWithProgress(String jobId,
+                                                                     String filename,
+                                                                     Path path,
+                                                                     long doneRowsBeforeFile,
+                                                                     long totalEstRows)
+            throws InterruptedException {
+
         AnalyticsResponseDTO response = new AnalyticsResponseDTO();
         response.setFileName(filename);
 
@@ -255,13 +293,18 @@ public class AnalyticsService {
         Map<String, Map<String, Double>> forcedMapping = new ConcurrentHashMap<>();
 
         try {
-            final AtomicLong rows = new AtomicLong(0);
+            final AtomicLong rows = new AtomicLong(0L);
 
             dataProcessingService.streamRows(path, rowData -> {
+                if (jobs.isCanceled(jobId) || Thread.currentThread().isInterrupted()) {
+                    throw new CancellationException("Discovery job canceled");
+                }
+
                 long r = rows.incrementAndGet();
 
-                // Reduce overhead: update every N rows
-                if ((r % 200) == 0) progress.onRowsProcessed(r);
+                if ((r % 200L) == 0L) {
+                    updateJobProgressForFile(jobId, filename, doneRowsBeforeFile, r, totalEstRows);
+                }
 
                 processRecord(
                         rowData,
@@ -276,16 +319,21 @@ public class AnalyticsService {
                 );
             });
 
-            progress.onRowsProcessed(rows.get());
+            if (jobs.isCanceled(jobId) || Thread.currentThread().isInterrupted()) {
+                throw new InterruptedException("Discovery job canceled");
+            }
+
+            updateJobProgressForFile(jobId, filename, doneRowsBeforeFile, rows.get(), totalEstRows);
 
             long totalRows =
                     continuousData.values().stream().mapToLong(List::size).sum()
                             + categoricalData.values().stream()
-                            .mapToLong(m -> m.values().stream().mapToInt(i -> i).sum()).sum()
+                            .mapToLong(m -> m.values().stream().mapToInt(Integer::intValue).sum()).sum()
                             + dateData.values().stream().mapToLong(List::size).sum()
                             + missingValueCounts.values().stream().mapToLong(Long::longValue).sum();
+
             if (totalRows == 0) {
-                response.setMessage("No data found in file: " + filename);
+                response.setMessage(NO_DATA_FOUND_MSG + filename);
                 return response;
             }
 
@@ -302,13 +350,19 @@ public class AnalyticsService {
             response.setChiSquareTest(calculator.calculateChiSquaredTest(categoricalData, comboCounts));
 
             response.setMessage("File processed successfully: " + filename);
+            return response;
 
+        } catch (CancellationException e) {
+            logger.info("Processing canceled for file {}", filename);
+            throw new InterruptedException("Discovery job canceled");
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw e;
         } catch (Exception e) {
             logger.error("Error processing file {}", filename, e);
             response.setMessage("Error processing file " + filename + ": " + e.getMessage());
+            return response;
         }
-
-        return response;
     }
 
     @Async
@@ -345,7 +399,7 @@ public class AnalyticsService {
                             + dateData.values().stream().mapToLong(List::size).sum()
                             + missingValueCounts.values().stream().mapToLong(Long::longValue).sum();
             if (totalRows == 0) {
-                response.setMessage("No data found in file: " + filename);
+                response.setMessage(NO_DATA_FOUND_MSG + filename);
                 return CompletableFuture.completedFuture(response);
             }
 
@@ -402,7 +456,7 @@ public class AnalyticsService {
             String fullPath = fileService.getDatasetFilePath(fileName);
             List<Map<String, String>> records = dataProcessingService.extractDataFromPath(Paths.get(fullPath));
             if (records.isEmpty()) {
-                response.setMessage("No data found in file: " + fileName);
+                response.setMessage(NO_DATA_FOUND_MSG + fileName);
                 return CompletableFuture.completedFuture(response);
             }
             processData(records, Optional.of(featureName), Optional.of(featureType), response, categoryCombinationCounts);
@@ -462,10 +516,13 @@ public class AnalyticsService {
                                         String column,
                                         String value) {
         boolean isDate = DateUtil.parseDate(value).isPresent();
-        if (overrideFeatureName.isPresent() && getOriginalFeatureName(overrideFeatureName.get()).equals(column)) {
-            if (isDate && !overrideFeatureType.orElse("unknown").equalsIgnoreCase(CATEGORICAL_TYPE))
-                return DATE_TYPE;
-            return overrideFeatureType.orElse("unknown").toLowerCase();
+        if (overrideFeatureName.isPresent()) {
+            String originalName = getOriginalFeatureName(overrideFeatureName.get());
+            if (column.equals(originalName)) {
+                if (isDate && !overrideFeatureType.orElse("unknown").equalsIgnoreCase(CATEGORICAL_TYPE))
+                    return DATE_TYPE;
+                return overrideFeatureType.orElse("unknown").toLowerCase();
+            }
         }
         if (isDate) return DATE_TYPE;
         if (value.matches("-?\\d+([.,]\\d+)?")) return CONTINUOUS_TYPE;
@@ -547,7 +604,7 @@ public class AnalyticsService {
         List<DateFeatureStatistics> dateStatisticsList = new ArrayList<>();
         dateData.forEach((key, dateStringList) -> {
             List<LocalDate> dates = dateStringList.stream().map(LocalDate::parse).toList();
-            List<Double> dateValues = dates.stream().mapToDouble(LocalDate::toEpochDay).boxed().collect(Collectors.toList());
+            List<Double> dateValues = dates.stream().mapToDouble(LocalDate::toEpochDay).boxed().toList();
             List<Double> outliers = identifyOutliers(dateValues);
 
             LocalDate earliestDate = dates.stream().min(LocalDate::compareTo).orElse(null);
@@ -654,9 +711,10 @@ public class AnalyticsService {
     }
 
     private List<Double> identifyOutliers(List<Double> data) {
-        Collections.sort(data);
-        double q1 = getPercentile(data, 25);
-        double q3 = getPercentile(data, 75);
+        List<Double> sorted = new ArrayList<>(data);
+        Collections.sort(sorted);
+        double q1 = getPercentile(sorted, 25);
+        double q3 = getPercentile(sorted, 75);
         double iqr = q3 - q1;
         double lowerBound = q1 - 1.5 * iqr;
         double upperBound = q3 + 1.5 * iqr;

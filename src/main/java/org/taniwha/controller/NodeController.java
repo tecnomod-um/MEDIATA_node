@@ -33,7 +33,7 @@ public class NodeController {
     }
 
     @GetMapping("/metadata")
-    public ResponseEntity<?> nodeMetadata() {
+    public ResponseEntity<Object> nodeMetadata() {
         NodeMetadata metadata = nodeAccessService.getMetadata();
         if (metadata == null) {
             logger.warn("No metadata found or error reading the RDF file");

@@ -17,7 +17,6 @@ import org.taniwha.util.JwtTokenUtil;
 import java.io.IOException;
 
 import static org.assertj.core.api.Assertions.*;
-import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.*;
 
 class JwtRequestFilterTest {

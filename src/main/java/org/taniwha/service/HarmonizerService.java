@@ -8,8 +8,11 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.taniwha.dto.DataCleaningOptionsDTO;
+import org.taniwha.service.jobs.HarmonizationProcessingJobs;
 import org.taniwha.util.DateUtil;
 import org.taniwha.util.NumberUtil;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 import java.io.BufferedWriter;
 import java.io.IOException;
@@ -26,20 +29,263 @@ import java.util.stream.Stream;
 public class HarmonizerService {
     private static final Logger logger = LoggerFactory.getLogger(HarmonizerService.class);
 
+    private static final String GROUPS_KEY = "groups";
+    private static final String VALUES_KEY = "values";
+
     private final DataProcessingService dataProcessingService;
     private final DataCleaningService dataCleaningService;
     private final FileService fileService;
     private final ObjectMapper objectMapper;
     private final String mappedDatasetFolder;
+    private final HarmonizationProcessingJobs jobs;
+    private final ExecutorService parseJobExecutor;
 
     public HarmonizerService(DataProcessingService dataProcessingService,
                              DataCleaningService dataCleaningService,
-                             FileService fileService) {
+                             FileService fileService,
+                             HarmonizationProcessingJobs jobs) {
         this.dataProcessingService = dataProcessingService;
         this.dataCleaningService = dataCleaningService;
         this.fileService = fileService;
+        this.jobs = jobs;
         this.objectMapper = new ObjectMapper();
         this.mappedDatasetFolder = fileService.getMappedDatasetsFolder();
+        this.parseJobExecutor = Executors.newCachedThreadPool();
+    }
+
+    public void startParseJob(String jobId,
+                              String configs,
+                              Map<String, List<String>> fileMappings,
+                              DataCleaningOptionsDTO cleanOpts) {
+        parseJobExecutor.submit(() -> {
+            try {
+                String result = parseFilesWithProgress(jobId, configs, fileMappings, cleanOpts);
+                jobs.complete(jobId, result);
+            } catch (Exception e) {
+                logger.error("Parse job failed jobId={}", jobId, e);
+                jobs.fail(jobId, "Error processing files: " + (e.getMessage() == null ? "Unknown error" : e.getMessage()));
+            }
+        });
+    }
+
+    public String parseFilesWithProgress(String jobId,
+                                         String configs,
+                                         Map<String, List<String>> fileMappings,
+                                         DataCleaningOptionsDTO cleanOpts) {
+        try {
+            logger.info("[parseFilesWithProgress] jobId={} fileMappings keys = {}", jobId, fileMappings.keySet());
+            logger.info("[parseFilesWithProgress] jobId={} raw configs JSON = {}", jobId, configs);
+
+            List<Map<String, Object>> configList =
+                    objectMapper.readValue(configs, new TypeReference<>() {});
+            logger.info("[parseFilesWithProgress] jobId={} parsed {} config objects", jobId, configList.size());
+
+            Map<String, Object> customConfig = getAllConfigsForFile(configList);
+
+            int totalDatasets = fileMappings.values().stream().mapToInt(List::size).sum();
+            if (totalDatasets <= 0) totalDatasets = 1;
+
+            int processedDatasets = 0;
+
+            for (var entry : fileMappings.entrySet()) {
+                String configFileName = entry.getKey();
+                Map<String, Object> configForKey = getConfigForFile(configFileName, configList);
+
+                boolean customOnlyMode = configForKey.isEmpty();
+
+                if (customOnlyMode) {
+                    logger.warn("[parseFilesWithProgress] No config for key {} -> running in CUSTOM-ONLY mode.",
+                            configFileName);
+                    if (customConfig.isEmpty()) {
+                        logger.warn("[parseFilesWithProgress] No custom_mapping present either -> nothing to output for key {}",
+                                configFileName);
+                    }
+                }
+
+                for (String datasetName : entry.getValue()) {
+                    int percent = (int) Math.round((processedDatasets * 100.0) / totalDatasets);
+                    jobs.update(
+                            jobId,
+                            percent,
+                            datasetName,
+                            "Processing " + (processedDatasets + 1) + "/" + totalDatasets + ": " + datasetName
+                    );
+
+                    logger.info("[parseFilesWithProgress] jobId={} Processing dataset=\"{}\" with configKey=\"{}\"",
+                            jobId, datasetName, configFileName);
+
+                    Path input = Paths.get(fileService.getDatasetFilePath(datasetName));
+                    if (!Files.exists(input)) {
+                        logger.error("[parseFilesWithProgress] Missing file {}", input);
+                        processedDatasets++;
+                        continue;
+                    }
+
+                    List<String> originalCols = new ArrayList<>();
+                    dataProcessingService.streamRows(input, row -> {
+                        if (originalCols.isEmpty()) originalCols.addAll(row.keySet());
+                    });
+
+                    Set<String> headerSet = new LinkedHashSet<>();
+
+                    if (!customOnlyMode) {
+                        configForKey.values().forEach(cc -> {
+                            @SuppressWarnings("unchecked")
+                            Map<String, Object> m = (Map<String, Object>) cc;
+
+                            @SuppressWarnings("unchecked")
+                            List<Map<String, Object>> groups = (List<Map<String, Object>>) m.get(GROUPS_KEY);
+                            if (groups != null) {
+                                groups.forEach(g -> headerSet.add((String) g.get("column")));
+                            }
+                        });
+                    }
+
+                    headerSet.addAll(customConfig.keySet());
+
+                    List<String> outputHeaders = new ArrayList<>(headerSet);
+                    logger.info("[parseFilesWithProgress] jobId={} customOnlyMode={}, outputHeaders({})={}",
+                            jobId, customOnlyMode, outputHeaders.size(), outputHeaders);
+
+                    String base = datasetName.replaceAll("\\.[^.]+$", "");
+                    Path out = Paths.get(mappedDatasetFolder, "parsed_" + base + ".csv");
+                    try {
+                        Files.createDirectories(out.getParent());
+                    } catch (IOException e) {
+                        throw new UncheckedIOException(e);
+                    }
+
+                    Set<String> seen = new HashSet<>();
+                    Set<String> numericColsForCleaning = extractNumericColumns(cleanOpts);
+
+                    try (BufferedWriter writer = Files.newBufferedWriter(out);
+                         CSVPrinter printer = new CSVPrinter(writer,
+                                 CSVFormat.newFormat(';')
+                                         .withRecordSeparator(System.lineSeparator())
+                                         .withHeader(outputHeaders.toArray(new String[0])))) {
+
+                        dataProcessingService.streamRows(input, row -> {
+                            if (cleanOpts != null) {
+                                if (cleanOpts.isRemoveEmptyRows() && dataCleaningService.isEmptyRow(row)) return;
+
+                                if (cleanOpts.isRemoveDuplicates()) {
+                                    String key = dataCleaningService.dedupeKey(row);
+                                    if (!seen.add(key)) return;
+                                }
+
+                                if (cleanOpts.isStandardizeDates()) {
+                                    dataCleaningService.standardizeDatesInPlace(row, cleanOpts.getDateOutputFormat());
+                                }
+
+                                if (shouldStandardizeNumeric(cleanOpts, numericColsForCleaning)) {
+                                    dataCleaningService.standardizeNumericInPlace(
+                                            row, numericColsForCleaning, cleanOpts.getNumericMode()
+                                    );
+                                }
+                            }
+
+                            Map<String, String> outRow = new LinkedHashMap<>();
+                            outputHeaders.forEach(h -> outRow.put(h, ""));
+
+                            if (!customOnlyMode) {
+                                row.forEach((k, v) -> {
+                                    if (outRow.containsKey(k)) outRow.put(k, v);
+                                });
+                            }
+
+                            if (!customOnlyMode) {
+                                configForKey.forEach((k, obj) -> {
+                                    @SuppressWarnings("unchecked")
+                                    var m = (Map<String, Object>) obj;
+
+                                    @SuppressWarnings("unchecked")
+                                    List<Map<String, Object>> groups = (List<Map<String, Object>>) m.get(GROUPS_KEY);
+                                    if (groups == null) return;
+
+                                    for (var grp : groups) {
+                                        String tgt = (String) grp.get("column");
+
+                                        @SuppressWarnings("unchecked")
+                                        List<Map<String, Object>> vals = (List<Map<String, Object>>) grp.get(VALUES_KEY);
+                                        if (vals == null) continue;
+
+                                        vals.stream()
+                                                .flatMap(vo -> mapValueForRecord(row, vo, configFileName))
+                                                .findFirst()
+                                                .ifPresent(val -> outRow.put(tgt, val));
+                                    }
+                                });
+                            }
+
+                            customConfig.forEach((cust, obj) -> {
+                                @SuppressWarnings("unchecked")
+                                var m = (Map<String, Object>) obj;
+
+                                String type = (String) m.get("mappingType");
+
+                                @SuppressWarnings("unchecked")
+                                List<Map<String, Object>> groups = (List<Map<String, Object>>) m.get(GROUPS_KEY);
+                                if (groups == null) return;
+
+                                @SuppressWarnings("unchecked")
+                                List<String> allowed = (List<String>) m.get("columns");
+                                Set<String> allowedSet = allowed == null ? Collections.emptySet() : new HashSet<>(allowed);
+
+                                if ("one-hot".equalsIgnoreCase(type)) {
+                                    boolean hit = groups.stream()
+                                            .flatMap(g -> {
+                                                @SuppressWarnings("unchecked")
+                                                List<Map<String, Object>> values = (List<Map<String, Object>>) g.get(VALUES_KEY);
+                                                return values == null ? Stream.empty() : values.stream();
+                                            })
+                                            .anyMatch(vo -> mapValueForRecord(row, vo, allowedSet, configFileName).findFirst().isPresent());
+                                    outRow.put(cust, hit ? "1" : "0");
+                                } else {
+                                    for (var grp : groups) {
+                                        @SuppressWarnings("unchecked")
+                                        List<Map<String, Object>> vals = (List<Map<String, Object>>) grp.get(VALUES_KEY);
+                                        if (vals == null) continue;
+
+                                        Optional<String> mapped = vals.stream()
+                                                .filter(v -> v.get("mapping") != null)
+                                                .flatMap(vo -> mapValueForRecord(row, vo, allowedSet, configFileName))
+                                                .findFirst();
+
+                                        if (mapped.isPresent()) {
+                                            outRow.put(cust, mapped.get());
+                                            break;
+                                        }
+                                    }
+                                }
+                            });
+
+                            try {
+                                printer.printRecord(outputHeaders.stream().map(outRow::get).toArray());
+                            } catch (IOException e) {
+                                throw new UncheckedIOException(e);
+                            }
+                        });
+                    } catch (IOException e) {
+                        throw new UncheckedIOException(e);
+                    }
+
+                    processedDatasets++;
+                    int afterPercent = (int) Math.round((processedDatasets * 100.0) / totalDatasets);
+                    jobs.update(
+                            jobId,
+                            afterPercent,
+                            datasetName,
+                            "Processed " + processedDatasets + "/" + totalDatasets + ": " + datasetName
+                    );
+
+                    logger.info("[parseFilesWithProgress] jobId={} Finished writing {} -> {}", jobId, datasetName, out);
+                }
+            }
+
+            return "Files processed successfully.";
+        } catch (Exception ex) {
+            throw new IllegalStateException("Error processing files", ex);
+        }
     }
 
     public String parseFiles(String configs,
@@ -98,7 +344,7 @@ public class HarmonizerService {
                             Map<String, Object> m = (Map<String, Object>) cc;
 
                             @SuppressWarnings("unchecked")
-                            List<Map<String, Object>> groups = (List<Map<String, Object>>) m.get("groups");
+                            List<Map<String, Object>> groups = (List<Map<String, Object>>) m.get(GROUPS_KEY);
                             if (groups != null) {
                                 groups.forEach(g -> headerSet.add((String) g.get("column")));
                             }
@@ -164,18 +410,18 @@ public class HarmonizerService {
                                     var m = (Map<String, Object>) obj;
 
                                     @SuppressWarnings("unchecked")
-                                    List<Map<String, Object>> groups = (List<Map<String, Object>>) m.get("groups");
+                                    List<Map<String, Object>> groups = (List<Map<String, Object>>) m.get(GROUPS_KEY);
                                     if (groups == null) return;
 
                                     for (var grp : groups) {
                                         String tgt = (String) grp.get("column");
 
                                         @SuppressWarnings("unchecked")
-                                        List<Map<String, Object>> vals = (List<Map<String, Object>>) grp.get("values");
+                                        List<Map<String, Object>> vals = (List<Map<String, Object>>) grp.get(VALUES_KEY);
                                         if (vals == null) continue;
 
                                         vals.stream()
-                                                .flatMap(vo -> mapValueForRecord(row, vo))
+                                                .flatMap(vo -> mapValueForRecord(row, vo, configFileName))
                                                 .findFirst()
                                                 .ifPresent(val -> outRow.put(tgt, val));
                                     }
@@ -190,7 +436,7 @@ public class HarmonizerService {
                                 String type = (String) m.get("mappingType");
 
                                 @SuppressWarnings("unchecked")
-                                List<Map<String, Object>> groups = (List<Map<String, Object>>) m.get("groups");
+                                List<Map<String, Object>> groups = (List<Map<String, Object>>) m.get(GROUPS_KEY);
                                 if (groups == null) return;
 
                                 @SuppressWarnings("unchecked")
@@ -201,21 +447,20 @@ public class HarmonizerService {
                                     boolean hit = groups.stream()
                                             .flatMap(g -> {
                                                 @SuppressWarnings("unchecked")
-                                                List<Map<String, Object>> values = (List<Map<String, Object>>) g.get("values");
+                                                List<Map<String, Object>> values = (List<Map<String, Object>>) g.get(VALUES_KEY);
                                                 return values == null ? Stream.empty() : values.stream();
                                             })
-                                            .anyMatch(vo -> mapValueForRecord(row, vo, allowedSet).findFirst().isPresent());
-
+                                            .anyMatch(vo -> mapValueForRecord(row, vo, allowedSet, configFileName).findFirst().isPresent());
                                     outRow.put(cust, hit ? "1" : "0");
                                 } else {
                                     for (var grp : groups) {
                                         @SuppressWarnings("unchecked")
-                                        List<Map<String, Object>> vals = (List<Map<String, Object>>) grp.get("values");
+                                        List<Map<String, Object>> vals = (List<Map<String, Object>>) grp.get(VALUES_KEY);
                                         if (vals == null) continue;
 
                                         Optional<String> mapped = vals.stream()
                                                 .filter(v -> v.get("mapping") != null)
-                                                .flatMap(vo -> mapValueForRecord(row, vo, allowedSet))
+                                                .flatMap(vo -> mapValueForRecord(row, vo, allowedSet, configFileName))
                                                 .findFirst();
 
                                         if (mapped.isPresent()) {
@@ -239,8 +484,7 @@ public class HarmonizerService {
             }
             return "Files processed successfully.";
         } catch (Exception ex) {
-            logger.error("Error in parseFiles:", ex);
-            throw new RuntimeException("Error processing files", ex);
+            throw new IllegalStateException("Error processing files", ex);
         }
     }
 
@@ -261,32 +505,91 @@ public class HarmonizerService {
     }
 
     private Map<String, Object> getConfigForFile(String key, List<Map<String, Object>> configList) {
+        Map<String, Object> matched = new LinkedHashMap<>();
+
         for (var cfg : configList) {
             for (var e : cfg.entrySet()) {
                 @SuppressWarnings("unchecked")
-                var details = (Map<String, Object>) e.getValue();
-                if (key.equals(details.get("fileName"))) {
-                    return cfg;
+                Map<String, Object> details = (Map<String, Object>) e.getValue();
+
+                if (matchesConfigKey(details, key)) {
+                    matched.put(e.getKey(), details);
                 }
             }
         }
-        return Collections.emptyMap();
+
+        return matched;
     }
 
-    private Stream<String> mapValueForRecord(Map<String, String> record,
+    private boolean matchesConfigKey(Map<String, Object> details, String key) {
+        Object directFileName = details.get("fileName");
+
+        if (key.equals(directFileName)) {
+            return true;
+        }
+        return isConfigForElementFile(details, key);
+    }
+
+    @SuppressWarnings("unchecked")
+    private boolean isConfigForElementFile(Map<String, Object> details, String key) {
+        Object groupsObj = details.get(GROUPS_KEY);
+        if (!(groupsObj instanceof List<?> groups)) {
+            return false;
+        }
+
+        for (Object groupObj : groups) {
+            if (!(groupObj instanceof Map<?, ?> group)) continue;
+
+            Object valuesObj = group.get(VALUES_KEY);
+            if (!(valuesObj instanceof List<?> values)) continue;
+
+            for (Object valueObj : values) {
+                if (!(valueObj instanceof Map<?, ?> valueMap)) continue;
+
+                Object mappingsObj = valueMap.get("mapping");
+                if (!(mappingsObj instanceof List<?> mappings)) continue;
+
+                for (Object mappingObj : mappings) {
+                    if (!(mappingObj instanceof Map<?, ?> mapping)) continue;
+
+                    Object fileNameObj = mapping.get("fileName");
+                    if (key.equals(fileNameObj)) {
+                        return true;
+                    }
+                }
+            }
+        }
+        return false;
+    }
+
+    private Stream<String> mapValueForRecord(Map<String, String> row,
                                              Map<String, Object> valueObj) {
-        return mapValueForRecordInternal(record, valueObj, null);
+        return mapValueForRecordInternal(row, valueObj, null, null);
     }
 
-    private Stream<String> mapValueForRecord(Map<String, String> record,
+    private Stream<String> mapValueForRecord(Map<String, String> row,
                                              Map<String, Object> valueObj,
                                              Set<String> allowedGroupColumns) {
-        return mapValueForRecordInternal(record, valueObj, allowedGroupColumns);
+        return mapValueForRecordInternal(row, valueObj, allowedGroupColumns, null);
     }
 
-    private Stream<String> mapValueForRecordInternal(Map<String, String> record,
+    private Stream<String> mapValueForRecord(Map<String, String> row,
+                                             Map<String, Object> valueObj,
+                                             String sourceConfigFileName) {
+        return mapValueForRecordInternal(row, valueObj, null, sourceConfigFileName);
+    }
+
+    private Stream<String> mapValueForRecord(Map<String, String> row,
+                                             Map<String, Object> valueObj,
+                                             Set<String> allowedGroupColumns,
+                                             String sourceConfigFileName) {
+        return mapValueForRecordInternal(row, valueObj, allowedGroupColumns, sourceConfigFileName);
+    }
+
+    private Stream<String> mapValueForRecordInternal(Map<String, String> row,
                                                      Map<String, Object> valueObj,
-                                                     Set<String> allowedGroupColumnsOrNull) {
+                                                     Set<String> allowedGroupColumnsOrNull,
+                                                     String sourceConfigFileName) {
         String mappedName = Objects.toString(valueObj.get("name"), "");
 
         @SuppressWarnings("unchecked")
@@ -295,38 +598,88 @@ public class HarmonizerService {
 
         return mappings.stream()
                 .filter(mapping -> {
+                    String mappingFileName = (String) mapping.get("fileName");
+
+                    // If mapping.fileName exists, only consider entries for the current source config file
+                    if (sourceConfigFileName != null
+                            && mappingFileName != null
+                            && !sourceConfigFileName.equals(mappingFileName)) {
+                        return false;
+                    }
+
                     String groupColumn = (String) mapping.get("groupColumn");
                     if (groupColumn == null) return false;
 
                     if (allowedGroupColumnsOrNull != null && !allowedGroupColumnsOrNull.contains(groupColumn)) {
                         return false;
                     }
-                    if (!record.containsKey(groupColumn)) {
-                        logger.debug("[mapValueForRecord] record missing column '{}' (available={})",
-                                groupColumn, record.keySet());
+
+                    if (!row.containsKey(groupColumn)) {
                         return false;
                     }
 
-                    String raw = record.get(groupColumn);
+                    String raw = row.get(groupColumn);
                     Object mv = mapping.get("value");
 
-                    // range/date mapping: value is an object with {type,minValue,maxValue}
+                    // range/date mapping
                     if (mv instanceof Map<?, ?>) {
                         @SuppressWarnings("unchecked")
                         var rm = (Map<String, Object>) mv;
                         return matchRangeOrDate(raw, rm);
                     }
 
-                    // exact match mapping: value is a string
-                    if (mv instanceof String) {
-                        return raw != null && raw.equals(mv);
+                    // exact match OR typed passthrough
+                    if (mv instanceof String s) {
+                        if (isTypeMarker(s)) {
+                            return matchesDeclaredType(raw, s);
+                        }
+                        return raw != null && raw.equals(s);
                     }
 
                     return false;
                 })
-                .map(m -> mappedName);
+                .map(mapping -> {
+                    String groupColumn = (String) mapping.get("groupColumn");
+                    String raw = row.get(groupColumn);
+                    Object mv = mapping.get("value");
+
+                    // typed passthrough -> write the raw source value
+                    if (mv instanceof String s && isTypeMarker(s)) {
+                        return raw;
+                    }
+
+                    return mappedName;
+                });
     }
 
+    private boolean isTypeMarker(String s) {
+        if (s == null) return false;
+        String t = s.trim().toLowerCase();
+        return "integer".equals(t) || "double".equals(t) || "date".equals(t);
+    }
+
+    private boolean matchesDeclaredType(String raw, String declaredType) {
+        if (raw == null || raw.isBlank()) return false;
+
+        String t = declaredType.trim().toLowerCase();
+
+        try {
+            return switch (t) {
+                case "integer" -> {
+                    double d = NumberUtil.parseDouble(raw);
+                    yield d == Math.rint(d);
+                }
+                case "double" -> {
+                    NumberUtil.parseDouble(raw);
+                    yield true;
+                }
+                case "date" -> DateUtil.parseDate(raw).isPresent();
+                default -> false;
+            };
+        } catch (Exception ex) {
+            return false;
+        }
+    }
     private boolean matchRangeOrDate(String raw, Map<String, Object> rm) {
         String type = Objects.toString(rm.get("type"), "").toLowerCase();
 
