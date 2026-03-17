@@ -7,7 +7,7 @@ import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 import org.taniwha.dto.*;
-import org.taniwha.service.AnalyticsProcessingJobs;
+import org.taniwha.service.jobs.AnalyticsProcessingJobs;
 import org.taniwha.service.AnalyticsService;
 
 import java.util.Collections;
