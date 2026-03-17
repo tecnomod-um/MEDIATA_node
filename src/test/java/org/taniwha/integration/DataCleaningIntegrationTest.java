@@ -2,7 +2,6 @@ package org.taniwha.integration;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.io.TempDir;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.context.TestConfiguration;
@@ -91,9 +90,11 @@ class DataCleaningIntegrationTest {
     @Test
     void textNormalizationWorkflow() throws Exception {
         // Step 1: Create test file with messy text
-        String messyData = "NAME,DESCRIPTION\n" +
-            "  Product  One  ,Great  product\n" +
-            "product TWO,EXCELLENT  QUALITY\n";
+        String messyData = """
+            NAME,DESCRIPTION
+              Product  One  ,Great  product
+            product TWO,EXCELLENT  QUALITY
+        """;
         
         Path testFile = datasetsDir.resolve("messy.csv");
         Files.writeString(testFile, messyData);
@@ -118,10 +119,12 @@ class DataCleaningIntegrationTest {
     @Test
     void fuzzyMatchingWorkflow() throws Exception {
         // Step 1: Create data with similar values
-        String companyData = "COMPANY,REVENUE\n" +
-            "Apple Inc,1000000\n" +
-            "Apple Inc.,2000000\n" +
-            "Microsoft Corp,4000000\n";
+        String companyData = """
+            COMPANY,REVENUE
+            Apple Inc,1000000
+            Apple Inc.,2000000
+            Microsoft Corp,4000000
+        """;
         
         Path testFile = datasetsDir.resolve("companies.csv");
         Files.writeString(testFile, companyData);
@@ -146,10 +149,12 @@ class DataCleaningIntegrationTest {
     @Test
     void missingValueHandlingWorkflow() throws Exception {
         // Step 1: Create data with missing values
-        String dataWithMissing = "ID,SCORE\n" +
-            "1,100\n" +
-            "2,\n" +
-            "3,400\n";
+        String dataWithMissing = """
+            ID,SCORE
+            1,100
+            2,
+            3,400
+        """;
         
         Path testFile = datasetsDir.resolve("missing.csv");
         Files.writeString(testFile, dataWithMissing);
@@ -170,10 +175,12 @@ class DataCleaningIntegrationTest {
     @Test
     void statisticalNormalizationWorkflow() throws Exception {
         // Step 1: Create numeric data
-        String numericData = "ID,VALUE\n" +
-            "1,10\n" +
-            "2,50\n" +
-            "3,90\n";
+        String numericData = """
+            ID,VALUE
+            1,10
+            2,50
+            3,90
+        """;
         
         Path testFile = datasetsDir.resolve("numeric.csv");
         Files.writeString(testFile, numericData);
@@ -193,9 +200,11 @@ class DataCleaningIntegrationTest {
     @Test
     void dateExtractionWorkflow() throws Exception {
         // Step 1: Create data with dates
-        String dateData = "ID,EVENT_DATE\n" +
-            "1,2023-01-15\n" +
-            "2,2023-06-20\n";
+        String dateData = """
+            ID,EVENT_DATE
+            1,2023-01-15
+            2,2023-06-20
+        """;
         
         Path testFile = datasetsDir.resolve("dates.csv");
         Files.writeString(testFile, dateData);
@@ -220,9 +229,11 @@ class DataCleaningIntegrationTest {
     @Test
     void phoneNumberStandardizationWorkflow() throws Exception {
         // Step 1: Create data with phone numbers
-        String phoneData = "NAME,PHONE\n" +
-            "John,1234567890\n" +
-            "Jane,9876543210\n";
+        String phoneData = """
+            NAME,PHONE
+            John,1234567890
+            Jane,9876543210
+        """;
         
         Path testFile = datasetsDir.resolve("phones.csv");
         Files.writeString(testFile, phoneData);
@@ -243,9 +254,11 @@ class DataCleaningIntegrationTest {
     @Test
     void columnSplittingWorkflow() throws Exception {
         // Step 1: Create data with compound columns
-        String compoundData = "ID,FULL_NAME\n" +
-            "1,John Doe\n" +
-            "2,Jane Smith\n";
+        String compoundData = """
+            ID,FULL_NAME
+            1,John Doe
+            2,Jane Smith
+        """;
         
         Path testFile = datasetsDir.resolve("names.csv");
         Files.writeString(testFile, compoundData);
@@ -272,10 +285,12 @@ class DataCleaningIntegrationTest {
     @Test
     void multipleOperationsCombinedWorkflow() throws Exception {
         // Step 1: Create realistic messy dataset
-        String messyDataset = "product,price,stock\n" +
-            "  iPhone  ,999.99,50\n" +
-            "Samsung,899.50,\n" +
-            "MacBook,2499.00,100\n";
+        String messyDataset = """
+            product,price,stock
+              iPhone  ,999.99,50
+            Samsung,899.50,
+            MacBook,2499.00,100
+        """;
         
         Path testFile = datasetsDir.resolve("products.csv");
         Files.writeString(testFile, messyDataset);
@@ -302,12 +317,14 @@ class DataCleaningIntegrationTest {
     @Test
     void dataQualityImprovementWorkflow() throws Exception {
         // Step 1: Create low-quality data
-        String lowQualityData = "id,name,value\n" +
-            "1,Item One,100\n" +
-            "2,,200\n" +
-            "3,Item Three,\n" +
-            ",,\n" +
-            "5,Item Five,500\n";
+        String lowQualityData = """
+            id,name,value
+            1,Item One,100
+            2,,200
+            3,Item Three,
+            ,,
+            5,Item Five,500
+        """;
         
         Path testFile = datasetsDir.resolve("quality.csv");
         Files.writeString(testFile, lowQualityData);
@@ -330,10 +347,12 @@ class DataCleaningIntegrationTest {
     @Test
     void categoricalDataBinningWorkflow() throws Exception {
         // Step 1: Create continuous data
-        String ageData = "ID,AGE\n" +
-            "1,25\n" +
-            "2,45\n" +
-            "3,65\n";
+        String ageData = """
+            ID,AGE
+            1,25
+            2,45
+            3,65
+        """;
         
         Path testFile = datasetsDir.resolve("ages.csv");
         Files.writeString(testFile, ageData);

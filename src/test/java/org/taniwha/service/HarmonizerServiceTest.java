@@ -5,6 +5,8 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.taniwha.dto.DataCleaningOptionsDTO;
 import org.taniwha.security.FileFilter;
+import org.taniwha.service.jobs.HarmonizationProcessingJobs;
+import org.taniwha.service.jobs.CleaningProcessingJobs;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -30,8 +32,17 @@ class HarmonizerServiceTest {
 
         FileService fileService = new FileService(fileFilter, baseDir.toString());
         DataProcessingService dataProcessingService = new DataProcessingService(fileFilter);
-        DataCleaningService dataCleaningService = new DataCleaningService(fileService, dataProcessingService);
-        harmonizerService = new HarmonizerService(dataProcessingService, dataCleaningService, fileService);
+        CleaningProcessingJobs cleaningJobs = new CleaningProcessingJobs();
+        DataCleaningService dataCleaningService =
+                new DataCleaningService(fileService, dataProcessingService, cleaningJobs);
+        HarmonizationProcessingJobs jobs = new HarmonizationProcessingJobs();
+
+        harmonizerService = new HarmonizerService(
+                dataProcessingService,
+                dataCleaningService,
+                fileService,
+                jobs
+        );
     }
 
     private void makeCsv(String name, String content) throws Exception {
@@ -53,7 +64,6 @@ class HarmonizerServiceTest {
         Path out = baseDir.resolve("datasets").resolve("parsed_d1.csv");
         assertThat(out).exists();
 
-        // With no configs, outputHeaders is empty, so file should be empty (or just a newline)
         String content = Files.readString(out);
         assertThat(content.trim()).isEmpty();
     }
@@ -62,7 +72,6 @@ class HarmonizerServiceTest {
     void parseFiles_withMatchingConfig_writesParsedCsv() throws Exception {
         makeCsv("d1.csv", "x;y\n1;2\n");
 
-        // IMPORTANT: headers come from groups[].column now
         String configs = """
             [
               {
@@ -102,7 +111,6 @@ class HarmonizerServiceTest {
             2;bar;11-07-2025
             """);
 
-        // IMPORTANT: headers come from groups[].column now
         String configs = """
             [
               {
@@ -144,7 +152,6 @@ class HarmonizerServiceTest {
     void parseFiles_withStandardGroupMapping_appliesGroupColumnLogic() throws Exception {
         makeCsv("d1.csv", "a;b\nfoo;bar\n");
 
-        // IMPORTANT: include passthrough headers via groups
         String configs = """
             [
               {
@@ -193,9 +200,6 @@ class HarmonizerServiceTest {
             70;30;2025-07-13T12:00:00Z
             """);
 
-        // IMPORTANT:
-        // - cfg2 must define headers via groups (age/score/when passthrough)
-        // - range mapping must be in mapping.value as an object {type,minValue,maxValue}
         String configs = """
             [
               {
@@ -264,10 +268,8 @@ class HarmonizerServiceTest {
         List<String> rows = Files.readAllLines(out);
 
         assertThat(rows.get(0)).isEqualTo("age;score;when;age_group;high_score");
-        // age_group "one-hot": hit -> 1 else 0
         assertThat(rows.get(1)).isEqualTo("25;88;2025-07-11T10:00:00Z;0;TOP");
         assertThat(rows.get(2)).isEqualTo("42;55;2025-07-12T11:00:00Z;1;");
         assertThat(rows.get(3)).isEqualTo("70;30;2025-07-13T12:00:00Z;0;");
     }
-
 }

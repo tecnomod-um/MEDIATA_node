@@ -43,10 +43,12 @@ class ErrorLogDTOTest {
     @Test
     void setInfo_withDetailedStackTrace_shouldHandleLongText() {
         ErrorLogDTO dto = new ErrorLogDTO();
-        String longInfo = "Error occurred at line 123 in file Service.java\n"
-                + "Stack trace:\n"
-                + "  at com.example.Service.method(Service.java:123)\n"
-                + "  at com.example.Controller.handle(Controller.java:45)\n";
+        String longInfo = """
+                Error occurred at line 123 in file Service.java
+                Stack trace:
+                  at com.example.Service.method(Service.java:123)
+                  at com.example.Controller.handle(Controller.java:45)
+                """;
         
         dto.setInfo(longInfo);
         

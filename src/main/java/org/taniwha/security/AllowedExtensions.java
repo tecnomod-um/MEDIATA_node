@@ -14,8 +14,11 @@ public enum AllowedExtensions {
     }
 
     public static boolean isAllowed(String extension) {
-        for (AllowedExtensions allowed : values())
-            if (allowed.getExtension().equalsIgnoreCase(extension)) return false;
-        return true;
+        if (extension == null || extension.isBlank()) return false;
+        for (AllowedExtensions allowed : values()) {
+            if (allowed.getExtension().equalsIgnoreCase(extension)) return true;
+
+        }
+        return false;
     }
 }
