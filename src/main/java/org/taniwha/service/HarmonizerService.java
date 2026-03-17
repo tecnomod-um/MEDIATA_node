@@ -178,7 +178,7 @@ public class HarmonizerService {
                                         if (vals == null) continue;
 
                                         vals.stream()
-                                                .flatMap(vo -> mapValueForRecord(row, vo))
+                                                .flatMap(vo -> mapValueForRecord(row, vo, configFileName))
                                                 .findFirst()
                                                 .ifPresent(val -> outRow.put(tgt, val));
                                     }
@@ -207,8 +207,7 @@ public class HarmonizerService {
                                                 List<Map<String, Object>> values = (List<Map<String, Object>>) g.get(VALUES_KEY);
                                                 return values == null ? Stream.empty() : values.stream();
                                             })
-                                            .anyMatch(vo -> mapValueForRecord(row, vo, allowedSet).findFirst().isPresent());
-
+                                            .anyMatch(vo -> mapValueForRecord(row, vo, allowedSet, configFileName).findFirst().isPresent());
                                     outRow.put(cust, hit ? "1" : "0");
                                 } else {
                                     for (var grp : groups) {
@@ -218,7 +217,7 @@ public class HarmonizerService {
 
                                         Optional<String> mapped = vals.stream()
                                                 .filter(v -> v.get("mapping") != null)
-                                                .flatMap(vo -> mapValueForRecord(row, vo, allowedSet))
+                                                .flatMap(vo -> mapValueForRecord(row, vo, allowedSet, configFileName))
                                                 .findFirst();
 
                                         if (mapped.isPresent()) {
@@ -263,32 +262,91 @@ public class HarmonizerService {
     }
 
     private Map<String, Object> getConfigForFile(String key, List<Map<String, Object>> configList) {
+        Map<String, Object> matched = new LinkedHashMap<>();
+
         for (var cfg : configList) {
             for (var e : cfg.entrySet()) {
                 @SuppressWarnings("unchecked")
-                var details = (Map<String, Object>) e.getValue();
-                if (key.equals(details.get("fileName"))) {
-                    return cfg;
+                Map<String, Object> details = (Map<String, Object>) e.getValue();
+
+                if (matchesConfigKey(details, key)) {
+                    matched.put(e.getKey(), details);
                 }
             }
         }
-        return Collections.emptyMap();
+
+        return matched;
+    }
+
+    private boolean matchesConfigKey(Map<String, Object> details, String key) {
+        Object directFileName = details.get("fileName");
+
+        if (key.equals(directFileName)) {
+            return true;
+        }
+        return isConfigForElementFile(details, key);
+    }
+
+    @SuppressWarnings("unchecked")
+    private boolean isConfigForElementFile(Map<String, Object> details, String key) {
+        Object groupsObj = details.get(GROUPS_KEY);
+        if (!(groupsObj instanceof List<?> groups)) {
+            return false;
+        }
+
+        for (Object groupObj : groups) {
+            if (!(groupObj instanceof Map<?, ?> group)) continue;
+
+            Object valuesObj = group.get(VALUES_KEY);
+            if (!(valuesObj instanceof List<?> values)) continue;
+
+            for (Object valueObj : values) {
+                if (!(valueObj instanceof Map<?, ?> valueMap)) continue;
+
+                Object mappingsObj = valueMap.get("mapping");
+                if (!(mappingsObj instanceof List<?> mappings)) continue;
+
+                for (Object mappingObj : mappings) {
+                    if (!(mappingObj instanceof Map<?, ?> mapping)) continue;
+
+                    Object fileNameObj = mapping.get("fileName");
+                    if (key.equals(fileNameObj)) {
+                        return true;
+                    }
+                }
+            }
+        }
+        return false;
     }
 
     private Stream<String> mapValueForRecord(Map<String, String> row,
                                              Map<String, Object> valueObj) {
-        return mapValueForRecordInternal(row, valueObj, null);
+        return mapValueForRecordInternal(row, valueObj, null, null);
     }
 
     private Stream<String> mapValueForRecord(Map<String, String> row,
                                              Map<String, Object> valueObj,
                                              Set<String> allowedGroupColumns) {
-        return mapValueForRecordInternal(row, valueObj, allowedGroupColumns);
+        return mapValueForRecordInternal(row, valueObj, allowedGroupColumns, null);
+    }
+
+    private Stream<String> mapValueForRecord(Map<String, String> row,
+                                             Map<String, Object> valueObj,
+                                             String sourceConfigFileName) {
+        return mapValueForRecordInternal(row, valueObj, null, sourceConfigFileName);
+    }
+
+    private Stream<String> mapValueForRecord(Map<String, String> row,
+                                             Map<String, Object> valueObj,
+                                             Set<String> allowedGroupColumns,
+                                             String sourceConfigFileName) {
+        return mapValueForRecordInternal(row, valueObj, allowedGroupColumns, sourceConfigFileName);
     }
 
     private Stream<String> mapValueForRecordInternal(Map<String, String> row,
                                                      Map<String, Object> valueObj,
-                                                     Set<String> allowedGroupColumnsOrNull) {
+                                                     Set<String> allowedGroupColumnsOrNull,
+                                                     String sourceConfigFileName) {
         String mappedName = Objects.toString(valueObj.get("name"), "");
 
         @SuppressWarnings("unchecked")
@@ -297,38 +355,88 @@ public class HarmonizerService {
 
         return mappings.stream()
                 .filter(mapping -> {
+                    String mappingFileName = (String) mapping.get("fileName");
+
+                    // If mapping.fileName exists, only consider entries for the current source config file
+                    if (sourceConfigFileName != null
+                            && mappingFileName != null
+                            && !sourceConfigFileName.equals(mappingFileName)) {
+                        return false;
+                    }
+
                     String groupColumn = (String) mapping.get("groupColumn");
                     if (groupColumn == null) return false;
 
                     if (allowedGroupColumnsOrNull != null && !allowedGroupColumnsOrNull.contains(groupColumn)) {
                         return false;
                     }
+
                     if (!row.containsKey(groupColumn)) {
-                        logger.debug("[mapValueForRecord] row missing column '{}' (available={})",
-                                groupColumn, row.keySet());
                         return false;
                     }
 
                     String raw = row.get(groupColumn);
                     Object mv = mapping.get("value");
 
-                    // range/date mapping: value is an object with type, minValue and maxValue fields
+                    // range/date mapping
                     if (mv instanceof Map<?, ?>) {
                         @SuppressWarnings("unchecked")
                         var rm = (Map<String, Object>) mv;
                         return matchRangeOrDate(raw, rm);
                     }
 
-                    // exact match mapping: value is a string
-                    if (mv instanceof String) {
-                        return raw != null && raw.equals(mv);
+                    // exact match OR typed passthrough
+                    if (mv instanceof String s) {
+                        if (isTypeMarker(s)) {
+                            return matchesDeclaredType(raw, s);
+                        }
+                        return raw != null && raw.equals(s);
                     }
 
                     return false;
                 })
-                .map(m -> mappedName);
+                .map(mapping -> {
+                    String groupColumn = (String) mapping.get("groupColumn");
+                    String raw = row.get(groupColumn);
+                    Object mv = mapping.get("value");
+
+                    // typed passthrough -> write the raw source value
+                    if (mv instanceof String s && isTypeMarker(s)) {
+                        return raw;
+                    }
+
+                    return mappedName;
+                });
     }
 
+    private boolean isTypeMarker(String s) {
+        if (s == null) return false;
+        String t = s.trim().toLowerCase();
+        return "integer".equals(t) || "double".equals(t) || "date".equals(t);
+    }
+
+    private boolean matchesDeclaredType(String raw, String declaredType) {
+        if (raw == null || raw.isBlank()) return false;
+
+        String t = declaredType.trim().toLowerCase();
+
+        try {
+            return switch (t) {
+                case "integer" -> {
+                    double d = NumberUtil.parseDouble(raw);
+                    yield d == Math.rint(d);
+                }
+                case "double" -> {
+                    NumberUtil.parseDouble(raw);
+                    yield true;
+                }
+                case "date" -> DateUtil.parseDate(raw).isPresent();
+                default -> false;
+            };
+        } catch (Exception ex) {
+            return false;
+        }
+    }
     private boolean matchRangeOrDate(String raw, Map<String, Object> rm) {
         String type = Objects.toString(rm.get("type"), "").toLowerCase();
 
