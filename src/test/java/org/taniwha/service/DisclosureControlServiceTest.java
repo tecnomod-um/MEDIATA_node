@@ -33,7 +33,7 @@ class DisclosureControlServiceTest {
         response.setDateFeatures(List.of(dateFeature("dob", 4)));
         response.setCovariances(Map.of("age", Map.of("age", 1.0)));
 
-        int suppressed = service.apply(response, 4);
+        int suppressed = service.apply(response, 2);
 
         assertThat(suppressed).isEqualTo(3);
         assertThat(response.getContinuousFeatures()).isEmpty();
@@ -139,8 +139,8 @@ class DisclosureControlServiceTest {
     void apply_categoricalSmallCellsSuppressed() {
         Map<String, Integer> counts = new HashMap<>();
         counts.put("A", 10);
-        counts.put("B", 1);  // below threshold
-        counts.put("C", 2);  // below threshold
+        counts.put("B", 1);  // below threshold (1 < 2)
+        counts.put("C", 1);  // below threshold (1 < 2)
 
         AnalyticsResponseDTO response = new AnalyticsResponseDTO();
         response.setCategoricalFeatures(List.of(categoricalFeature("diagnosis", counts)));
@@ -158,7 +158,7 @@ class DisclosureControlServiceTest {
     void apply_categoricalAllCellsSuppressed_movedToOmitted() {
         Map<String, Integer> counts = new HashMap<>();
         counts.put("A", 1);
-        counts.put("B", 2);
+        counts.put("B", 1);  // both 1 < minCellCount(2) → entire feature suppressed
 
         AnalyticsResponseDTO response = new AnalyticsResponseDTO();
         response.setCategoricalFeatures(List.of(categoricalFeature("rare", counts)));
