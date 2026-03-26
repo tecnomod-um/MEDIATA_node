@@ -11,8 +11,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 class DisclosureControlServiceTest {
 
-    private static final int MIN_SUBSET = 5;
-    private static final int MIN_CELL = 3;
+    private static final int MIN_SUBSET = 3;
+    private static final int MIN_CELL = 2;
 
     private DisclosureControlService service;
 
@@ -79,10 +79,11 @@ class DisclosureControlServiceTest {
     }
 
     @Test
-    void apply_continuousFeatureOutliersStripped() {
-        List<Double> outliers = new ArrayList<>(List.of(200.0, 201.0));
+    void apply_continuousOutliers_smallGroup_valueSuppressed() {
+        // Only 1 outlier – below minCellCount (2) → values must be cleared
+        List<Double> outliers = new ArrayList<>(List.of(250.0));
         ContinuousFeatureStatistics feature = new ContinuousFeatureStatistics(
-                "bp", 20, 0, 0, 20, 60, 200, 90, 10, 80, 90, 100,
+                "bp", 20, 0, 0, 20, 60, 250, 90, 10, 80, 90, 100,
                 List.of(1.0, 2.0), List.of("[60-80]", "[80-100]"), outliers);
 
         AnalyticsResponseDTO response = new AnalyticsResponseDTO();
@@ -90,8 +91,43 @@ class DisclosureControlServiceTest {
 
         service.apply(response, 20);
 
-        assertThat(response.getContinuousFeatures()).hasSize(1);
-        ContinuousFeatureStatistics result = (ContinuousFeatureStatistics) response.getContinuousFeatures().get(0);
+        ContinuousFeatureStatistics result =
+                (ContinuousFeatureStatistics) response.getContinuousFeatures().get(0);
+        assertThat(result.getOutliers()).as("single outlier must be suppressed").isEmpty();
+        // Aggregate stats are unchanged
+        assertThat(result.getMin()).isEqualTo(60.0);
+        assertThat(result.getMax()).isEqualTo(250.0);
+    }
+
+    @Test
+    void apply_continuousOutliers_largeGroup_valuesPreserved() {
+        // 3 outliers – >= minCellCount (2) → values must be kept
+        List<Double> outliers = new ArrayList<>(List.of(200.0, 210.0, 220.0));
+        ContinuousFeatureStatistics feature = new ContinuousFeatureStatistics(
+                "bp", 20, 0, 0, 20, 60, 220, 90, 10, 80, 90, 100,
+                List.of(1.0, 2.0), List.of("[60-80]", "[80-100]"), outliers);
+
+        AnalyticsResponseDTO response = new AnalyticsResponseDTO();
+        response.setContinuousFeatures(List.of(feature));
+
+        service.apply(response, 20);
+
+        ContinuousFeatureStatistics result =
+                (ContinuousFeatureStatistics) response.getContinuousFeatures().get(0);
+        assertThat(result.getOutliers())
+                .as("outlier group >= minCellCount must be preserved for analytics")
+                .containsExactlyInAnyOrder(200.0, 210.0, 220.0);
+    }
+
+    @Test
+    void apply_continuousNoOutliers_unchanged() {
+        AnalyticsResponseDTO response = new AnalyticsResponseDTO();
+        response.setContinuousFeatures(List.of(continuousFeature("age", 20)));
+
+        service.apply(response, 20);
+
+        ContinuousFeatureStatistics result =
+                (ContinuousFeatureStatistics) response.getContinuousFeatures().get(0);
         assertThat(result.getOutliers()).isEmpty();
     }
 
@@ -190,11 +226,12 @@ class DisclosureControlServiceTest {
     }
 
     @Test
-    void apply_dateOutliersStripped() {
+    void apply_dateOutliers_smallGroup_valuesSuppressed() {
+        // Only 1 date outlier – below minCellCount → must be cleared
         DateFeatureStatistics feature = new DateFeatureStatistics(
                 "dob", 20, 0, 0,
                 "1900-01-01", "2024-01-01",
-                new HashMap<>(), List.of("1900-01-01"),
+                new HashMap<>(), new ArrayList<>(List.of("1900-01-01")),
                 "2000-01-01", 5.0, "2000-01-01", "1990-01-01", "2010-01-01");
 
         AnalyticsResponseDTO response = new AnalyticsResponseDTO();
@@ -203,7 +240,28 @@ class DisclosureControlServiceTest {
         service.apply(response, 20);
 
         assertThat(response.getDateFeatures()).hasSize(1);
-        assertThat(response.getDateFeatures().get(0).getOutliers()).isEmpty();
+        assertThat(response.getDateFeatures().get(0).getOutliers())
+                .as("single date outlier must be suppressed").isEmpty();
+    }
+
+    @Test
+    void apply_dateOutliers_largeGroup_valuesPreserved() {
+        // 2 date outliers – >= minCellCount → must be kept
+        DateFeatureStatistics feature = new DateFeatureStatistics(
+                "visit", 20, 0, 0,
+                "1900-01-01", "2024-01-01",
+                new HashMap<>(), new ArrayList<>(List.of("1900-01-01", "1901-03-15")),
+                "2000-01-01", 5.0, "2000-01-01", "1990-01-01", "2010-01-01");
+
+        AnalyticsResponseDTO response = new AnalyticsResponseDTO();
+        response.setDateFeatures(List.of(feature));
+
+        service.apply(response, 20);
+
+        assertThat(response.getDateFeatures()).hasSize(1);
+        assertThat(response.getDateFeatures().get(0).getOutliers())
+                .as("outlier group >= minCellCount must be preserved")
+                .containsExactlyInAnyOrder("1900-01-01", "1901-03-15");
     }
 
     // -------------------------------------------------------------------------

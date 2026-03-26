@@ -17,23 +17,30 @@ import java.util.stream.Collectors;
  * <p>Controls applied:
  * <ol>
  *   <li><b>Global minimum-subset rule</b> – if the record count is below
- *       {@code disclosure.min.subset.size} (default 10), the entire response is
+ *       {@code disclosure.min.subset.size} (default 3), the entire response is
  *       suppressed: all features are moved to {@code omittedFeatures} and all
- *       correlation/covariance matrices are cleared.</li>
+ *       correlation/covariance matrices are cleared.  The threshold is intentionally
+ *       set low so that most real datasets pass through unaffected.</li>
  *   <li><b>Per-feature minimum-subset rule</b> – individual features whose own
  *       non-missing count is below the threshold are moved to
  *       {@code omittedFeatures}.</li>
  *   <li><b>Categorical cell suppression (k-anonymity)</b> – category cells with a
- *       frequency count below {@code disclosure.min.cell.count} (default 5) are
- *       removed from the frequency map to avoid singling out individuals.</li>
+ *       frequency count strictly below {@code disclosure.min.cell.count} (default 2)
+ *       are removed from the frequency map to avoid singling out individuals.
+ *       The threshold is generous: a cell count of 1 (a unique individual) is the
+ *       only value suppressed by default.</li>
  *   <li><b>Date histogram suppression</b> – date-bucket entries with a count below
  *       the cell threshold are removed from the date histogram.</li>
- *   <li><b>Outlier-value stripping</b> – raw numeric and date outlier values are
- *       replaced with an empty list so exact boundary observations cannot be
- *       used to re-identify individuals.</li>
+ *   <li><b>Outlier-value suppression (k-anonymity for outliers)</b> – raw outlier
+ *       value lists are cleared <em>only when the outlier count itself is below
+ *       {@code minCellCount}</em>.  A very small outlier group (e.g. a single
+ *       extreme value) can uniquely identify a patient; a larger group loses that
+ *       identifying power and is kept intact so the analytics UI remains functional.
+ *       Note: aggregate statistics (min, max, mean, IQR) are always returned
+ *       unchanged.</li>
  *   <li><b>Correlation suppression</b> – covariance, Pearson/Spearman correlation,
- *       and chi-squared matrices are cleared when the record count is below the
- *       minimum-subset threshold.</li>
+ *       and chi-squared matrices are cleared when the global minimum-subset rule
+ *       fires.</li>
  * </ol>
  *
  * <p>All suppression events are logged at WARN level so that the audit trail in
@@ -48,8 +55,8 @@ public class DisclosureControlService {
     private final int minCellCount;
 
     public DisclosureControlService(
-            @Value("${disclosure.min.subset.size:10}") int minSubsetSize,
-            @Value("${disclosure.min.cell.count:5}") int minCellCount) {
+            @Value("${disclosure.min.subset.size:3}") int minSubsetSize,
+            @Value("${disclosure.min.cell.count:2}") int minCellCount) {
         this.minSubsetSize = minSubsetSize;
         this.minCellCount = minCellCount;
     }
@@ -80,8 +87,8 @@ public class DisclosureControlService {
         suppressed += suppressSmallContinuousFeatures(response);
         suppressed += suppressSmallCategoricalCells(response);
         suppressed += suppressSmallDateFeatures(response);
-        stripContinuousOutliers(response);
-        stripDateOutliers(response);
+        suppressSmallContinuousOutlierGroups(response);
+        suppressSmallDateOutlierGroups(response);
 
         return suppressed;
     }
@@ -292,19 +299,29 @@ public class DisclosureControlService {
     }
 
     // -------------------------------------------------------------------------
-    // Outlier-value stripping
+    // Outlier-value suppression (k-anonymity)
     // -------------------------------------------------------------------------
 
     /**
-     * Replaces raw numeric outlier lists with an empty list to prevent
-     * re-identification via extreme individual values.
+     * Suppresses the raw numeric outlier list only when the number of outlier
+     * values is smaller than {@code minCellCount} – a tiny group (e.g. a single
+     * extreme measurement) can uniquely identify an individual.  Larger groups
+     * are left intact because they no longer pinpoint specific records, and the
+     * analytics UI depends on the values for visualisation.
+     *
+     * <p>Note: aggregate statistics (min, max, mean, IQR) are not modified.
      */
-    private void stripContinuousOutliers(AnalyticsResponseDTO response) {
+    private void suppressSmallContinuousOutlierGroups(AnalyticsResponseDTO response) {
         if (response.getContinuousFeatures() == null) return;
 
         List<FeatureStatistics> sanitised = new ArrayList<>();
         for (FeatureStatistics fs : response.getContinuousFeatures()) {
-            if (fs instanceof ContinuousFeatureStatistics cfs && !cfs.getOutliers().isEmpty()) {
+            if (fs instanceof ContinuousFeatureStatistics cfs
+                    && !cfs.getOutliers().isEmpty()
+                    && cfs.getOutliers().size() < minCellCount) {
+                logger.warn(
+                        "Suppressing {} outlier value(s) for continuous feature '{}': group size < {}",
+                        cfs.getOutliers().size(), cfs.getFeatureName(), minCellCount);
                 sanitised.add(new ContinuousFeatureStatistics(
                         cfs.getFeatureName(), cfs.getCount(),
                         cfs.getPercentMissing(), cfs.getMissingValuesCount(),
@@ -321,15 +338,18 @@ public class DisclosureControlService {
     }
 
     /**
-     * Replaces raw date outlier lists with an empty list to prevent
-     * re-identification via rare boundary dates.
+     * Suppresses the raw date outlier list only when the number of outlier
+     * dates is smaller than {@code minCellCount}.
      */
-    private void stripDateOutliers(AnalyticsResponseDTO response) {
+    private void suppressSmallDateOutlierGroups(AnalyticsResponseDTO response) {
         if (response.getDateFeatures() == null) return;
 
         List<DateFeatureStatistics> sanitised = new ArrayList<>();
         for (DateFeatureStatistics fs : response.getDateFeatures()) {
-            if (!fs.getOutliers().isEmpty()) {
+            if (!fs.getOutliers().isEmpty() && fs.getOutliers().size() < minCellCount) {
+                logger.warn(
+                        "Suppressing {} outlier date(s) for date feature '{}': group size < {}",
+                        fs.getOutliers().size(), fs.getFeatureName(), minCellCount);
                 sanitised.add(new DateFeatureStatistics(
                         fs.getFeatureName(), fs.getCount(),
                         fs.getPercentMissing(), fs.getMissingValuesCount(),
