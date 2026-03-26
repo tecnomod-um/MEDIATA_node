@@ -119,9 +119,12 @@ class AnalyticsAuditServiceTest {
         assertThat(msg).contains("filters=true");
         // Keys logged
         assertThat(msg).contains("diagnosis").contains("age");
-        // Values must NOT appear in the audit entry
-        assertThat(msg).doesNotContain("cancer");
-        assertThat(msg).doesNotContain("50");
+        // Values must NOT appear in the filterKeys field (scope check to avoid
+        // false positives from numeric substrings in the timestamp)
+        int start = msg.indexOf("filterKeys=[") + "filterKeys=[".length();
+        int end   = msg.indexOf("]", start);
+        String filterKeysPart = msg.substring(start, end);
+        assertThat(filterKeysPart).doesNotContain("cancer").doesNotContain("50");
     }
 
     @Test
