@@ -60,16 +60,22 @@ public class AnalyticsService {
     private final DataProcessingService dataProcessingService;
     private final FileService fileService;
     private final AnalyticsProcessingJobs jobs;
+    private final DisclosureControlService disclosureControl;
+    private final AnalyticsAuditService auditService;
     private final ExecutorService discoveryJobExecutor;
 
     private static final String SUCCESS_MSG = "Data processed successfully";
 
     public AnalyticsService(DataProcessingService dataProcessingService,
                             FileService fileService,
-                            AnalyticsProcessingJobs jobs) {
+                            AnalyticsProcessingJobs jobs,
+                            DisclosureControlService disclosureControl,
+                            AnalyticsAuditService auditService) {
         this.dataProcessingService = dataProcessingService;
         this.fileService = fileService;
         this.jobs = jobs;
+        this.disclosureControl = disclosureControl;
+        this.auditService = auditService;
         // Use a thread factory with meaningful thread names for debugging
         AtomicLong threadCounter = new AtomicLong(0);
         ThreadFactory threadFactory = r -> {
@@ -349,6 +355,9 @@ public class AnalyticsService {
             response.setSpearmanCorrelations(calculator.calculateSpearmanCorrelations(continuousData));
             response.setChiSquareTest(calculator.calculateChiSquaredTest(categoricalData, comboCounts));
 
+            int suppressed = disclosureControl.apply(response, totalRows);
+            auditService.logResponse("PROCESS", filename, totalRows, suppressed);
+
             response.setMessage("File processed successfully: " + filename);
             return response;
 
@@ -415,6 +424,9 @@ public class AnalyticsService {
             response.setSpearmanCorrelations(calculator.calculateSpearmanCorrelations(continuousData));
             response.setChiSquareTest(calculator.calculateChiSquaredTest(categoricalData, comboCounts));
 
+            int suppressed = disclosureControl.apply(response, totalRows);
+            auditService.logResponse("PROCESS", filename, totalRows, suppressed);
+
             response.setMessage("File processed successfully: " + filename);
         } catch (Exception e) {
             logger.error("Error processing file {}", filename, e);
@@ -460,6 +472,8 @@ public class AnalyticsService {
                 return CompletableFuture.completedFuture(response);
             }
             processData(records, Optional.of(featureName), Optional.of(featureType), response, categoryCombinationCounts);
+            int suppressed = disclosureControl.apply(response, records.size());
+            auditService.logResponse("REPROCESS", fileName, records.size(), suppressed);
             response.setMessage(SUCCESS_MSG);
         } catch (Exception e) {
             String errMsg = e.getMessage() != null ? e.getMessage() : "Unknown error";
@@ -763,6 +777,8 @@ public class AnalyticsService {
             }
 
             processData(records, Optional.empty(), Optional.empty(), response, categoryCombinationCounts);
+            int suppressed = disclosureControl.apply(response, records.size());
+            auditService.logResponse("FILTER", fileName, records.size(), suppressed);
             response.setMessage(SUCCESS_MSG);
         } catch (Exception e) {
             logger.error("Error filtering file by name {}", fileName, e);

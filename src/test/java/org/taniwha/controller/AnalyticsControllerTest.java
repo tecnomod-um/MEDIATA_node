@@ -8,6 +8,7 @@ import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 import org.taniwha.dto.*;
 import org.taniwha.service.jobs.AnalyticsProcessingJobs;
+import org.taniwha.service.AnalyticsAuditService;
 import org.taniwha.service.AnalyticsService;
 
 import java.util.Collections;
@@ -26,15 +27,17 @@ class AnalyticsControllerTest {
     private MockMvc mvc;
     private AnalyticsService analyticsService;
     private AnalyticsProcessingJobs jobs;
+    private AnalyticsAuditService auditService;
     private final ObjectMapper om = new ObjectMapper();
 
     @BeforeEach
     void setUp() {
         analyticsService = mock(AnalyticsService.class);
         jobs = mock(AnalyticsProcessingJobs.class);
+        auditService = mock(AnalyticsAuditService.class);
 
         mvc = MockMvcBuilders
-                .standaloneSetup(new AnalyticsController(analyticsService, jobs))
+                .standaloneSetup(new AnalyticsController(analyticsService, jobs, auditService))
                 .build();
     }
 

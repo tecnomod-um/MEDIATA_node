@@ -1,0 +1,244 @@
+package org.taniwha.service;
+
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.taniwha.dto.AnalyticsResponseDTO;
+import org.taniwha.statistics.*;
+
+import java.util.*;
+
+import static org.assertj.core.api.Assertions.assertThat;
+
+class DisclosureControlServiceTest {
+
+    private static final int MIN_SUBSET = 5;
+    private static final int MIN_CELL = 3;
+
+    private DisclosureControlService service;
+
+    @BeforeEach
+    void setUp() {
+        service = new DisclosureControlService(MIN_SUBSET, MIN_CELL);
+    }
+
+    // -------------------------------------------------------------------------
+    // Global suppression
+    // -------------------------------------------------------------------------
+
+    @Test
+    void apply_totalRecordsBelowThreshold_suppressesAllFeatures() {
+        AnalyticsResponseDTO response = new AnalyticsResponseDTO();
+        response.setContinuousFeatures(List.of(continuousFeature("age", 4)));
+        response.setCategoricalFeatures(List.of(categoricalFeature("gender", Map.of("M", 2, "F", 2))));
+        response.setDateFeatures(List.of(dateFeature("dob", 4)));
+        response.setCovariances(Map.of("age", Map.of("age", 1.0)));
+
+        int suppressed = service.apply(response, 4);
+
+        assertThat(suppressed).isEqualTo(3);
+        assertThat(response.getContinuousFeatures()).isEmpty();
+        assertThat(response.getCategoricalFeatures()).isEmpty();
+        assertThat(response.getDateFeatures()).isEmpty();
+        assertThat(response.getOmittedFeatures()).hasSize(3);
+        assertThat(response.getCovariances()).isEmpty();
+        assertThat(response.getPearsonCorrelations()).isEmpty();
+        assertThat(response.getSpearmanCorrelations()).isEmpty();
+        assertThat(response.getChiSquareTest()).isEmpty();
+    }
+
+    @Test
+    void apply_totalRecordsAtThreshold_doesNotGlobalSuppress() {
+        AnalyticsResponseDTO response = new AnalyticsResponseDTO();
+        response.setContinuousFeatures(List.of(continuousFeature("age", 10)));
+
+        service.apply(response, MIN_SUBSET);
+
+        assertThat(response.getContinuousFeatures()).hasSize(1);
+    }
+
+    // -------------------------------------------------------------------------
+    // Continuous feature suppression
+    // -------------------------------------------------------------------------
+
+    @Test
+    void apply_continuousFeatureBelowSubsetThreshold_movedToOmitted() {
+        AnalyticsResponseDTO response = new AnalyticsResponseDTO();
+        response.setContinuousFeatures(List.of(
+                continuousFeature("weight", MIN_SUBSET - 1),
+                continuousFeature("height", MIN_SUBSET + 1)
+        ));
+
+        service.apply(response, 20);
+
+        assertThat(response.getContinuousFeatures())
+                .extracting(fs -> fs.getFeatureName())
+                .containsExactly("height");
+        assertThat(response.getOmittedFeatures())
+                .extracting(fs -> fs.getFeatureName())
+                .containsExactly("weight");
+    }
+
+    @Test
+    void apply_continuousFeatureOutliersStripped() {
+        List<Double> outliers = new ArrayList<>(List.of(200.0, 201.0));
+        ContinuousFeatureStatistics feature = new ContinuousFeatureStatistics(
+                "bp", 20, 0, 0, 20, 60, 200, 90, 10, 80, 90, 100,
+                List.of(1.0, 2.0), List.of("[60-80]", "[80-100]"), outliers);
+
+        AnalyticsResponseDTO response = new AnalyticsResponseDTO();
+        response.setContinuousFeatures(List.of(feature));
+
+        service.apply(response, 20);
+
+        assertThat(response.getContinuousFeatures()).hasSize(1);
+        ContinuousFeatureStatistics result = (ContinuousFeatureStatistics) response.getContinuousFeatures().get(0);
+        assertThat(result.getOutliers()).isEmpty();
+    }
+
+    // -------------------------------------------------------------------------
+    // Categorical cell suppression
+    // -------------------------------------------------------------------------
+
+    @Test
+    void apply_categoricalSmallCellsSuppressed() {
+        Map<String, Integer> counts = new HashMap<>();
+        counts.put("A", 10);
+        counts.put("B", 1);  // below threshold
+        counts.put("C", 2);  // below threshold
+
+        AnalyticsResponseDTO response = new AnalyticsResponseDTO();
+        response.setCategoricalFeatures(List.of(categoricalFeature("diagnosis", counts)));
+
+        service.apply(response, 20);
+
+        assertThat(response.getCategoricalFeatures()).hasSize(1);
+        CategoricalFeatureStatistics result =
+                (CategoricalFeatureStatistics) response.getCategoricalFeatures().get(0);
+        assertThat(result.getCategoryCounts()).containsOnlyKeys("A");
+        assertThat(result.getMode()).isEqualTo("A");
+    }
+
+    @Test
+    void apply_categoricalAllCellsSuppressed_movedToOmitted() {
+        Map<String, Integer> counts = new HashMap<>();
+        counts.put("A", 1);
+        counts.put("B", 2);
+
+        AnalyticsResponseDTO response = new AnalyticsResponseDTO();
+        response.setCategoricalFeatures(List.of(categoricalFeature("rare", counts)));
+
+        service.apply(response, 20);
+
+        assertThat(response.getCategoricalFeatures()).isEmpty();
+        assertThat(response.getOmittedFeatures()).hasSize(1);
+        assertThat(response.getOmittedFeatures().get(0).getFeatureName()).isEqualTo("rare");
+    }
+
+    @Test
+    void apply_categoricalNoCellsSuppressed_unchanged() {
+        Map<String, Integer> counts = new HashMap<>();
+        counts.put("X", 10);
+        counts.put("Y", 8);
+
+        AnalyticsResponseDTO response = new AnalyticsResponseDTO();
+        response.setCategoricalFeatures(List.of(categoricalFeature("status", counts)));
+
+        service.apply(response, 20);
+
+        assertThat(response.getCategoricalFeatures()).hasSize(1);
+        CategoricalFeatureStatistics result =
+                (CategoricalFeatureStatistics) response.getCategoricalFeatures().get(0);
+        assertThat(result.getCategoryCounts()).containsKeys("X", "Y");
+    }
+
+    // -------------------------------------------------------------------------
+    // Date feature suppression
+    // -------------------------------------------------------------------------
+
+    @Test
+    void apply_dateFeatureBelowSubsetThreshold_movedToOmitted() {
+        AnalyticsResponseDTO response = new AnalyticsResponseDTO();
+        response.setDateFeatures(List.of(dateFeature("admission", MIN_SUBSET - 1)));
+
+        service.apply(response, 20);
+
+        assertThat(response.getDateFeatures()).isEmpty();
+        assertThat(response.getOmittedFeatures()).hasSize(1);
+        assertThat(response.getOmittedFeatures().get(0).getFeatureName()).isEqualTo("admission");
+    }
+
+    @Test
+    void apply_dateHistogramSmallBucketsSuppressed() {
+        Map<String, Long> histogram = new HashMap<>();
+        histogram.put("2020-01-01", 10L);
+        histogram.put("2020-01-02", 1L);  // below threshold
+
+        DateFeatureStatistics feature = new DateFeatureStatistics(
+                "visit", 20, 0, 0,
+                "2020-01-01", "2020-01-02",
+                histogram, List.of(),
+                "2020-01-01", 1.0, "2020-01-01", "2020-01-01", "2020-01-02");
+
+        AnalyticsResponseDTO response = new AnalyticsResponseDTO();
+        response.setDateFeatures(List.of(feature));
+
+        service.apply(response, 20);
+
+        assertThat(response.getDateFeatures()).hasSize(1);
+        assertThat(response.getDateFeatures().get(0).getDateHistogram())
+                .containsOnlyKeys("2020-01-01");
+    }
+
+    @Test
+    void apply_dateOutliersStripped() {
+        DateFeatureStatistics feature = new DateFeatureStatistics(
+                "dob", 20, 0, 0,
+                "1900-01-01", "2024-01-01",
+                new HashMap<>(), List.of("1900-01-01"),
+                "2000-01-01", 5.0, "2000-01-01", "1990-01-01", "2010-01-01");
+
+        AnalyticsResponseDTO response = new AnalyticsResponseDTO();
+        response.setDateFeatures(List.of(feature));
+
+        service.apply(response, 20);
+
+        assertThat(response.getDateFeatures()).hasSize(1);
+        assertThat(response.getDateFeatures().get(0).getOutliers()).isEmpty();
+    }
+
+    // -------------------------------------------------------------------------
+    // Helpers
+    // -------------------------------------------------------------------------
+
+    private ContinuousFeatureStatistics continuousFeature(String name, long count) {
+        return new ContinuousFeatureStatistics(
+                name, count, 0, 0, (int) count,
+                0, 100, 50, 10, 25, 50, 75,
+                List.of(1.0), List.of("[0-100]"), List.of());
+    }
+
+    private CategoricalFeatureStatistics categoricalFeature(String name, Map<String, Integer> counts) {
+        List<Map.Entry<String, Integer>> sorted = counts.entrySet().stream()
+                .sorted((a, b) -> b.getValue().compareTo(a.getValue()))
+                .toList();
+        String mode = sorted.get(0).getKey();
+        int modeFreq = sorted.get(0).getValue();
+        String secondMode = sorted.size() > 1 ? sorted.get(1).getKey() : null;
+        Integer secondModeFreq = sorted.size() > 1 ? sorted.get(1).getValue() : null;
+        long total = counts.values().stream().mapToInt(Integer::intValue).sum();
+        return new CategoricalFeatureStatistics(
+                name, total, 0, 0, counts.size(),
+                mode, modeFreq, (double) modeFreq / total * 100,
+                secondMode, secondModeFreq,
+                secondModeFreq != null ? (double) secondModeFreq / total * 100 : null,
+                counts);
+    }
+
+    private DateFeatureStatistics dateFeature(String name, long count) {
+        return new DateFeatureStatistics(
+                name, count, 0, 0,
+                "2020-01-01", "2024-01-01",
+                new HashMap<>(), List.of(),
+                "2022-01-01", 365.0, "2022-01-01", "2021-01-01", "2023-01-01");
+    }
+}

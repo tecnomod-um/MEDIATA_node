@@ -7,6 +7,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import org.taniwha.dto.*;
 import org.taniwha.service.jobs.AnalyticsProcessingJobs;
+import org.taniwha.service.AnalyticsAuditService;
 import org.taniwha.service.AnalyticsService;
 
 import java.util.Collections;
@@ -21,16 +22,21 @@ public class AnalyticsController {
 
     private final AnalyticsService analyticsService;
     private final AnalyticsProcessingJobs jobs;
+    private final AnalyticsAuditService auditService;
 
-    public AnalyticsController(AnalyticsService analyticsService, AnalyticsProcessingJobs jobs) {
+    public AnalyticsController(AnalyticsService analyticsService,
+                               AnalyticsProcessingJobs jobs,
+                               AnalyticsAuditService auditService) {
         this.analyticsService = analyticsService;
         this.jobs = jobs;
+        this.auditService = auditService;
     }
 
     @PostMapping("/processList")
     public ResponseEntity<Object> processList(@RequestBody FileNamesDTO dto) {
         try {
             List<String> fileNames = dto.getFileNames();
+            auditService.logRequest("PROCESS", fileNames);
             boolean huge = analyticsService.isAnyHugeForDiscovery(fileNames);
 
             if (!huge) {
@@ -100,6 +106,7 @@ public class AnalyticsController {
             @RequestParam("featureType") String featureType
     ) {
         logger.debug("File reprocessing request: {} as type {} for file: {}", featureName, featureType, fileName);
+        auditService.logRequest("REPROCESS", fileName);
         if (!featureType.equalsIgnoreCase("continuous") && !featureType.equalsIgnoreCase("categorical")) {
             logger.warn("Invalid feature type provided: {}", featureType);
             return ResponseEntity.badRequest().body(new AnalyticsResponseDTO("Invalid feature type"));
@@ -123,6 +130,11 @@ public class AnalyticsController {
     @PostMapping("/filterByNameList")
     public ResponseEntity<List<AnalyticsResponseDTO>> filterByNameList(@RequestBody MultiFileFilterRequest payload) {
         logger.debug("Received multiple-file filter request with {} entries", payload.getMultipleFileFilters().size());
+        List<String> fileNames = payload.getMultipleFileFilters().stream()
+                .map(ff -> ff.getFileName()).toList();
+        boolean anyFilters = payload.getMultipleFileFilters().stream()
+                .anyMatch(ff -> ff.getFilters() != null && !ff.getFilters().isEmpty());
+        auditService.logRequest("FILTER", fileNames, anyFilters);
         try {
             List<AnalyticsResponseDTO> filteredList = analyticsService.filterMultipleFilesByName(payload.getMultipleFileFilters());
             return ResponseEntity.ok(filteredList);

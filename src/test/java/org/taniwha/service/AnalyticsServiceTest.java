@@ -32,6 +32,12 @@ class AnalyticsServiceTest {
     @Mock
     private FileService fileService;
 
+    @Mock
+    private DisclosureControlService disclosureControlService;
+
+    @Mock
+    private AnalyticsAuditService analyticsAuditService;
+
     @InjectMocks
     private AnalyticsService analyticsService;
 
