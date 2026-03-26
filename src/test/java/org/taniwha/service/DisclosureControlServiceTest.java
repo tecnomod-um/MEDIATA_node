@@ -299,4 +299,84 @@ class DisclosureControlServiceTest {
                 new HashMap<>(), List.of(),
                 "2022-01-01", 365.0, "2022-01-01", "2021-01-01", "2023-01-01");
     }
+
+    // -------------------------------------------------------------------------
+    // Correlation matrix cleanup for suppressed continuous features
+    // -------------------------------------------------------------------------
+
+    @Test
+    void apply_continuousFeatureSuppressed_removedFromAllCorrelationMatrices() {
+        // "bp" has count 2, below MIN_SUBSET (3) → suppressed
+        // "age" has count 10 → kept
+        AnalyticsResponseDTO response = new AnalyticsResponseDTO();
+        response.setContinuousFeatures(List.of(
+                continuousFeature("bp", MIN_SUBSET - 1),
+                continuousFeature("age", 10)));
+
+        // Simulate correlation matrices pre-populated by AggregateCalculator
+        Map<String, Double> bpInner = new HashMap<>(Map.of("age", 0.9));
+        Map<String, Double> ageInner = new HashMap<>(Map.of("bp", 0.9));
+        response.setCovariances(new HashMap<>(Map.of("bp", bpInner, "age", ageInner)));
+        response.setPearsonCorrelations(new HashMap<>(Map.of("bp", new HashMap<>(Map.of("age", 0.9)),
+                "age", new HashMap<>(Map.of("bp", 0.9)))));
+        response.setSpearmanCorrelations(new HashMap<>(Map.of("bp", new HashMap<>(Map.of("age", 0.8)),
+                "age", new HashMap<>(Map.of("bp", 0.8)))));
+
+        service.apply(response, 20);
+
+        assertThat(response.getContinuousFeatures())
+                .extracting(fs -> fs.getFeatureName()).containsExactly("age");
+        assertThat(response.getOmittedFeatures())
+                .extracting(fs -> fs.getFeatureName()).containsExactly("bp");
+
+        // "bp" must be gone as outer key
+        assertThat(response.getCovariances()).doesNotContainKey("bp");
+        assertThat(response.getPearsonCorrelations()).doesNotContainKey("bp");
+        assertThat(response.getSpearmanCorrelations()).doesNotContainKey("bp");
+
+        // "bp" must also be removed from "age"'s inner map
+        assertThat(response.getCovariances().get("age")).doesNotContainKey("bp");
+        assertThat(response.getPearsonCorrelations().get("age")).doesNotContainKey("bp");
+        assertThat(response.getSpearmanCorrelations().get("age")).doesNotContainKey("bp");
+    }
+
+    // -------------------------------------------------------------------------
+    // Chi-squared cleanup for fully-suppressed categorical features
+    // -------------------------------------------------------------------------
+
+    @Test
+    void apply_categoricalFeatureFullySuppressed_removedFromChiSquaredResults() {
+        // "rare" has all cells below MIN_CELL → fully suppressed
+        // "status" is fine
+        Map<String, Integer> rareCounts = new HashMap<>(Map.of("A", 1));   // 1 < 2 → suppressed
+        Map<String, Integer> statusCounts = new HashMap<>(Map.of("X", 10, "Y", 8));
+
+        AnalyticsResponseDTO response = new AnalyticsResponseDTO();
+        response.setCategoricalFeatures(List.of(
+                categoricalFeature("rare", rareCounts),
+                categoricalFeature("status", statusCounts)));
+
+        // Simulate chi-squared results pre-populated by AggregateCalculator
+        List<org.taniwha.statistics.ChiSquaredTestResult> chi = new ArrayList<>();
+        chi.add(new org.taniwha.statistics.ChiSquaredTestResult("rare", "status", 0.04));
+        chi.add(new org.taniwha.statistics.ChiSquaredTestResult("status", "other", 0.12));
+        response.setChiSquareTest(chi);
+
+        service.apply(response, 20);
+
+        assertThat(response.getCategoricalFeatures())
+                .extracting(fs -> fs.getFeatureName()).containsExactly("status");
+        assertThat(response.getOmittedFeatures())
+                .extracting(fs -> fs.getFeatureName()).containsExactly("rare");
+
+        // The chi-squared entry involving "rare" must be removed
+        assertThat(response.getChiSquareTest())
+                .noneMatch(r -> "rare".equals(r.getCategory1()) || "rare".equals(r.getCategory2()));
+        // Unrelated chi-squared entries must be preserved
+        assertThat(response.getChiSquareTest())
+                .anySatisfy(r -> {
+                    assertThat(r.getCategory1()).isEqualTo("status");
+                    assertThat(r.getCategory2()).isEqualTo("other");
+                });
+    }
 }

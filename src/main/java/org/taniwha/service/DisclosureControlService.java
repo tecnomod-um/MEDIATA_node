@@ -156,6 +156,7 @@ public class DisclosureControlService {
                 "Feature record count below minimum subset size (%d)", minSubsetSize);
         List<FeatureStatistics> kept = new ArrayList<>();
         List<OmittedFeatureStatistics> omitted = new ArrayList<>(safeList(response.getOmittedFeatures()));
+        Set<String> suppressedNames = new HashSet<>();
         int count = 0;
 
         for (FeatureStatistics fs : response.getContinuousFeatures()) {
@@ -163,12 +164,19 @@ public class DisclosureControlService {
                 omitted.add(new OmittedFeatureStatistics(
                         fs.getFeatureName(), fs.getCount(),
                         fs.getPercentMissing(), fs.getMissingValuesCount(), reason));
+                suppressedNames.add(fs.getFeatureName());
                 count++;
                 logger.warn("Suppressing continuous feature '{}': count {} below minimum {}",
                         fs.getFeatureName(), fs.getCount(), minSubsetSize);
             } else {
                 kept.add(fs);
             }
+        }
+
+        if (!suppressedNames.isEmpty()) {
+            removeFromCorrelationMatrix(response.getCovariances(), suppressedNames);
+            removeFromCorrelationMatrix(response.getPearsonCorrelations(), suppressedNames);
+            removeFromCorrelationMatrix(response.getSpearmanCorrelations(), suppressedNames);
         }
 
         response.setContinuousFeatures(kept);
@@ -215,6 +223,7 @@ public class DisclosureControlService {
                 "All categories below minimum cell count (%d)", minCellCount);
         List<FeatureStatistics> kept = new ArrayList<>();
         List<OmittedFeatureStatistics> omitted = new ArrayList<>(safeList(response.getOmittedFeatures()));
+        Set<String> suppressedNames = new HashSet<>();
         int suppressedFeatures = 0;
 
         for (FeatureStatistics fs : response.getCategoricalFeatures()) {
@@ -237,6 +246,7 @@ public class DisclosureControlService {
                 omitted.add(new OmittedFeatureStatistics(
                         cfs.getFeatureName(), cfs.getCount(),
                         cfs.getPercentMissing(), cfs.getMissingValuesCount(), suppressedReason));
+                suppressedNames.add(cfs.getFeatureName());
                 suppressedFeatures++;
                 logger.warn("Suppressing categorical feature '{}': all cells below minimum count {}",
                         cfs.getFeatureName(), minCellCount);
@@ -245,6 +255,14 @@ public class DisclosureControlService {
             } else {
                 kept.add(cfs);
             }
+        }
+
+        if (!suppressedNames.isEmpty() && response.getChiSquareTest() != null) {
+            List<org.taniwha.statistics.ChiSquaredTestResult> filteredChi = response.getChiSquareTest().stream()
+                    .filter(r -> !suppressedNames.contains(r.getCategory1())
+                            && !suppressedNames.contains(r.getCategory2()))
+                    .collect(Collectors.toList());
+            response.setChiSquareTest(filteredChi);
         }
 
         response.setCategoricalFeatures(kept);
@@ -379,6 +397,18 @@ public class DisclosureControlService {
     // -------------------------------------------------------------------------
     // Helpers
     // -------------------------------------------------------------------------
+
+    /**
+     * Removes every entry whose key is in {@code featureNames} from the outer map,
+     * and also purges those names from every inner map (since the pairwise relation
+     * is stored symmetrically under both feature keys).
+     */
+    private void removeFromCorrelationMatrix(Map<String, Map<String, Double>> matrix,
+                                             Set<String> featureNames) {
+        if (matrix == null) return;
+        featureNames.forEach(matrix::remove);
+        matrix.values().forEach(inner -> inner.keySet().removeAll(featureNames));
+    }
 
     private <T> List<T> safeList(List<T> list) {
         return list != null ? list : List.of();
