@@ -9,6 +9,7 @@ import java.util.Arrays;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.*;
+import static org.mockito.Mockito.*;
 
 class AnalyticsProcessingJobsTest {
 
@@ -181,5 +182,147 @@ class AnalyticsProcessingJobsTest {
         AnalyticsProcessingJobs.JobState state = jobs.getJob(jobId);
         assertThat(state).isNotNull();
         assertThat(state.getPercent().get()).isBetween(0, 100);
+    }
+
+    // -------------------------------------------------------------------------
+    // cancel + isCanceled
+    // -------------------------------------------------------------------------
+
+    @Test
+    void cancel_runningJob_withFuture_cancelsItAndSetsState() {
+        String jobId = jobs.createJob();
+        java.util.concurrent.Future<?> future = mock(java.util.concurrent.Future.class);
+        jobs.attachFuture(jobId, future);
+
+        jobs.cancel(jobId, "user canceled");
+
+        assertThat(jobs.getJob(jobId).getState()).isEqualTo(ProcessingStatusDTO.State.CANCELED);
+        assertThat(jobs.getJob(jobId).getMessage()).isEqualTo("user canceled");
+        verify(future).cancel(true);
+    }
+
+    @Test
+    void cancel_runningJob_noFuture_setsStateWithoutThrow() {
+        String jobId = jobs.createJob();
+
+        jobs.cancel(jobId, "no future");
+
+        assertThat(jobs.getJob(jobId).getState()).isEqualTo(ProcessingStatusDTO.State.CANCELED);
+        assertThat(jobs.getJob(jobId).getMessage()).isEqualTo("no future");
+    }
+
+    @Test
+    void cancel_nullMessage_usesDefaultMessage() {
+        String jobId = jobs.createJob();
+
+        jobs.cancel(jobId, null);
+
+        assertThat(jobs.getJob(jobId).getMessage()).isEqualTo("Job canceled");
+    }
+
+    @Test
+    void cancel_alreadyDone_isNoOp() {
+        String jobId = jobs.createJob();
+        jobs.complete(jobId, List.of());
+
+        jobs.cancel(jobId, "too late");
+
+        assertThat(jobs.getJob(jobId).getState()).isEqualTo(ProcessingStatusDTO.State.DONE);
+    }
+
+    @Test
+    void cancel_alreadyError_isNoOp() {
+        String jobId = jobs.createJob();
+        jobs.fail(jobId, "failed");
+
+        jobs.cancel(jobId, "too late");
+
+        assertThat(jobs.getJob(jobId).getState()).isEqualTo(ProcessingStatusDTO.State.ERROR);
+    }
+
+    @Test
+    void cancel_alreadyCanceled_isNoOp() {
+        String jobId = jobs.createJob();
+        jobs.cancel(jobId, "first");
+        jobs.cancel(jobId, "second");
+
+        assertThat(jobs.getJob(jobId).getMessage()).isEqualTo("first");
+    }
+
+    @Test
+    void cancel_unknownJobId_doesNotThrow() {
+        assertThatCode(() -> jobs.cancel("ghost", "x")).doesNotThrowAnyException();
+    }
+
+    @Test
+    void isCanceled_runningJob_returnsFalse() {
+        String jobId = jobs.createJob();
+        assertThat(jobs.isCanceled(jobId)).isFalse();
+    }
+
+    @Test
+    void isCanceled_canceledJob_returnsTrue() {
+        String jobId = jobs.createJob();
+        jobs.cancel(jobId, "c");
+        assertThat(jobs.isCanceled(jobId)).isTrue();
+    }
+
+    @Test
+    void isCanceled_unknownJobId_returnsTrue() {
+        assertThat(jobs.isCanceled("ghost")).isTrue();
+    }
+
+    // -------------------------------------------------------------------------
+    // attachFuture
+    // -------------------------------------------------------------------------
+
+    @Test
+    void attachFuture_knownJob_storesFuture() {
+        String jobId = jobs.createJob();
+        java.util.concurrent.Future<?> future = mock(java.util.concurrent.Future.class);
+
+        jobs.attachFuture(jobId, future);
+
+        assertThat(jobs.getJob(jobId).getFuture()).isSameAs(future);
+    }
+
+    @Test
+    void attachFuture_unknownJob_doesNotThrow() {
+        java.util.concurrent.Future<?> future = mock(java.util.concurrent.Future.class);
+        assertThatCode(() -> jobs.attachFuture("ghost", future)).doesNotThrowAnyException();
+    }
+
+    // -------------------------------------------------------------------------
+    // Guard branches in update / fail / complete when already CANCELED
+    // -------------------------------------------------------------------------
+
+    @Test
+    void update_canceledJob_isNoOp() {
+        String jobId = jobs.createJob();
+        jobs.cancel(jobId, "c");
+
+        jobs.update(jobId, 50, "file.csv");
+
+        assertThat(jobs.getJob(jobId).getCurrentFile()).isNull();
+    }
+
+    @Test
+    void fail_canceledJob_isNoOp() {
+        String jobId = jobs.createJob();
+        jobs.cancel(jobId, "c");
+
+        jobs.fail(jobId, "error");
+
+        assertThat(jobs.getJob(jobId).getState()).isEqualTo(ProcessingStatusDTO.State.CANCELED);
+    }
+
+    @Test
+    void complete_canceledJob_isNoOp() {
+        String jobId = jobs.createJob();
+        jobs.cancel(jobId, "c");
+
+        jobs.complete(jobId, List.of());
+
+        assertThat(jobs.getJob(jobId).getState()).isEqualTo(ProcessingStatusDTO.State.CANCELED);
     }
 }

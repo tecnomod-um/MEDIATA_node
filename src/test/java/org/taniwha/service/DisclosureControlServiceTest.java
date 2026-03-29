@@ -379,4 +379,94 @@ class DisclosureControlServiceTest {
                     assertThat(r.getCategory2()).isEqualTo("other");
                 });
     }
+
+    // -------------------------------------------------------------------------
+    // Getters
+    // -------------------------------------------------------------------------
+
+    @Test
+    void getMinSubsetSize_returnsConfiguredValue() {
+        assertThat(service.getMinSubsetSize()).isEqualTo(MIN_SUBSET);
+    }
+
+    @Test
+    void getMinCellCount_returnsConfiguredValue() {
+        assertThat(service.getMinCellCount()).isEqualTo(MIN_CELL);
+    }
+
+    // -------------------------------------------------------------------------
+    // Null-list guards in moveFeaturesToOmitted / moveDateFeaturesToOmitted
+    // -------------------------------------------------------------------------
+
+    @Test
+    void apply_totalRecordsBelowThreshold_nullFeatureLists_doesNotThrow() {
+        AnalyticsResponseDTO response = new AnalyticsResponseDTO();
+        response.setContinuousFeatures(null);
+        response.setCategoricalFeatures(null);
+        response.setDateFeatures(null);
+
+        int suppressed = service.apply(response, 2);
+
+        assertThat(suppressed).isZero();
+        assertThat(response.getOmittedFeatures()).isEmpty();
+    }
+
+    // -------------------------------------------------------------------------
+    // rebuildCategoricalFeature with only one surviving category (no secondMode)
+    // -------------------------------------------------------------------------
+
+    @Test
+    void apply_categoricalSingleSurvivorAfterCellSuppression_rebuildWithNoSecondMode() {
+        // "A"=10 survives, "B"=1 is suppressed → only one category left
+        Map<String, Integer> counts = new HashMap<>();
+        counts.put("A", 10);
+        counts.put("B", 1);
+
+        AnalyticsResponseDTO response = new AnalyticsResponseDTO();
+        response.setCategoricalFeatures(List.of(categoricalFeature("dx", counts)));
+
+        service.apply(response, 20);
+
+        assertThat(response.getCategoricalFeatures()).hasSize(1);
+        CategoricalFeatureStatistics result =
+                (CategoricalFeatureStatistics) response.getCategoricalFeatures().get(0);
+        assertThat(result.getMode()).isEqualTo("A");
+        assertThat(result.getSecondMode()).isNull();
+        assertThat(result.getSecondModeFrequency()).isNull();
+        assertThat(result.getSecondModePercentage()).isNull();
+    }
+
+    // -------------------------------------------------------------------------
+    // Null-matrix guard in removeFromCorrelationMatrix
+    // -------------------------------------------------------------------------
+
+    @Test
+    void apply_continuousFeatureSuppressed_nullCorrelationMatrix_doesNotThrow() {
+        AnalyticsResponseDTO response = new AnalyticsResponseDTO();
+        response.setContinuousFeatures(List.of(continuousFeature("tiny", MIN_SUBSET - 1)));
+        response.setCovariances(null);
+        response.setPearsonCorrelations(null);
+        response.setSpearmanCorrelations(null);
+
+        int suppressed = service.apply(response, 20);
+
+        assertThat(suppressed).isEqualTo(1);
+        assertThat(response.getOmittedFeatures()).hasSize(1);
+    }
+
+    // -------------------------------------------------------------------------
+    // safeList null-guard
+    // -------------------------------------------------------------------------
+
+    @Test
+    void apply_nullOmittedFeaturesOnInput_treatedAsEmpty() {
+        AnalyticsResponseDTO response = new AnalyticsResponseDTO();
+        response.setOmittedFeatures(null);
+        response.setContinuousFeatures(List.of(continuousFeature("f", MIN_SUBSET - 1)));
+
+        // should not throw; omittedFeatures must be populated after suppression
+        service.apply(response, 20);
+
+        assertThat(response.getOmittedFeatures()).hasSize(1);
+    }
 }

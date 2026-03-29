@@ -22,6 +22,8 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
+import org.mockito.Mockito;
+
 class AnalyticsControllerTest {
 
     private MockMvc mvc;
@@ -183,5 +185,139 @@ class AnalyticsControllerTest {
                         .content(om.writeValueAsString(req)))
                 .andExpect(status().isInternalServerError())
                 .andExpect(jsonPath("$[0].message").value("Error filtering multiple files: boom"));
+    }
+
+    // -------------------------------------------------------------------------
+    // processList – huge-job path (returns 202 + jobId)
+    // -------------------------------------------------------------------------
+
+    @Test
+    void processList_hugeFiles_returns202WithJobId() throws Exception {
+        FileNamesDTO reqDto = new FileNamesDTO();
+        reqDto.setFileNames(List.of("huge.csv"));
+
+        when(analyticsService.isAnyHugeForDiscovery(reqDto.getFileNames())).thenReturn(true);
+        when(jobs.createJob()).thenReturn("job-abc");
+
+        mvc.perform(post("/api/data/processList")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(om.writeValueAsString(reqDto)))
+                .andExpect(status().isAccepted())
+                .andExpect(jsonPath("$.jobId").value("job-abc"))
+                .andExpect(jsonPath("$.progress").value(true));
+
+        verify(analyticsService).startDiscoveryJob("job-abc", List.of("huge.csv"));
+    }
+
+    // -------------------------------------------------------------------------
+    // processListStatus – found job
+    // -------------------------------------------------------------------------
+
+    @Test
+    void processListStatus_knownJob_returns200WithDto() throws Exception {
+        AnalyticsProcessingJobs.JobState s = mock(AnalyticsProcessingJobs.JobState.class);
+        ProcessingStatusDTO dto = new ProcessingStatusDTO("job-1", ProcessingStatusDTO.State.RUNNING, 50, "f.csv", null, null);
+        when(jobs.getJob("job-1")).thenReturn(s);
+        when(jobs.toDto(s, false)).thenReturn(dto);
+
+        mvc.perform(get("/api/data/processList/status/job-1"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.jobId").value("job-1"))
+                .andExpect(jsonPath("$.state").value("RUNNING"))
+                .andExpect(jsonPath("$.percent").value(50));
+    }
+
+    // -------------------------------------------------------------------------
+    // cancelProcessList
+    // -------------------------------------------------------------------------
+
+    @Test
+    void cancelProcessList_knownJob_returns200() throws Exception {
+        AnalyticsProcessingJobs.JobState s = mock(AnalyticsProcessingJobs.JobState.class);
+        ProcessingStatusDTO dto = new ProcessingStatusDTO("job-2", ProcessingStatusDTO.State.CANCELED, 30, null, "Canceled", null);
+        when(jobs.getJob("job-2")).thenReturn(s);
+        when(jobs.toDto(s, false)).thenReturn(dto);
+
+        mvc.perform(post("/api/data/processList/cancel/job-2"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.state").value("CANCELED"));
+
+        verify(jobs).cancel("job-2", "Discovery canceled because the user left the page");
+    }
+
+    @Test
+    void cancelProcessList_unknownJob_returns404() throws Exception {
+        when(jobs.getJob("unknown")).thenReturn(null);
+
+        mvc.perform(post("/api/data/processList/cancel/unknown"))
+                .andExpect(status().isNotFound());
+
+        verify(jobs, never()).cancel(any(), any());
+    }
+
+    // -------------------------------------------------------------------------
+    // processListResult
+    // -------------------------------------------------------------------------
+
+    @Test
+    void processListResult_unknownJob_returns404() throws Exception {
+        when(jobs.getJob("j")).thenReturn(null);
+
+        mvc.perform(get("/api/data/processList/result/j"))
+                .andExpect(status().isNotFound());
+    }
+
+    @Test
+    void processListResult_canceledJob_returns410AndClearsJob() throws Exception {
+        AnalyticsProcessingJobs.JobState s = mock(AnalyticsProcessingJobs.JobState.class);
+        when(s.getState()).thenReturn(ProcessingStatusDTO.State.CANCELED);
+        when(jobs.getJob("j-canceled")).thenReturn(s);
+
+        mvc.perform(get("/api/data/processList/result/j-canceled"))
+                .andExpect(status().isGone());
+
+        verify(jobs).clear("j-canceled");
+    }
+
+    @Test
+    void processListResult_jobStillRunning_returns409() throws Exception {
+        AnalyticsProcessingJobs.JobState s = mock(AnalyticsProcessingJobs.JobState.class);
+        when(s.getState()).thenReturn(ProcessingStatusDTO.State.RUNNING);
+        when(jobs.getJob("j-running")).thenReturn(s);
+
+        mvc.perform(get("/api/data/processList/result/j-running"))
+                .andExpect(status().isConflict());
+
+        verify(jobs, never()).clear(any());
+    }
+
+    @Test
+    void processListResult_doneJobWithResults_returns200AndClearsJob() throws Exception {
+        AnalyticsProcessingJobs.JobState s = mock(AnalyticsProcessingJobs.JobState.class);
+        when(s.getState()).thenReturn(ProcessingStatusDTO.State.DONE);
+        List<AnalyticsResponseDTO> results = List.of(new AnalyticsResponseDTO("r1"));
+        when(s.getResults()).thenReturn(results);
+        when(jobs.getJob("j-done")).thenReturn(s);
+
+        mvc.perform(get("/api/data/processList/result/j-done"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[0].message").value("r1"));
+
+        verify(jobs).clear("j-done");
+    }
+
+    @Test
+    void processListResult_doneJobNullResults_returnsEmptyList() throws Exception {
+        AnalyticsProcessingJobs.JobState s = mock(AnalyticsProcessingJobs.JobState.class);
+        when(s.getState()).thenReturn(ProcessingStatusDTO.State.DONE);
+        when(s.getResults()).thenReturn(null);
+        when(jobs.getJob("j-null")).thenReturn(s);
+
+        mvc.perform(get("/api/data/processList/result/j-null"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$").isArray())
+                .andExpect(jsonPath("$").isEmpty());
+
+        verify(jobs).clear("j-null");
     }
 }

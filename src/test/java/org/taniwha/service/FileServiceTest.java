@@ -7,6 +7,7 @@ import org.mockito.Mock;
 import org.mockito.MockitoAnnotations;
 import org.taniwha.model.Dataset;
 import org.taniwha.model.Distribution;
+import org.taniwha.model.FileCategory;
 import org.taniwha.model.NodeMetadata;
 import org.taniwha.security.FileFilter;
 
@@ -18,6 +19,7 @@ import java.nio.file.StandardOpenOption;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.doNothing;
@@ -264,5 +266,202 @@ class FileServiceTest {
         String foo = fileService.getMappedDatasetsFolder();
         assertThat(foo).endsWith("/datasets");
         assertThat(fileService.listMappedDatasetFiles()).isEmpty();
+    }
+
+    // -------------------------------------------------------------------------
+    // resolveXxxFilePath – just verify they delegate to the correct sub-folder
+    // -------------------------------------------------------------------------
+
+    @Test
+    void resolveDatasetFilePath_existingFile_returnsPath() throws IOException {
+        Path ds = tempBase.resolve("datasets");
+        Files.createDirectories(ds);
+        Path file = ds.resolve("x.csv");
+        Files.createFile(file);
+
+        Path result = fileService.resolveDatasetFilePath("x.csv");
+        assertThat(result).isEqualTo(file);
+    }
+
+    @Test
+    void resolveElementFilePath_existingFile_returnsPath() throws IOException {
+        Path el = tempBase.resolve("dataset_elements");
+        Files.createDirectories(el);
+        Path file = el.resolve("e.csv");
+        Files.createFile(file);
+
+        Path result = fileService.resolveElementFilePath("e.csv");
+        assertThat(result).isEqualTo(file);
+    }
+
+    @Test
+    void resolveMappedDatasetFilePath_existingFile_returnsPath() throws IOException {
+        // mapped datasets reuse the datasets folder
+        Path ds = tempBase.resolve("datasets");
+        Files.createDirectories(ds);
+        Path file = ds.resolve("m.csv");
+        Files.createFile(file);
+
+        Path result = fileService.resolveMappedDatasetFilePath("m.csv");
+        assertThat(result).isEqualTo(file);
+    }
+
+    @Test
+    void resolveMetadataFilePath_existingFile_returnsPath() throws IOException {
+        Path md = tempBase.resolve("dataset_metadata");
+        Files.createDirectories(md);
+        Path file = md.resolve("meta.ttl");
+        Files.createFile(file);
+
+        Path result = fileService.resolveMetadataFilePath("meta.ttl");
+        assertThat(result).isEqualTo(file);
+    }
+
+    @Test
+    void resolveExistingFilePath_nonExistentFile_throws() {
+        assertThatThrownBy(() -> fileService.resolveDatasetFilePath("no.csv"))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void resolveExistingFilePath_pathTraversal_throws() throws IOException {
+        assertThatThrownBy(() -> fileService.resolveDatasetFilePath("../secret.txt"))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    // -------------------------------------------------------------------------
+    // listFilesWithInfo
+    // -------------------------------------------------------------------------
+
+    @Test
+    void listFilesWithInfo_nonExistentDir_returnsEmpty() {
+        assertThat(fileService.listFilesWithInfo(FileCategory.FHIR_MAPPINGS)).isEmpty();
+    }
+
+    @Test
+    void listFilesWithInfo_returnsMetaForFiles() throws IOException {
+        Path ds = tempBase.resolve("datasets");
+        Files.createDirectories(ds);
+        Files.writeString(ds.resolve("a.csv"), "data");
+        Files.writeString(ds.resolve("b.csv"), "more");
+
+        List<org.taniwha.dto.FileInfoDto> infos = fileService.listFilesWithInfo(FileCategory.DATASETS);
+
+        assertThat(infos)
+                .hasSize(2)
+                .extracting(org.taniwha.dto.FileInfoDto::getName)
+                .containsExactly("a.csv", "b.csv"); // sorted alphabetically
+        assertThat(infos.get(0).getSizeBytes()).isEqualTo(4L); // "data"
+    }
+
+    @Test
+    void listFilesWithInfo_fhirMappingsCategory_returnsFiles() throws IOException {
+        Path fm = tempBase.resolve("fhir_mappings");
+        Files.createDirectories(fm);
+        Files.writeString(fm.resolve("m.json"), "{}");
+
+        assertThat(fileService.listFilesWithInfo(FileCategory.FHIR_MAPPINGS)).hasSize(1);
+    }
+
+    @Test
+    void listFilesWithInfo_datasetElementsAndMetadataCategories() throws IOException {
+        Path el = tempBase.resolve("dataset_elements");
+        Files.createDirectories(el);
+        Files.createFile(el.resolve("e.csv"));
+
+        Path md = tempBase.resolve("dataset_metadata");
+        Files.createDirectories(md);
+        Files.createFile(md.resolve("meta.ttl"));
+
+        assertThat(fileService.listFilesWithInfo(FileCategory.DATASET_ELEMENTS)).hasSize(1);
+        assertThat(fileService.listFilesWithInfo(FileCategory.DATASET_METADATA)).hasSize(1);
+    }
+
+    @Test
+    void listFilesWithInfo_skipsSubdirectories() throws IOException {
+        Path ds = tempBase.resolve("datasets");
+        Files.createDirectories(ds.resolve("subdir"));
+        Files.createFile(ds.resolve("only.csv"));
+
+        List<org.taniwha.dto.FileInfoDto> infos = fileService.listFilesWithInfo(FileCategory.DATASETS);
+        assertThat(infos).hasSize(1).extracting(org.taniwha.dto.FileInfoDto::getName).containsExactly("only.csv");
+    }
+
+    // -------------------------------------------------------------------------
+    // renameFile
+    // -------------------------------------------------------------------------
+
+    @Test
+    void renameFile_existingFile_renames() throws IOException {
+        Path ds = tempBase.resolve("datasets");
+        Files.createDirectories(ds);
+        Files.createFile(ds.resolve("old.csv"));
+
+        fileService.renameFile(FileCategory.DATASETS, "old.csv", "new.csv");
+
+        assertThat(ds.resolve("new.csv")).exists();
+        assertThat(ds.resolve("old.csv")).doesNotExist();
+    }
+
+    @Test
+    void renameFile_sameSourceAndDestination_isNoOp() throws IOException {
+        Path ds = tempBase.resolve("datasets");
+        Files.createDirectories(ds);
+        Files.createFile(ds.resolve("same.csv"));
+
+        // sanitizeFileName("same.csv") == "same.csv" -> no-op
+        fileService.renameFile(FileCategory.DATASETS, "same.csv", "same.csv");
+
+        assertThat(ds.resolve("same.csv")).exists();
+    }
+
+    @Test
+    void renameFile_destinationAlreadyExists_throws() throws IOException {
+        Path ds = tempBase.resolve("datasets");
+        Files.createDirectories(ds);
+        Files.createFile(ds.resolve("a.csv"));
+        Files.createFile(ds.resolve("b.csv"));
+
+        assertThatThrownBy(() -> fileService.renameFile(FileCategory.DATASETS, "a.csv", "b.csv"))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("Destination already exists");
+    }
+
+    @Test
+    void renameFile_emptyDestination_throws() throws IOException {
+        Path ds = tempBase.resolve("datasets");
+        Files.createDirectories(ds);
+        Files.createFile(ds.resolve("src.csv"));
+
+        assertThatThrownBy(() -> fileService.renameFile(FileCategory.DATASETS, "src.csv", ""))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    // -------------------------------------------------------------------------
+    // deleteFile
+    // -------------------------------------------------------------------------
+
+    @Test
+    void deleteFile_existingFile_deletes() throws IOException {
+        Path ds = tempBase.resolve("datasets");
+        Files.createDirectories(ds);
+        Files.createFile(ds.resolve("del.csv"));
+
+        fileService.deleteFile(FileCategory.DATASETS, "del.csv");
+
+        assertThat(ds.resolve("del.csv")).doesNotExist();
+    }
+
+    @Test
+    void deleteFile_nonExistentFile_isNoOp() {
+        // Should not throw even if file does not exist
+        assertThatCode(() -> fileService.deleteFile(FileCategory.DATASETS, "ghost.csv"))
+                .doesNotThrowAnyException();
+    }
+
+    @Test
+    void deleteFile_pathTraversal_throws() {
+        assertThatThrownBy(() -> fileService.deleteFile(FileCategory.DATASETS, "../secret.txt"))
+                .isInstanceOf(IllegalArgumentException.class);
     }
 }

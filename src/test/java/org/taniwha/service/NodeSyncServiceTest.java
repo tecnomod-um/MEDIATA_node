@@ -176,4 +176,145 @@ class NodeSyncServiceTest {
         verify(restTemplate, times(2))
                 .postForEntity(anyString(), any(), eq(String.class));
     }
+
+    // -------------------------------------------------------------------------
+    // sendHeartbeat – SSL handshake + generic RestClientException
+    // -------------------------------------------------------------------------
+
+    @Test
+    void sendHeartbeat_sslHandshake_refreshesAndRetries() {
+        org.springframework.test.util.ReflectionTestUtils.setField(service, "objectId", "OID");
+        when(jwtUtil.generateToken("user")).thenReturn("JWT-SSL");
+        ResponseEntity<String> ok = ResponseEntity.ok("ok");
+
+        when(restTemplate.postForEntity(anyString(), any(), eq(String.class)))
+                .thenThrow(new ResourceAccessException("io", new SSLHandshakeException("ssl")))
+                .thenReturn(ok);
+        stubRetryTemplate();
+
+        service.sendHeartbeat();
+
+        verify(restHolder).refresh();
+        verify(restTemplate, times(2))
+                .postForEntity(anyString(), any(), eq(String.class));
+    }
+
+    @Test
+    void sendHeartbeat_restClientException_logsAndDoesNotThrow() {
+        org.springframework.test.util.ReflectionTestUtils.setField(service, "objectId", "OID");
+        when(jwtUtil.generateToken("user")).thenReturn("JWT-RCE");
+        when(retryTemplate.execute(any()))
+                .thenThrow(new org.springframework.web.client.RestClientException("network down"));
+
+        // should not throw
+        service.sendHeartbeat();
+    }
+
+    // -------------------------------------------------------------------------
+    // handleHeartbeatException – via sendHeartbeat (HttpClientErrorException)
+    // -------------------------------------------------------------------------
+
+    @Test
+    void sendHeartbeat_http400_logsErrorAndSendsErrorLog() {
+        org.springframework.test.util.ReflectionTestUtils.setField(service, "objectId", "OID");
+        when(jwtUtil.generateToken("user")).thenReturn("JWT-400");
+
+        stubRetryTemplate_heartbeatThrowsThenErrorLogSucceeds(
+                HttpClientErrorException.create(
+                        HttpStatus.BAD_REQUEST, "Bad Request",
+                        org.springframework.http.HttpHeaders.EMPTY,
+                        "bad body".getBytes(), java.nio.charset.StandardCharsets.UTF_8));
+
+        service.sendHeartbeat();
+
+        verify(restTemplate).postForEntity(
+                eq("http://central/api/error"), any(HttpEntity.class), eq(String.class));
+    }
+
+    @Test
+    void sendHeartbeat_http401_logsErrorAndSendsErrorLog() {
+        org.springframework.test.util.ReflectionTestUtils.setField(service, "objectId", "OID");
+        when(jwtUtil.generateToken("user")).thenReturn("JWT-401");
+
+        stubRetryTemplate_heartbeatThrowsThenErrorLogSucceeds(
+                HttpClientErrorException.create(
+                        HttpStatus.UNAUTHORIZED, "Unauthorized",
+                        org.springframework.http.HttpHeaders.EMPTY,
+                        "".getBytes(), java.nio.charset.StandardCharsets.UTF_8));
+
+        service.sendHeartbeat();
+
+        verify(restTemplate).postForEntity(
+                eq("http://central/api/error"), any(HttpEntity.class), eq(String.class));
+    }
+
+    @Test
+    void sendHeartbeat_http500_logsErrorAndSendsErrorLog() {
+        org.springframework.test.util.ReflectionTestUtils.setField(service, "objectId", "OID");
+        when(jwtUtil.generateToken("user")).thenReturn("JWT-500");
+
+        stubRetryTemplate_heartbeatThrowsThenErrorLogSucceeds(
+                HttpClientErrorException.create(
+                        HttpStatus.INTERNAL_SERVER_ERROR, "Server Error",
+                        org.springframework.http.HttpHeaders.EMPTY,
+                        "".getBytes(), java.nio.charset.StandardCharsets.UTF_8));
+
+        service.sendHeartbeat();
+
+        verify(restTemplate).postForEntity(
+                eq("http://central/api/error"), any(HttpEntity.class), eq(String.class));
+    }
+
+    // -------------------------------------------------------------------------
+    // registerWithCentralBackend – non-conflict HttpClientErrorException
+    // -------------------------------------------------------------------------
+
+    @Test
+    void registerWithCentralBackend_nonConflictHttpError_doesNotSetKeytab() {
+        when(jwtUtil.generateToken("user")).thenReturn("JWT-NF");
+        when(restTemplate.postForObject(anyString(), any(), eq(RegisterResponseDTO.class)))
+                .thenThrow(new HttpClientErrorException(HttpStatus.NOT_FOUND));
+
+        stubRetryTemplate();
+
+        service.registerWithCentralBackend();
+
+        verify(principalService, never()).setKeytab(any());
+    }
+
+    // -------------------------------------------------------------------------
+    // logErrorToCentralBackend – non-SSL ResourceAccessException
+    // -------------------------------------------------------------------------
+
+    @Test
+    void logErrorToCentralBackend_nonSslResourceAccess_rethrowsViaRetry() {
+        when(jwtUtil.generateToken("user")).thenReturn("JWT-RE");
+        when(retryTemplate.execute(any()))
+                .thenThrow(new ResourceAccessException("network timeout"));
+
+        // should not throw – retry exhausted and RestClientException is caught
+        service.logErrorToCentralBackend("e", "i");
+    }
+
+    // -------------------------------------------------------------------------
+    // Helpers
+    // -------------------------------------------------------------------------
+
+    /**
+     * Stubs the retry template so the first call (heartbeat) throws the given
+     * exception, and the second call (from logErrorToCentralBackend inside
+     * handleHeartbeatException) executes the callback normally.
+     */
+    @SuppressWarnings("unchecked")
+    private void stubRetryTemplate_heartbeatThrowsThenErrorLogSucceeds(
+            HttpClientErrorException heartbeatException) {
+        when(retryTemplate.execute(any(RetryCallback.class)))
+                .thenThrow(heartbeatException)
+                .thenAnswer(inv -> {
+                    RetryCallback<Object, RestClientException> cb = inv.getArgument(0);
+                    RetryContext ctx = mock(RetryContext.class);
+                    when(ctx.getRetryCount()).thenReturn(0);
+                    return cb.doWithRetry(ctx);
+                });
+    }
 }
