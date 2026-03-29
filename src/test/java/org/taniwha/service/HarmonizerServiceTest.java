@@ -272,4 +272,268 @@ class HarmonizerServiceTest {
         assertThat(rows.get(2)).isEqualTo("42;55;2025-07-12T11:00:00Z;1;");
         assertThat(rows.get(3)).isEqualTo("70;30;2025-07-13T12:00:00Z;0;");
     }
+
+    // -------------------------------------------------------------------------
+    // matchesDeclaredType – via type-marker string value in config
+    // -------------------------------------------------------------------------
+
+    @Test
+    void parseFiles_typeMarker_integer_passesThroughIntegerValues() throws Exception {
+        // In custom-only mode (no regular config for the dataset key), seeding does NOT happen.
+        // Type marker "integer" passes through whole-number values and rejects decimals/non-numerics.
+        makeCsv("nums.csv", "score\n42\n3.14\nnotanum\n");
+
+        String configs = """
+            [
+              {
+                "custom_mapping": {
+                  "fileName":"custom_mapping",
+                  "mappingType":"default",
+                  "columns":["score"],
+                  "groups":[
+                    {
+                      "values":[
+                        {
+                          "name":"INT_SCORE",
+                          "mapping":[
+                            { "groupColumn":"score", "value":"integer" }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              }
+            ]
+            """;
+
+        // Key "noconfig" is not in configs → custom-only mode (no seeding)
+        harmonizerService.parseFiles(configs, Map.of("noconfig", List.of("nums.csv")), null);
+
+        Path out = baseDir.resolve("datasets").resolve("parsed_nums.csv");
+        List<String> rows = Files.readAllLines(out);
+
+        // Row with 42 (integer) → raw value passthrough "42"
+        assertThat(rows.get(1)).isEqualTo("42");
+        // Row with 3.14 (decimal, not an integer) → empty
+        assertThat(rows.get(2)).isEqualTo("");
+        // Row with "notanum" (non-numeric) → empty
+        assertThat(rows.get(3)).isEqualTo("");
+    }
+
+    @Test
+    void parseFiles_typeMarker_double_passesThroughNumericValues() throws Exception {
+        makeCsv("floats.csv", "val\n1.5\nword\n");
+
+        String configs = """
+            [
+              {
+                "custom_mapping": {
+                  "fileName":"custom_mapping",
+                  "mappingType":"default",
+                  "columns":["val"],
+                  "groups":[
+                    {
+                      "values":[
+                        {
+                          "name":"DBL_VAL",
+                          "mapping":[
+                            { "groupColumn":"val", "value":"double" }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              }
+            ]
+            """;
+
+        // Use a key that's NOT in configs → custom-only mode (no seeding)
+        harmonizerService.parseFiles(configs, Map.of("noconfig", List.of("floats.csv")), null);
+
+        Path out = baseDir.resolve("datasets").resolve("parsed_floats.csv");
+        List<String> rows = Files.readAllLines(out);
+
+        assertThat(rows.get(1)).isEqualTo("1.5"); // numeric → passthrough
+        assertThat(rows.get(2)).isEqualTo("");     // non-numeric → empty
+    }
+
+    @Test
+    void parseFiles_typeMarker_date_passesThroughDateValues() throws Exception {
+        makeCsv("dates.csv", "dt\n2024-03-01\nnotadate\n");
+
+        String configs = """
+            [
+              {
+                "custom_mapping": {
+                  "fileName":"custom_mapping",
+                  "mappingType":"default",
+                  "columns":["dt"],
+                  "groups":[
+                    {
+                      "values":[
+                        {
+                          "name":"DATE_VAL",
+                          "mapping":[
+                            { "groupColumn":"dt", "value":"date" }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              }
+            ]
+            """;
+
+        // Use a key that's NOT in configs → custom-only mode
+        harmonizerService.parseFiles(configs, Map.of("noconfig", List.of("dates.csv")), null);
+
+        Path out = baseDir.resolve("datasets").resolve("parsed_dates.csv");
+        List<String> rows = Files.readAllLines(out);
+
+        assertThat(rows.get(1)).isEqualTo("2024-03-01"); // date → passthrough
+        assertThat(rows.get(2)).isEqualTo("");            // non-date → empty
+    }
+
+    // -------------------------------------------------------------------------
+    // matchRangeOrDate – date range type
+    // -------------------------------------------------------------------------
+
+    @Test
+    void parseFiles_dateRangeMapping_includesInRangeRows() throws Exception {
+        makeCsv("events.csv", "dt\n2023-03-10\n2022-06-15\n2023-11-01\n");
+
+        String configs = """
+            [
+              {
+                "custom_mapping": {
+                  "fileName":"custom_mapping",
+                  "mappingType":"default",
+                  "columns":["dt"],
+                  "groups":[
+                    {
+                      "values":[
+                        {
+                          "name":"IN_RANGE",
+                          "mapping":[
+                            {
+                              "groupColumn":"dt",
+                              "value": { "type":"date", "minValue":"2023-01-01", "maxValue":"2023-12-31" }
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              }
+            ]
+            """;
+
+        harmonizerService.parseFiles(configs, Map.of("events", List.of("events.csv")), null);
+
+        Path out = baseDir.resolve("datasets").resolve("parsed_events.csv");
+        List<String> rows = Files.readAllLines(out);
+
+        // header
+        assertThat(rows.get(0)).isEqualTo("custom_mapping");
+        // 2023-03-10 is in range → IN_RANGE
+        assertThat(rows.get(1)).isEqualTo("IN_RANGE");
+        // 2022-06-15 out of range → empty
+        assertThat(rows.get(2)).isEqualTo("");
+        // 2023-11-01 is in range → IN_RANGE
+        assertThat(rows.get(3)).isEqualTo("IN_RANGE");
+    }
+
+    // -------------------------------------------------------------------------
+    // shouldStandardizeNumeric – branches
+    // -------------------------------------------------------------------------
+
+    @Test
+    void parseFiles_withStandardizeNumeric_normalizesValues() throws Exception {
+        // Tests shouldStandardizeNumeric returning true → calls standardizeNumericInPlace
+        makeCsv("nums2.csv", "price\n10.5\n20.0\n");
+
+        String configs = """
+            [
+              {
+                "cfg_num": {
+                  "fileName":"cfg_num",
+                  "columns":["price"],
+                  "groups":[
+                    { "column":"price", "values":[] }
+                  ]
+                }
+              }
+            ]
+            """;
+
+        DataCleaningOptionsDTO cleanOpts = new DataCleaningOptionsDTO();
+        cleanOpts.setStandardizeNumeric(true);
+        cleanOpts.setNumericMode("double");
+        cleanOpts.setNumericColumns(List.of("cfg_num:::price"));
+
+        harmonizerService.parseFiles(configs, Map.of("cfg_num", List.of("nums2.csv")), cleanOpts);
+
+        Path out = baseDir.resolve("datasets").resolve("parsed_nums2.csv");
+        assertThat(out).exists();
+        List<String> rows = Files.readAllLines(out);
+        // rows[1] and rows[2] contain the price values (standardized to double format)
+        assertThat(rows).hasSizeGreaterThan(1);
+    }
+
+    @Test
+    void parseFiles_withStandardizeNumeric_falseFlag_noNormalization() throws Exception {
+        makeCsv("nums3.csv", "price\n10.5\n");
+
+        String configs = """
+            [
+              {
+                "cfg_num2": {
+                  "fileName":"cfg_num2",
+                  "columns":["price"],
+                  "groups":[
+                    { "column":"price", "values":[] }
+                  ]
+                }
+              }
+            ]
+            """;
+
+        DataCleaningOptionsDTO cleanOpts = new DataCleaningOptionsDTO();
+        cleanOpts.setStandardizeNumeric(false); // ← key: shouldStandardizeNumeric returns false
+
+        // Should still process without error
+        String msg = harmonizerService.parseFiles(configs, Map.of("cfg_num2", List.of("nums3.csv")), cleanOpts);
+        assertThat(msg).isEqualTo("Files processed successfully.");
+    }
+
+    @Test
+    void parseFiles_withStandardizeNumeric_emptyColumns_noNormalization() throws Exception {
+        makeCsv("nums4.csv", "price\n10.5\n");
+
+        String configs = """
+            [
+              {
+                "cfg_num3": {
+                  "fileName":"cfg_num3",
+                  "columns":["price"],
+                  "groups":[
+                    { "column":"price", "values":[] }
+                  ]
+                }
+              }
+            ]
+            """;
+
+        DataCleaningOptionsDTO cleanOpts = new DataCleaningOptionsDTO();
+        cleanOpts.setStandardizeNumeric(true);
+        cleanOpts.setNumericMode("double");
+        cleanOpts.setNumericColumns(List.of()); // ← empty → shouldStandardizeNumeric returns false
+
+        String msg = harmonizerService.parseFiles(configs, Map.of("cfg_num3", List.of("nums4.csv")), cleanOpts);
+        assertThat(msg).isEqualTo("Files processed successfully.");
+    }
 }

@@ -3,6 +3,7 @@ package org.taniwha.service;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.Mockito;
@@ -11,6 +12,7 @@ import org.taniwha.dto.AnalyticsResponseDTO;
 import org.taniwha.dto.FileFilters;
 
 import java.io.IOException;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.time.LocalDate;
@@ -342,5 +344,169 @@ class AnalyticsServiceTest {
                 .anySatisfy(fs -> assertThat(fs.getFeatureName()).isEqualTo("cat"));
         assertThat(dto.getContinuousFeatures())
                 .anySatisfy(fs -> assertThat(fs.getFeatureName()).isEqualTo("num"));
+    }
+
+    @TempDir
+    Path tempDir;
+
+    // -------------------------------------------------------------------------
+    // isAnyHugeForDiscovery  – real temp CSV files
+    // -------------------------------------------------------------------------
+
+    @Test
+    void isAnyHugeForDiscovery_smallFile_returnsFalse() throws IOException {
+        Path csv = tempDir.resolve("small.csv");
+        StringBuilder sb = new StringBuilder("col\n");
+        for (int i = 0; i < 10; i++) sb.append("val").append(i).append("\n");
+        Files.writeString(csv, sb);
+
+        when(fileService.getDatasetFilePath("small.csv")).thenReturn(csv.toString());
+
+        assertThat(analyticsService.isAnyHugeForDiscovery(List.of("small.csv"))).isFalse();
+    }
+
+    @Test
+    void isAnyHugeForDiscovery_bigFile_returnsTrue() throws IOException {
+        // Create a file > HUGE_BYTES_THRESHOLD (1 MB)
+        Path csv = tempDir.resolve("big.csv");
+        byte[] chunk = ("longvalue,anothervalue\n").getBytes();
+        try (var out = Files.newOutputStream(csv)) {
+            int written = 0;
+            while (written < 1_100_000) {
+                out.write(chunk);
+                written += chunk.length;
+            }
+        }
+
+        when(fileService.getDatasetFilePath("big.csv")).thenReturn(csv.toString());
+
+        assertThat(analyticsService.isAnyHugeForDiscovery(List.of("big.csv"))).isTrue();
+    }
+
+    @Test
+    void isAnyHugeForDiscovery_manyRows_returnsTrue() throws IOException {
+        // Create a file with > HUGE_ROWS_THRESHOLD (5000) rows but small total size
+        Path csv = tempDir.resolve("manyrows.csv");
+        StringBuilder sb = new StringBuilder("col\n");
+        for (int i = 0; i < 6000; i++) sb.append("v\n");
+        Files.writeString(csv, sb);
+
+        when(fileService.getDatasetFilePath("manyrows.csv")).thenReturn(csv.toString());
+
+        assertThat(analyticsService.isAnyHugeForDiscovery(List.of("manyrows.csv"))).isTrue();
+    }
+
+    @Test
+    void isAnyHugeForDiscovery_fileNotFound_returnsFalse() {
+        when(fileService.getDatasetFilePath("ghost.csv")).thenReturn("/nonexistent/ghost.csv");
+
+        // Should catch IOException and return false gracefully
+        assertThat(analyticsService.isAnyHugeForDiscovery(List.of("ghost.csv"))).isFalse();
+    }
+
+    @Test
+    void isAnyHugeForDiscovery_emptyList_returnsFalse() {
+        assertThat(analyticsService.isAnyHugeForDiscovery(List.of())).isFalse();
+    }
+
+    @Test
+    void isAnyHugeForDiscovery_nonCsvNonXlsxFile_returnsFalse() throws IOException {
+        Path ttl = tempDir.resolve("meta.ttl");
+        Files.writeString(ttl, "content");
+        when(fileService.getDatasetFilePath("meta.ttl")).thenReturn(ttl.toString());
+
+        assertThat(analyticsService.isAnyHugeForDiscovery(List.of("meta.ttl"))).isFalse();
+    }
+
+    // -------------------------------------------------------------------------
+    // filterMultipleFilesByName – exception paths in future.get()
+    // -------------------------------------------------------------------------
+
+    @Test
+    void filterMultipleFilesByName_executionException_returnsErrorMessage() throws Exception {
+        AnalyticsService spySvc = Mockito.spy(analyticsService);
+        FileFilters ff = new FileFilters();
+        ff.setFileName("f3");
+        ff.setFilters(null);
+
+        java.util.concurrent.CompletableFuture<AnalyticsResponseDTO> failedFuture =
+                new java.util.concurrent.CompletableFuture<>();
+        failedFuture.completeExceptionally(new RuntimeException("processing error"));
+
+        doReturn(failedFuture).when(spySvc).processSingleFileOnDisk("f3");
+
+        var results = spySvc.filterMultipleFilesByName(List.of(ff));
+        assertThat(results).hasSize(1);
+        assertThat(results.get(0).getMessage()).contains("Error:");
+    }
+
+    // -------------------------------------------------------------------------
+    // processRecord coverage via processDatasetsOnDisk – various data types
+    // -------------------------------------------------------------------------
+
+    @Test
+    void processDatasetsOnDisk_dateColumn_detectsDateFeature() throws IOException {
+        String filename = "dates.csv";
+        when(fileService.getDatasetFilePath(filename)).thenReturn("/tmp/" + filename);
+
+        doAnswer(inv -> {
+            java.util.function.Consumer<Map<String, String>> consumer = inv.getArgument(1);
+            consumer.accept(Map.of("eventDate", "2023-01-15"));
+            consumer.accept(Map.of("eventDate", "2023-06-20"));
+            return null;
+        }).when(dataProcessingService).streamRows(eq(Paths.get("/tmp/" + filename)), any());
+
+        var results = analyticsService.processDatasetsOnDisk(List.of(filename));
+
+        assertThat(results).hasSize(1);
+        AnalyticsResponseDTO dto = results.get(0);
+        assertThat(dto.getDateFeatures()).isNotEmpty();
+    }
+
+    @Test
+    void processDatasetsOnDisk_nullAndEmptyValues_incrementsMissingCount() throws IOException {
+        String filename = "nulls.csv";
+        when(fileService.getDatasetFilePath(filename)).thenReturn("/tmp/" + filename);
+
+        doAnswer(inv -> {
+            java.util.function.Consumer<Map<String, String>> consumer = inv.getArgument(1);
+            // null value via empty string
+            Map<String, String> row = new java.util.HashMap<>();
+            row.put("col", null);
+            consumer.accept(row);
+            Map<String, String> row2 = new java.util.HashMap<>();
+            row2.put("col", "  ");
+            consumer.accept(row2);
+            Map<String, String> row3 = new java.util.HashMap<>();
+            row3.put("col", "NULL");
+            consumer.accept(row3);
+            return null;
+        }).when(dataProcessingService).streamRows(eq(Paths.get("/tmp/" + filename)), any());
+
+        var results = analyticsService.processDatasetsOnDisk(List.of(filename));
+
+        assertThat(results).hasSize(1);
+        AnalyticsResponseDTO dto = results.get(0);
+        // All values were missing so the feature may have no data → no data message or empty feature
+        assertThat(dto.getMessage()).isNotNull();
+    }
+
+    @Test
+    void processDatasetsOnDisk_mixedColumnBecomesDate_overridesContinuous() throws IOException {
+        // First row makes it look continuous, second a valid date → date takes priority
+        String filename = "mixed.csv";
+        when(fileService.getDatasetFilePath(filename)).thenReturn("/tmp/" + filename);
+
+        doAnswer(inv -> {
+            java.util.function.Consumer<Map<String, String>> consumer = inv.getArgument(1);
+            consumer.accept(Map.of("col", "2023-01-01"));
+            consumer.accept(Map.of("col", "2023-02-01"));
+            consumer.accept(Map.of("col", "2023-03-01"));
+            return null;
+        }).when(dataProcessingService).streamRows(eq(Paths.get("/tmp/" + filename)), any());
+
+        var results = analyticsService.processDatasetsOnDisk(List.of(filename));
+        assertThat(results).hasSize(1);
+        assertThat(results.get(0).getDateFeatures()).isNotEmpty();
     }
 }

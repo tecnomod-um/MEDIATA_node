@@ -186,4 +186,119 @@ class NodeAccessServiceTest {
 
         assertThat(spy.validateUserToken("jwt", "sgt")).isTrue();
     }
+
+    // -------------------------------------------------------------------------
+    // isTicketValid – additional guard branches (via verifySgtTicket wrapper)
+    // -------------------------------------------------------------------------
+
+    /**
+     * Helper: build a SgtTicket mock that passes version/realm/sname/key checks,
+     * so we can test the time-based branches in isolation.
+     */
+    private SgtTicket fullValidTicketBase() {
+        SgtTicket sgt = mock(SgtTicket.class);
+        Ticket t = mock(Ticket.class);
+        EncKdcRepPart part = mock(EncKdcRepPart.class);
+        PrincipalName pn = mock(PrincipalName.class);
+
+        when(pn.getName()).thenReturn("HTTP/host.domain");
+        when(sgt.getTicket()).thenReturn(t);
+        when(sgt.getEncKdcRepPart()).thenReturn(part);
+        when(t.getTktvno()).thenReturn(5);
+        when(t.getRealm()).thenReturn("REALM");
+        when(t.getSname()).thenReturn(pn);
+
+        EncryptionKey key = mock(EncryptionKey.class);
+        when(part.getKey()).thenReturn(key);
+        when(part.getFlags()).thenReturn(new org.apache.kerby.kerberos.kerb.type.ticket.TicketFlags());
+        when(part.getAuthTime()).thenReturn(null);
+        when(part.getEndTime()).thenReturn(null);
+        when(part.getRenewTill()).thenReturn(null);
+
+        return sgt;
+    }
+
+    @Test
+    void verifySgtTicket_nullKeytab_returnsFalse() throws Exception {
+        SgtTicket sgt = fullValidTicketBase();
+        when(principalService.getKeytab()).thenReturn(null);
+
+        assertThat(service.verifySgtTicket(sgt)).isFalse();
+    }
+
+    @Test
+    void verifySgtTicket_futureAuthTime_returnsFalse() {
+        SgtTicket sgt = fullValidTicketBase();
+
+        // Set authTime to the far future
+        org.apache.kerby.kerberos.kerb.type.KerberosTime futureTime =
+                new org.apache.kerby.kerberos.kerb.type.KerberosTime(
+                        System.currentTimeMillis() + 3_600_000L); // 1 hour ahead
+        when(sgt.getEncKdcRepPart().getAuthTime()).thenReturn(futureTime);
+
+        assertThat(service.verifySgtTicket(sgt)).isFalse();
+    }
+
+    @Test
+    void verifySgtTicket_expiredEndTime_returnsFalse() {
+        SgtTicket sgt = fullValidTicketBase();
+
+        // Set endTime in the past
+        org.apache.kerby.kerberos.kerb.type.KerberosTime pastTime =
+                new org.apache.kerby.kerberos.kerb.type.KerberosTime(
+                        System.currentTimeMillis() - 3_600_000L); // 1 hour ago
+        when(sgt.getEncKdcRepPart().getEndTime()).thenReturn(pastTime);
+
+        assertThat(service.verifySgtTicket(sgt)).isFalse();
+    }
+
+    @Test
+    void verifySgtTicket_expiredRenewTill_returnsFalse() {
+        SgtTicket sgt = fullValidTicketBase();
+
+        // Set renewTill in the past
+        org.apache.kerby.kerberos.kerb.type.KerberosTime pastTime =
+                new org.apache.kerby.kerberos.kerb.type.KerberosTime(
+                        System.currentTimeMillis() - 3_600_000L);
+        when(sgt.getEncKdcRepPart().getRenewTill()).thenReturn(pastTime);
+
+        assertThat(service.verifySgtTicket(sgt)).isFalse();
+    }
+
+    @Test
+    void verifySgtTicket_nullFlags_returnsFalse() {
+        SgtTicket sgt = fullValidTicketBase();
+        when(sgt.getEncKdcRepPart().getFlags()).thenReturn(null);
+
+        assertThat(service.verifySgtTicket(sgt)).isFalse();
+    }
+
+    @Test
+    void verifySgtTicket_krbExceptionDuringDecrypt_returnsFalse() throws Exception {
+        SgtTicket sgt = fullValidTicketBase();
+
+        EncryptionKey key = sgt.getEncKdcRepPart().getKey();
+        when(key.getKeyData()).thenReturn(new byte[]{1, 2, 3});
+        when(key.getKeyType()).thenReturn(EncryptionType.AES128_CTS_HMAC_SHA1_96);
+        when(principalService.getKeytab()).thenReturn(new byte[]{0});
+        when(krbService.loadKeyFromKeytab(anyString(), any(), any()))
+                .thenThrow(new org.apache.kerby.kerberos.kerb.KrbException("krb error"));
+
+        assertThat(service.verifySgtTicket(sgt)).isFalse();
+    }
+
+    @Test
+    void validateUserToken_decodeError_returnsFalse() throws Exception {
+        when(jwtUtil.getUsernameFromToken("jwt")).thenReturn("user");
+        when(krbService.decodeSgtTicket("bad")).thenThrow(new IOException("decode failed"));
+
+        assertThat(service.validateUserToken("jwt", "bad")).isFalse();
+    }
+
+    @Test
+    void getHostName_invalidUri_returnsOriginal() {
+        // A string that is not a valid URI but won't throw (uses raw string)
+        String result = service.getHostName("not a uri with spaces");
+        assertThat(result).isEqualTo("not a uri with spaces");
+    }
 }

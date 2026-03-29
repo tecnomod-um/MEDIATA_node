@@ -392,4 +392,152 @@ class DataProcessingServiceTest {
         var out = service.extractFilteredDataFromPath(csv, filters);
         assertThat(out).isEmpty();
     }
+
+    // -------------------------------------------------------------------------
+    // evaluateCategorical – non-"equal" type returns false
+    // -------------------------------------------------------------------------
+
+    @Test
+    void extractFilteredDataFromPath_csv_categoricalGreater_noMatch() throws Exception {
+        Path csv = Files.createTempFile("dps_cat_gt", ".csv");
+        Files.writeString(csv, "status\nACTIVE\nINACTIVE\n");
+        doNothing().when(fileFilter).validate(csv);
+
+        // "greater" is not a valid categorical check → evaluateCategorical returns false
+        Map<String, Object> filters = Map.of(
+                "operator", "AND",
+                "conditions", Map.of(
+                        "status", Map.of(
+                                "conditions", List.of(
+                                        Map.of("type", "greater", "filterType", "categorical", "value", "ACTIVE")
+                                ),
+                                "operators", List.of()
+                        )
+                )
+        );
+
+        var out = service.extractFilteredDataFromPath(csv, filters);
+        assertThat(out).isEmpty();
+    }
+
+    @Test
+    void extractFilteredDataFromPath_csv_categoricalEqual_matches() throws Exception {
+        Path csv = Files.createTempFile("dps_cat_eq", ".csv");
+        Files.writeString(csv, "status\nACTIVE\nINACTIVE\n");
+        doNothing().when(fileFilter).validate(csv);
+
+        Map<String, Object> filters = Map.of(
+                "operator", "AND",
+                "conditions", Map.of(
+                        "status", Map.of(
+                                "conditions", List.of(
+                                        Map.of("type", "equal", "filterType", "categorical", "value", "ACTIVE")
+                                ),
+                                "operators", List.of()
+                        )
+                )
+        );
+
+        var out = service.extractFilteredDataFromPath(csv, filters);
+        assertThat(out).hasSize(1);
+        assertThat(out.get(0).get("status")).isEqualTo("ACTIVE");
+    }
+
+    // -------------------------------------------------------------------------
+    // compareValues – date comparison branch
+    // -------------------------------------------------------------------------
+
+    @Test
+    void extractFilteredDataFromPath_csv_dateGreater_filtersCorrectly() throws Exception {
+        Path csv = Files.createTempFile("dps_date_gt", ".csv");
+        Files.writeString(csv, "dt\n2023-01-01\n2023-06-15\n2024-01-01\n");
+        doNothing().when(fileFilter).validate(csv);
+
+        Map<String, Object> filters = Map.of(
+                "operator", "AND",
+                "conditions", Map.of(
+                        "dt", Map.of(
+                                "conditions", List.of(
+                                        Map.of("type", "greater", "filterType", "date", "value", "2023-05-01")
+                                ),
+                                "operators", List.of()
+                        )
+                )
+        );
+
+        var out = service.extractFilteredDataFromPath(csv, filters);
+        assertThat(out).hasSize(2)
+                .extracting(m -> m.get("dt"))
+                .containsExactly("2023-06-15", "2024-01-01");
+    }
+
+    // -------------------------------------------------------------------------
+    // readXlsxFile(MultipartFile) – via streamRows(multipart, xlsx)
+    // (readXlsxFile for Path is already covered; this covers the streaming variant)
+    // -------------------------------------------------------------------------
+
+    @Test
+    void streamRows_multipartXlsx_readsAllRows_streamingReader() throws Exception {
+        // Build an xlsx in-memory using Apache POI
+        org.apache.poi.xssf.usermodel.XSSFWorkbook wb = new org.apache.poi.xssf.usermodel.XSSFWorkbook();
+        org.apache.poi.ss.usermodel.Sheet sheet = wb.createSheet("Sheet1");
+        org.apache.poi.ss.usermodel.Row header = sheet.createRow(0);
+        header.createCell(0).setCellValue("name");
+        header.createCell(1).setCellValue("age");
+        org.apache.poi.ss.usermodel.Row row1 = sheet.createRow(1);
+        row1.createCell(0).setCellValue("Alice");
+        row1.createCell(1).setCellValue(30);
+        org.apache.poi.ss.usermodel.Row row2 = sheet.createRow(2);
+        row2.createCell(0).setCellValue("Bob");
+        row2.createCell(1).setCellValue(25);
+
+        java.io.ByteArrayOutputStream bos = new java.io.ByteArrayOutputStream();
+        wb.write(bos);
+        wb.close();
+        byte[] xlsxBytes = bos.toByteArray();
+
+        MockMultipartFile file = new MockMultipartFile(
+                "file", "people.xlsx",
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                xlsxBytes);
+        doNothing().when(fileFilter).validate(file);
+
+        List<Map<String, String>> rows = new ArrayList<>();
+        service.streamRows(file, rows::add);
+
+        assertThat(rows).hasSize(2);
+        assertThat(rows.get(0).get("name")).isEqualTo("Alice");
+        assertThat(rows.get(0).get("age")).isEqualTo("30");
+        assertThat(rows.get(1).get("name")).isEqualTo("Bob");
+    }
+
+    // -------------------------------------------------------------------------
+    // applyFilters – "between" date range
+    // -------------------------------------------------------------------------
+
+    @Test
+    void extractFilteredDataFromPath_csv_dateBetween_filtersCorrectly() throws Exception {
+        Path csv = Files.createTempFile("dps_date_between", ".csv");
+        Files.writeString(csv, "dt\n2022-12-01\n2023-03-15\n2023-07-01\n");
+        doNothing().when(fileFilter).validate(csv);
+
+        Map<String, Object> filters = Map.of(
+                "operator", "AND",
+                "conditions", Map.of(
+                        "dt", Map.of(
+                                "conditions", List.of(
+                                        Map.of("type", "between", "filterType", "date",
+                                               "value", List.of("2023-01-01", "2023-06-30"))
+                                ),
+                                "operators", List.of()
+                        )
+                )
+        );
+
+        var out = service.extractFilteredDataFromPath(csv, filters);
+        assertThat(out).hasSize(1)
+                .first()
+                .extracting(m -> m.get("dt"))
+                .isEqualTo("2023-03-15");
+    }
 }

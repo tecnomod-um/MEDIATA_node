@@ -5,6 +5,8 @@ import org.junit.jupiter.api.Test;
 import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
+import org.taniwha.dto.FileInfoDto;
+import org.taniwha.model.FileCategory;
 import org.taniwha.service.FileService;
 
 import java.nio.file.Files;
@@ -174,5 +176,63 @@ class FileControllerTest {
                 .andExpect(status().isInternalServerError())
                 .andExpect(content()
                         .string("Error fetching element file: bad.txt"));
+    }
+
+    // -------------------------------------------------------------------------
+    // GET /api/files?category=DATASETS  (listFiles)
+    // -------------------------------------------------------------------------
+
+    @Test
+    void listFiles_returnsInfoDtoList() throws Exception {
+        List<FileInfoDto> infos = List.of(
+                new FileInfoDto("a.csv", 100L, 1000L, 2000L),
+                new FileInfoDto("b.csv", 200L, 3000L, 4000L)
+        );
+        when(fileService.listFilesWithInfo(FileCategory.DATASETS)).thenReturn(infos);
+
+        mvc.perform(get("/api/files").param("category", "DATASETS"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[0].name").value("a.csv"))
+                .andExpect(jsonPath("$[0].sizeBytes").value(100))
+                .andExpect(jsonPath("$[1].name").value("b.csv"));
+    }
+
+    @Test
+    void listFiles_emptyResult_returns200WithEmptyArray() throws Exception {
+        when(fileService.listFilesWithInfo(FileCategory.FHIR_MAPPINGS)).thenReturn(List.of());
+
+        mvc.perform(get("/api/files").param("category", "FHIR_MAPPINGS"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$").isArray())
+                .andExpect(jsonPath("$").isEmpty());
+    }
+
+    // -------------------------------------------------------------------------
+    // POST /api/files/rename
+    // -------------------------------------------------------------------------
+
+    @Test
+    void renameFile_success_returns200() throws Exception {
+        mvc.perform(post("/api/files/rename")
+                        .param("category", "DATASETS")
+                        .param("from", "old.csv")
+                        .param("to", "new.csv"))
+                .andExpect(status().isOk());
+
+        verify(fileService).renameFile(FileCategory.DATASETS, "old.csv", "new.csv");
+    }
+
+    // -------------------------------------------------------------------------
+    // DELETE /api/files?category=DATASETS&name=x.csv
+    // -------------------------------------------------------------------------
+
+    @Test
+    void deleteFile_success_returns200() throws Exception {
+        mvc.perform(delete("/api/files")
+                        .param("category", "DATASETS")
+                        .param("name", "del.csv"))
+                .andExpect(status().isOk());
+
+        verify(fileService).deleteFile(FileCategory.DATASETS, "del.csv");
     }
 }
