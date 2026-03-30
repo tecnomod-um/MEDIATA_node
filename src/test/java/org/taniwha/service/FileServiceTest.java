@@ -5,6 +5,8 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.mockito.Mock;
 import org.mockito.MockitoAnnotations;
+import org.taniwha.dto.FileInfoDto;
+import org.taniwha.exception.InvalidFileException;
 import org.taniwha.model.Dataset;
 import org.taniwha.model.Distribution;
 import org.taniwha.model.FileCategory;
@@ -22,6 +24,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.doNothing;
 import static org.mockito.Mockito.doNothing;
 
 class FileServiceTest {
@@ -463,5 +466,68 @@ class FileServiceTest {
     void deleteFile_pathTraversal_throws() {
         assertThatThrownBy(() -> fileService.deleteFile(FileCategory.DATASETS, "../secret.txt"))
                 .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    // -------------------------------------------------------------------------
+    // listFilesWithInfo – MAPPED_DATASETS and DATASET_METADATA categories
+    // -------------------------------------------------------------------------
+
+    @Test
+    void listFilesWithInfo_mappedDatasetsCategory_returnsFiles() throws IOException {
+        // MAPPED_DATASETS maps to the same dir as DATASETS (mappedDatasetsDir = datasetsDir)
+        Path ds = tempBase.resolve("datasets");
+        Files.createDirectories(ds);
+        Path f = ds.resolve("result.csv");
+        Files.writeString(f, "col\nval\n");
+
+        List<FileInfoDto> result = fileService.listFilesWithInfo(FileCategory.MAPPED_DATASETS);
+        assertThat(result).extracting(FileInfoDto::getName).contains("result.csv");
+    }
+
+    @Test
+    void listFilesWithInfo_metadataCategoryNonExistentDir_returnsEmpty() {
+        // DATASET_METADATA directory might not exist → should return empty list
+        List<FileInfoDto> result = fileService.listFilesWithInfo(FileCategory.DATASET_METADATA);
+        assertThat(result).isEmpty();
+    }
+
+    @Test
+    void listFilesWithInfo_invalidFileIsSkipped() throws IOException {
+        // Put an invalid file; FileFilter throws on it → should be skipped gracefully
+        Path ds = tempBase.resolve("datasets");
+        Files.createDirectories(ds);
+        Path bad = ds.resolve("bad.exe");
+        Files.writeString(bad, "binary");
+
+        org.mockito.Mockito.doThrow(new org.taniwha.exception.InvalidFileException("bad ext"))
+                .when(fileFilter).validate(bad);
+
+        List<FileInfoDto> result = fileService.listFilesWithInfo(FileCategory.DATASETS);
+        assertThat(result.stream().map(FileInfoDto::getName)).doesNotContain("bad.exe");
+    }
+
+    // -------------------------------------------------------------------------
+    // resolveSafePath – backslash traversal guard
+    // -------------------------------------------------------------------------
+
+    @Test
+    void resolveExistingFilePath_backslashInName_throws() {
+        // backslash is treated as path separator → triggers "Invalid file name"
+        assertThatThrownBy(() -> fileService.resolveExistingFilePath(FileCategory.DATASETS, "..\\secret.csv"))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    // -------------------------------------------------------------------------
+    // deleteFile – validation failure is ignored (validate is called but file exists)
+    // -------------------------------------------------------------------------
+
+    @Test
+    void deleteFile_nonExistentFileAfterResolve_isNoOp() throws IOException {
+        // Ensure file doesn't exist; deleteFile should silently return
+        Path ds = tempBase.resolve("datasets");
+        Files.createDirectories(ds);
+        // no file created – should just return
+        fileService.deleteFile(FileCategory.DATASETS, "ghost2.csv");
+        // no exception expected
     }
 }

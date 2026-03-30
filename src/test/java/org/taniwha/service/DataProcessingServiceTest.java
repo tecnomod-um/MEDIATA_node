@@ -540,4 +540,135 @@ class DataProcessingServiceTest {
                 .extracting(m -> m.get("dt"))
                 .isEqualTo("2023-03-15");
     }
+
+    // -------------------------------------------------------------------------
+    // applyComplexCondition – multiple conditions combined with AND / OR
+    // -------------------------------------------------------------------------
+
+    @Test
+    void extractFilteredDataFromPath_csv_multiConditionAnd_bothMustMatch() throws Exception {
+        Path csv = Files.createTempFile("dps_multi_and", ".csv");
+        Files.writeString(csv, "score\n5\n10\n15\n");
+        doNothing().when(fileFilter).validate(csv);
+
+        Map<String, Object> filters = Map.of(
+                "operator", "AND",
+                "conditions", Map.of(
+                        "score", Map.of(
+                                "conditions", List.of(
+                                        Map.of("type", "greater", "filterType", "continuous", "value", "4"),
+                                        Map.of("type", "less", "filterType", "continuous", "value", "12")
+                                ),
+                                "operators", List.of("AND")
+                        )
+                )
+        );
+
+        var out = service.extractFilteredDataFromPath(csv, filters);
+        // 5 and 10 match > 4 AND < 12; 15 does not
+        assertThat(out).hasSize(2);
+        assertThat(out).extracting(m -> m.get("score")).containsExactlyInAnyOrder("5", "10");
+    }
+
+    @Test
+    void extractFilteredDataFromPath_csv_multiConditionOr_eitherMustMatch() throws Exception {
+        Path csv = Files.createTempFile("dps_multi_or", ".csv");
+        Files.writeString(csv, "score\n1\n10\n20\n");
+        doNothing().when(fileFilter).validate(csv);
+
+        Map<String, Object> filters = Map.of(
+                "operator", "AND",
+                "conditions", Map.of(
+                        "score", Map.of(
+                                "conditions", List.of(
+                                        Map.of("type", "less", "filterType", "continuous", "value", "5"),
+                                        Map.of("type", "greater", "filterType", "continuous", "value", "15")
+                                ),
+                                "operators", List.of("OR")
+                        )
+                )
+        );
+
+        var out = service.extractFilteredDataFromPath(csv, filters);
+        // 1 matches (< 5), 20 matches (> 15), 10 doesn't
+        assertThat(out).hasSize(2);
+        assertThat(out).extracting(m -> m.get("score")).containsExactlyInAnyOrder("1", "20");
+    }
+
+    // -------------------------------------------------------------------------
+    // evaluateCondition – categorical NOT equal (returns false)
+    // -------------------------------------------------------------------------
+
+    @Test
+    void extractFilteredDataFromPath_csv_categoricalEqual_matches2() throws Exception {
+        Path csv = Files.createTempFile("dps_cat", ".csv");
+        Files.writeString(csv, "color\nred\nblue\ngreen\n");
+        doNothing().when(fileFilter).validate(csv);
+
+        Map<String, Object> filters = Map.of(
+                "operator", "AND",
+                "conditions", Map.of(
+                        "color", Map.of(
+                                "conditions", List.of(
+                                        Map.of("type", "equal", "filterType", "categorical", "value", "blue")
+                                ),
+                                "operators", List.of()
+                        )
+                )
+        );
+
+        var out = service.extractFilteredDataFromPath(csv, filters);
+        assertThat(out).hasSize(1);
+        assertThat(out.get(0).get("color")).isEqualTo("blue");
+    }
+
+    @Test
+    void extractFilteredDataFromPath_csv_categoricalNonEqual_noMatch() throws Exception {
+        Path csv = Files.createTempFile("dps_cat_ne", ".csv");
+        Files.writeString(csv, "color\nred\n");
+        doNothing().when(fileFilter).validate(csv);
+
+        Map<String, Object> filters = Map.of(
+                "operator", "AND",
+                "conditions", Map.of(
+                        "color", Map.of(
+                                "conditions", List.of(
+                                        Map.of("type", "not_equal", "filterType", "categorical", "value", "red")
+                                ),
+                                "operators", List.of()
+                        )
+                )
+        );
+
+        var out = service.extractFilteredDataFromPath(csv, filters);
+        assertThat(out).isEmpty(); // non-equal type → evaluateCategorical returns false → filtered out
+    }
+
+    // -------------------------------------------------------------------------
+    // evaluateCondition – empty/null feature value → returns false
+    // -------------------------------------------------------------------------
+
+    @Test
+    void extractFilteredDataFromPath_csv_emptyFeatureValue_filtered() throws Exception {
+        Path csv = Files.createTempFile("dps_empty", ".csv");
+        Files.writeString(csv, "score\n\n5\n");
+        doNothing().when(fileFilter).validate(csv);
+
+        Map<String, Object> filters = Map.of(
+                "operator", "AND",
+                "conditions", Map.of(
+                        "score", Map.of(
+                                "conditions", List.of(
+                                        Map.of("type", "greater", "filterType", "continuous", "value", "0")
+                                ),
+                                "operators", List.of()
+                        )
+                )
+        );
+
+        var out = service.extractFilteredDataFromPath(csv, filters);
+        // Empty row filtered out → only score=5
+        assertThat(out).hasSize(1);
+        assertThat(out.get(0).get("score")).isEqualTo("5");
+    }
 }

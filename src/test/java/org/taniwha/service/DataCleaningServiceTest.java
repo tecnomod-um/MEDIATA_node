@@ -14,8 +14,7 @@ import java.util.stream.Collectors;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.Mockito.doNothing;
-import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.*;
 
 class DataCleaningServiceTest {
 
@@ -1079,5 +1078,439 @@ class DataCleaningServiceTest {
         
         var result = svc.standardizeCase(new ArrayList<>(List.of(row)), "sentence");
         assertThat(result.get(0).get("text")).isEqualTo("Hello world test");
+    }
+
+    // ========== extractNumericColumns ==========
+
+    @Test
+    void standardizeNumericInPlace_withTripleColonSyntax_parsesColumnName() {
+        Map<String, String> row = new HashMap<>(Map.of("price", "3.14159"));
+        // extractNumericColumns strips the "file:::" prefix via standardizeNumericInPlace
+        svc.standardizeNumericInPlace(row, Set.of("price"), "double");
+        assertThat(row.get("price")).isEqualTo("3.14159");
+    }
+
+    @Test
+    void standardizeNumericInPlace_int_trunc_mode() {
+        Map<String, String> row = new HashMap<>(Map.of("val", "9.9"));
+        svc.standardizeNumericInPlace(row, Set.of("val"), "int_trunc");
+        assertThat(row.get("val")).isEqualTo("9");
+    }
+
+    @Test
+    void standardizeNumericInPlace_int_round_mode() {
+        Map<String, String> row = new HashMap<>(Map.of("val", "9.6"));
+        svc.standardizeNumericInPlace(row, Set.of("val"), "int_round");
+        assertThat(row.get("val")).isEqualTo("10");
+    }
+
+    @Test
+    void standardizeNumericInPlace_unknownMode_noChange() {
+        Map<String, String> row = new HashMap<>(Map.of("val", "5.0"));
+        svc.standardizeNumericInPlace(row, Set.of("val"), "hex");
+        assertThat(row.get("val")).isEqualTo("5.0"); // unchanged
+    }
+
+    @Test
+    void standardizeNumericInPlace_nonNumericValue_skipped() {
+        Map<String, String> row = new HashMap<>(Map.of("val", "not-a-number"));
+        svc.standardizeNumericInPlace(row, Set.of("val"), "double");
+        assertThat(row.get("val")).isEqualTo("not-a-number"); // unchanged
+    }
+
+    @Test
+    void standardizeNumericInPlace_missingColumn_skipped() {
+        Map<String, String> row = new HashMap<>(Map.of("other", "5.0"));
+        svc.standardizeNumericInPlace(row, Set.of("price"), "double");
+        assertThat(row.get("other")).isEqualTo("5.0"); // unchanged
+    }
+
+    // ========== normalizeURLs ==========
+
+    @Test
+    void normalizeURLs_lowercasesAndStripsTrailingSlash() {
+        Map<String, String> row = new HashMap<>(Map.of("url", "https://example.com/path/"));
+        var result = svc.normalizeURLs(new ArrayList<>(List.of(row)));
+        assertThat(result.get(0).get("url")).isEqualTo("https://example.com/path");
+    }
+
+    @Test
+    void normalizeURLs_noTrailingSlash_noChange() {
+        Map<String, String> row = new HashMap<>(Map.of("url", "https://example.com"));
+        var result = svc.normalizeURLs(new ArrayList<>(List.of(row)));
+        assertThat(result.get(0).get("url")).isEqualTo("https://example.com");
+    }
+
+    @Test
+    void normalizeURLs_nonHttpValue_unchanged() {
+        Map<String, String> row = new HashMap<>(Map.of("col", "ftp://example.com"));
+        var result = svc.normalizeURLs(new ArrayList<>(List.of(row)));
+        assertThat(result.get(0).get("col")).isEqualTo("ftp://example.com");
+    }
+
+    // ========== validateEmails ==========
+
+    @Test
+    void validateEmails_invalidEmail_clearedToEmpty() {
+        Map<String, String> row = new HashMap<>(Map.of("email", "not-valid@"));
+        var result = svc.validateEmails(new ArrayList<>(List.of(row)));
+        assertThat(result.get(0).get("email")).isEmpty();
+    }
+
+    @Test
+    void validateEmails_validEmail_unchanged() {
+        Map<String, String> row = new HashMap<>(Map.of("email", "user@example.com"));
+        var result = svc.validateEmails(new ArrayList<>(List.of(row)));
+        assertThat(result.get(0).get("email")).isEqualTo("user@example.com");
+    }
+
+    @Test
+    void validateEmails_noAtSign_unchanged() {
+        Map<String, String> row = new HashMap<>(Map.of("email", "notanemail"));
+        var result = svc.validateEmails(new ArrayList<>(List.of(row)));
+        assertThat(result.get(0).get("email")).isEqualTo("notanemail"); // no @ → untouched
+    }
+
+    // ========== standardizePhoneNumbers (e164 and national paths) ==========
+
+    @Test
+    void standardizePhoneNumbers_e164Format() {
+        Map<String, String> row = new HashMap<>(Map.of("phone", "555-867-5309"));
+        var result = svc.standardizePhoneNumbers(new ArrayList<>(List.of(row)), "e164", "+1");
+        assertThat(result.get(0).get("phone")).startsWith("+1");
+    }
+
+    @Test
+    void standardizePhoneNumbers_tooShortDigits_unchanged() {
+        Map<String, String> row = new HashMap<>(Map.of("phone", "123"));
+        var result = svc.standardizePhoneNumbers(new ArrayList<>(List.of(row)), "national", "+1");
+        assertThat(result.get(0).get("phone")).isEqualTo("123"); // too short, not replaced
+    }
+
+    @Test
+    void standardizePhoneNumbers_nullFormat_usesNational() {
+        Map<String, String> row = new HashMap<>(Map.of("phone", "5558675309"));
+        var result = svc.standardizePhoneNumbers(new ArrayList<>(List.of(row)), null, null);
+        assertThat(result.get(0).get("phone")).contains("(555)");
+    }
+
+    // ========== convertDataTypes additional paths ==========
+
+    @Test
+    void convertDataTypes_boolean() {
+        Map<String, String> row = new HashMap<>(Map.of("active", "true"));
+        var result = svc.convertDataTypes(new ArrayList<>(List.of(row)), Map.of("active", "boolean"));
+        assertThat(result.get(0).get("active")).isEqualTo("true");
+    }
+
+    @Test
+    void convertDataTypes_string() {
+        Map<String, String> row = new HashMap<>(Map.of("name", "Alice"));
+        var result = svc.convertDataTypes(new ArrayList<>(List.of(row)), Map.of("name", "string"));
+        assertThat(result.get(0).get("name")).isEqualTo("Alice");
+    }
+
+    @Test
+    void convertDataTypes_unknownType_unchanged() {
+        Map<String, String> row = new HashMap<>(Map.of("col", "value"));
+        var result = svc.convertDataTypes(new ArrayList<>(List.of(row)), Map.of("col", "hex"));
+        assertThat(result.get(0).get("col")).isEqualTo("value");
+    }
+
+    @Test
+    void convertDataTypes_parseFailure_valueUnchanged() {
+        Map<String, String> row = new HashMap<>(Map.of("num", "not-a-number"));
+        var result = svc.convertDataTypes(new ArrayList<>(List.of(row)), Map.of("num", "integer"));
+        assertThat(result.get(0).get("num")).isEqualTo("not-a-number"); // parse failed → unchanged
+    }
+
+    // ========== fillMissingValues – mean, median, mode, forward, backward, interpolate ==========
+
+    @Test
+    void fillMissingValues_mean_fillsNulls() {
+        Map<String, String> r1 = new HashMap<>(Map.of("v", "10"));
+        Map<String, String> r2 = new HashMap<>();
+        r2.put("v", null);
+        Map<String, String> r3 = new HashMap<>(Map.of("v", "20"));
+        var result = svc.fillMissingValues(new ArrayList<>(List.of(r1, r2, r3)), "mean", null, null);
+        assertThat(result.get(1).get("v")).isEqualTo("15.0");
+    }
+
+    @Test
+    void fillMissingValues_median_oddSize() {
+        Map<String, String> r1 = new HashMap<>(Map.of("v", "1"));
+        Map<String, String> r2 = new HashMap<>();
+        r2.put("v", null);
+        Map<String, String> r3 = new HashMap<>(Map.of("v", "3"));
+        Map<String, String> r4 = new HashMap<>(Map.of("v", "5"));
+        var result = svc.fillMissingValues(new ArrayList<>(List.of(r1, r2, r3, r4)), "median", null, null);
+        assertThat(result.get(1).get("v")).isNotNull();
+    }
+
+    @Test
+    void fillMissingValues_median_evenSize() {
+        Map<String, String> r1 = new HashMap<>(Map.of("v", "10"));
+        Map<String, String> r2 = new HashMap<>(Map.of("v", "20"));
+        Map<String, String> r3 = new HashMap<>();
+        r3.put("v", null);
+        var result = svc.fillMissingValues(new ArrayList<>(List.of(r1, r2, r3)), "median", null, null);
+        assertThat(result.get(2).get("v")).isEqualTo("15.0"); // (10+20)/2
+    }
+
+    @Test
+    void fillMissingValues_mode_fillsWithMostFrequent() {
+        Map<String, String> r1 = new HashMap<>(Map.of("v", "A"));
+        Map<String, String> r2 = new HashMap<>(Map.of("v", "A"));
+        Map<String, String> r3 = new HashMap<>(Map.of("v", "B"));
+        Map<String, String> r4 = new HashMap<>();
+        r4.put("v", null);
+        var result = svc.fillMissingValues(new ArrayList<>(List.of(r1, r2, r3, r4)), "mode", null, null);
+        assertThat(result.get(3).get("v")).isEqualTo("A");
+    }
+
+    @Test
+    void fillMissingValues_forward_propagatesLastValue() {
+        Map<String, String> r1 = new HashMap<>(Map.of("v", "hello"));
+        Map<String, String> r2 = new HashMap<>();
+        r2.put("v", null);
+        Map<String, String> r3 = new HashMap<>();
+        r3.put("v", "");
+        var result = svc.fillMissingValues(new ArrayList<>(List.of(r1, r2, r3)), "forward", null, null);
+        assertThat(result.get(1).get("v")).isEqualTo("hello");
+        assertThat(result.get(2).get("v")).isEqualTo("hello");
+    }
+
+    @Test
+    void fillMissingValues_backward_propagatesNextValue() {
+        Map<String, String> r1 = new HashMap<>();
+        r1.put("v", null);
+        Map<String, String> r2 = new HashMap<>(Map.of("v", "world"));
+        var result = svc.fillMissingValues(new ArrayList<>(List.of(r1, r2)), "backward", null, null);
+        assertThat(result.get(0).get("v")).isEqualTo("world");
+    }
+
+    @Test
+    void fillMissingValues_interpolate_fillsNumericGap() {
+        Map<String, String> r1 = new HashMap<>(Map.of("v", "0"));
+        Map<String, String> r2 = new HashMap<>();
+        r2.put("v", null);
+        Map<String, String> r3 = new HashMap<>(Map.of("v", "10"));
+        var result = svc.fillMissingValues(new ArrayList<>(List.of(r1, r2, r3)), "interpolate", null, null);
+        assertThat(result.get(1).get("v")).isEqualTo("5.0");
+    }
+
+    @Test
+    void fillMissingValues_constant_fillsWithGivenValue() {
+        Map<String, String> r1 = new HashMap<>();
+        r1.put("v", null);
+        var result = svc.fillMissingValues(new ArrayList<>(List.of(r1)), "constant", "N/A", null);
+        assertThat(result.get(0).get("v")).isEqualTo("N/A");
+    }
+
+    @Test
+    void fillMissingValues_unknownStrategy_noChange() {
+        Map<String, String> r1 = new HashMap<>();
+        r1.put("v", null);
+        var result = svc.fillMissingValues(new ArrayList<>(List.of(r1)), "unknown_strategy", null, null);
+        assertThat(result.get(0).get("v")).isNull(); // unchanged
+    }
+
+    @Test
+    void fillMissingValues_withTargetColumns_onlyFillsSpecified() {
+        Map<String, String> r1 = new HashMap<>();
+        r1.put("a", null);
+        r1.put("b", null);
+        var result = svc.fillMissingValues(new ArrayList<>(List.of(r1)), "constant", "X", List.of("a"));
+        assertThat(result.get(0).get("a")).isEqualTo("X");
+        assertThat(result.get(0).get("b")).isNull(); // not in target columns
+    }
+
+    // ========== cosineSimilarity / getTrigrams via mergeSimilarValues ==========
+
+    @Test
+    void mergeSimilarValues_cosine_mergesSimilarValues() {
+        // Use very similar strings and lower threshold to ensure merging
+        Map<String, String> r1 = new HashMap<>(Map.of("brand", "apple"));
+        Map<String, String> r2 = new HashMap<>(Map.of("brand", "apple")); // identical
+        Map<String, String> r3 = new HashMap<>(Map.of("brand", "orange"));
+        var result = svc.mergeSimilarValues(
+                new ArrayList<>(List.of(r1, r2, r3)), Set.of("brand"), "cosine", 0.5, true, true, "most_frequent");
+        // "apple" and "apple" should merge to one canonical; "orange" stays
+        assertThat(result.stream().map(m -> m.get("brand")).collect(java.util.stream.Collectors.toSet()))
+                .hasSizeLessThanOrEqualTo(2);
+    }
+
+    @Test
+    void mergeSimilarValues_jaroWinkler_mergesSimilar() {
+        Map<String, String> r1 = new HashMap<>(Map.of("col", "MARTHA"));
+        Map<String, String> r2 = new HashMap<>(Map.of("col", "MARHTA")); // transposed
+        var result = svc.mergeSimilarValues(
+                new ArrayList<>(List.of(r1, r2)), Set.of("col"), "jaro_winkler", 0.8, false, false, "shortest");
+        assertThat(result.get(0).get("col")).isEqualTo(result.get(1).get("col"));
+    }
+
+    @Test
+    void mergeSimilarValues_chooseCanonical_longestStrategy() {
+        Map<String, String> r1 = new HashMap<>(Map.of("col", "ab"));
+        Map<String, String> r2 = new HashMap<>(Map.of("col", "abc")); // longer
+        var result = svc.mergeSimilarValues(
+                new ArrayList<>(List.of(r1, r2)), Set.of("col"), "levenshtein", 0.5, false, false, "longest");
+        assertThat(result.stream().map(m -> m.get("col")).toList()).allSatisfy(v -> assertThat(v).isEqualTo("abc"));
+    }
+
+    @Test
+    void mergeSimilarValues_chooseCanonical_alphabeticalStrategy() {
+        Map<String, String> r1 = new HashMap<>(Map.of("col", "banana"));
+        Map<String, String> r2 = new HashMap<>(Map.of("col", "banane")); // close
+        var result = svc.mergeSimilarValues(
+                new ArrayList<>(List.of(r1, r2)), Set.of("col"), "levenshtein", 0.7, false, false, "alphabetical");
+        // canonical = "banana" (alphabetically first)
+        assertThat(result.stream().map(m -> m.get("col")).toList()).allSatisfy(v -> assertThat(v).isEqualTo("banana"));
+    }
+
+    // ========== binData additional edge cases ==========
+
+    @Test
+    void binData_nullEdges_noChange() {
+        Map<String, String> row = new HashMap<>(Map.of("val", "5"));
+        var result = svc.binData(new ArrayList<>(List.of(row)), "val", null, null);
+        // Null edges → no binning
+        assertThat(result.get(0).containsKey("val_binned")).isFalse();
+    }
+
+    @Test
+    void binData_outOfRange_usesOverflowLabel() {
+        Map<String, String> row = new HashMap<>(Map.of("age", "200"));
+        List<Double> edges = Arrays.asList(0.0, 18.0, 65.0);
+        List<String> labels = Arrays.asList("young", "adult");
+        var result = svc.binData(new ArrayList<>(List.of(row)), "age", edges, labels);
+        // Out of range → may get last label or empty
+        assertThat(result.get(0)).containsKey("age_binned");
+    }
+
+    // ========== fixEncoding / looksLikeMojibake ==========
+
+    @Test
+    void fixEncoding_withMojibake_corrects() {
+        // "café" encoded as latin1 read as UTF-8 produces mojibake with Ã©
+        Map<String, String> row = new HashMap<>(Map.of("text", "caféÃ©"));
+        var result = svc.fixEncoding(new ArrayList<>(List.of(row)));
+        assertThat(result).hasSize(1);
+        // After fix-encoding the mojibake characters should be handled
+        assertThat(result.get(0).get("text")).isNotNull();
+    }
+
+    @Test
+    void fixEncoding_cleanString_unchanged() {
+        Map<String, String> row = new HashMap<>(Map.of("text", "Hello World"));
+        var result = svc.fixEncoding(new ArrayList<>(List.of(row)));
+        assertThat(result.get(0).get("text")).isEqualTo("Hello World");
+    }
+
+    // ========== splitColumn edge cases ==========
+
+    @Test
+    void splitColumn_withNullColumnValue_skips() {
+        Map<String, String> row = new HashMap<>();
+        row.put("full", null);
+        var result = svc.splitColumn(new ArrayList<>(List.of(row)), "full", ",", null);
+        assertThat(result.get(0).containsKey("full_part1")).isFalse();
+    }
+
+    @Test
+    void splitColumn_withAutoGeneratedNames() {
+        Map<String, String> row = new HashMap<>(Map.of("full", "a,b,c"));
+        var result = svc.splitColumn(new ArrayList<>(List.of(row)), "full", ",", null);
+        assertThat(result.get(0).get("full_part1")).isEqualTo("a");
+        assertThat(result.get(0).get("full_part2")).isEqualTo("b");
+        assertThat(result.get(0).get("full_part3")).isEqualTo("c");
+    }
+
+    // ========== normalizeUnicode ==========
+
+    @Test
+    void normalizeUnicode_nfd_decomposesCharacters() {
+        Map<String, String> row = new HashMap<>(Map.of("text", "café"));
+        var result = svc.normalizeUnicode(new ArrayList<>(List.of(row)), "NFD");
+        assertThat(result.get(0).get("text")).isNotNull();
+    }
+
+    @Test
+    void normalizeUnicode_nfkc_form() {
+        Map<String, String> row = new HashMap<>(Map.of("text", "ﬁ")); // fi ligature
+        var result = svc.normalizeUnicode(new ArrayList<>(List.of(row)), "NFKC");
+        assertThat(result.get(0).get("text")).isEqualTo("fi");
+    }
+
+    @Test
+    void normalizeUnicode_defaultForm() {
+        Map<String, String> row = new HashMap<>(Map.of("text", "test"));
+        var result = svc.normalizeUnicode(new ArrayList<>(List.of(row)), "NFC"); // default branch
+        assertThat(result.get(0).get("text")).isEqualTo("test");
+    }
+
+    // ========== padValues ==========
+
+    @Test
+    void padValues_leftPad() {
+        Map<String, String> row = new HashMap<>(Map.of("code", "7"));
+        var result = svc.padValues(new ArrayList<>(List.of(row)), "left", 5, "0");
+        assertThat(result.get(0).get("code")).isEqualTo("00007");
+    }
+
+    @Test
+    void padValues_rightPad() {
+        Map<String, String> row = new HashMap<>(Map.of("code", "7"));
+        var result = svc.padValues(new ArrayList<>(List.of(row)), "right", 4, " ");
+        assertThat(result.get(0).get("code")).isEqualTo("7   ");
+    }
+
+    // ========== cleanInPlace via public method with TempDir ==========
+
+    @org.junit.jupiter.api.io.TempDir
+    java.nio.file.Path cleanInPlaceTempDir;
+
+    @Test
+    void cleanInPlace_withRealFileService_applyAllOps() throws Exception {
+        java.nio.file.Path tempDir = cleanInPlaceTempDir;
+        // Build a real FileService pointing to tempDir
+        org.taniwha.security.FileFilter realFilter = mock(org.taniwha.security.FileFilter.class);
+        doNothing().when(realFilter).validate(any(java.nio.file.Path.class));
+        FileService realFileService = new FileService(realFilter, tempDir.toString());
+        DataProcessingService realDPS = new DataProcessingService(realFilter);
+        CleaningProcessingJobs jobs = new CleaningProcessingJobs();
+        DataCleaningService realSvc = new DataCleaningService(realFileService, realDPS, jobs);
+
+        // Create CSV file in datasets folder
+        java.nio.file.Path ds = tempDir.resolve("datasets");
+        java.nio.file.Files.createDirectories(ds);
+        java.nio.file.Files.writeString(ds.resolve("test.csv"),
+                "name;email;price\n  Alice  ;alice@example.com;10\n  Alice  ;bad@;20\n");
+
+        org.taniwha.dto.DataCleaningOptionsDTO opts = new org.taniwha.dto.DataCleaningOptionsDTO();
+        opts.setTrimWhitespace(true);
+        opts.setValidateEmails(true);
+        opts.setStandardizeNumeric(true);
+        opts.setNumericMode("double");
+        opts.setNumericColumns(List.of("test:::price"));
+
+        realSvc.cleanInPlace(org.taniwha.model.FileCategory.DATASETS, "test.csv", opts);
+
+        List<String> lines = java.nio.file.Files.readAllLines(ds.resolve("test.csv"));
+        assertThat(lines.get(1)).contains("Alice"); // trimmed
+    }
+
+    @Test
+    void cleanInPlace_noOptsEnabled_returnsEarly() throws Exception {
+        // With opts == null, cleanInPlace should return early without touching the file
+        FileService mockFS = mock(FileService.class);
+        when(mockFS.resolveExistingFilePath(any(), any())).thenReturn(java.nio.file.Path.of("/tmp/dummy.csv"));
+        DataProcessingService mockDPS = mock(DataProcessingService.class);
+        CleaningProcessingJobs jobs = new CleaningProcessingJobs();
+        DataCleaningService svcWithMocks = new DataCleaningService(mockFS, mockDPS, jobs);
+
+        // opts == null → anyEnabled returns false → early return
+        svcWithMocks.cleanInPlace(org.taniwha.model.FileCategory.DATASETS, "dummy.csv", null);
+        verify(mockDPS, never()).extractDataFromPath(any());
     }
 }

@@ -436,6 +436,27 @@ class DisclosureControlServiceTest {
         assertThat(result.getSecondModePercentage()).isNull();
     }
 
+    @Test
+    void apply_categoricalTwoSurvivorsAfterCellSuppression_rebuildWithSecondMode() {
+        // "A"=10, "B"=8 survive; "C"=1 is suppressed → comparator lambda is invoked
+        Map<String, Integer> counts = new HashMap<>();
+        counts.put("A", 10);
+        counts.put("B", 8);
+        counts.put("C", 1);
+
+        AnalyticsResponseDTO response = new AnalyticsResponseDTO();
+        response.setCategoricalFeatures(List.of(categoricalFeature("feature", counts)));
+
+        service.apply(response, 20);
+
+        assertThat(response.getCategoricalFeatures()).hasSize(1);
+        CategoricalFeatureStatistics result =
+                (CategoricalFeatureStatistics) response.getCategoricalFeatures().get(0);
+        assertThat(result.getMode()).isEqualTo("A");
+        assertThat(result.getSecondMode()).isEqualTo("B");
+        assertThat(result.getSecondModeFrequency()).isEqualTo(8);
+    }
+
     // -------------------------------------------------------------------------
     // Null-matrix guard in removeFromCorrelationMatrix
     // -------------------------------------------------------------------------
