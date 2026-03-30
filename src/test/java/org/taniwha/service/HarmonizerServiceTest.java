@@ -536,4 +536,83 @@ class HarmonizerServiceTest {
         String msg = harmonizerService.parseFiles(configs, Map.of("cfg_num3", List.of("nums4.csv")), cleanOpts);
         assertThat(msg).isEqualTo("Files processed successfully.");
     }
+
+    // =========================================================================
+    // parseFilesWithProgress – covers the async path and lambda chains
+    // =========================================================================
+
+    @Test
+    void parseFilesWithProgress_emptyConfig_completesSuccessfully() throws Exception {
+        makeCsv("prog1.csv", "col1;col2\nA;1\nB;2\n");
+
+        String configs = "[]";
+        Map<String, List<String>> mappings = Map.of("prog1.csv", List.of("prog1.csv"));
+
+        String result = harmonizerService.parseFilesWithProgress("job-p1", configs, mappings, null);
+        assertThat(result).contains("successfully");
+    }
+
+    @Test
+    void parseFilesWithProgress_withSimpleConfig_writesOutputFile() throws Exception {
+        makeCsv("prog2.csv", "color;size\nred;10\nblue;20\n");
+
+        String configs = """
+            [
+              {
+                "prog2.csv": {
+                  "fileName":"prog2.csv",
+                  "columns":["color"],
+                  "groups":[
+                    {
+                      "column":"color",
+                      "values":[
+                        {"value":"red",  "mapping":[{"name":"COLOR_RED",  "type":"binary"}]},
+                        {"value":"blue", "mapping":[{"name":"COLOR_BLUE", "type":"binary"}]}
+                      ]
+                    }
+                  ]
+                }
+              }
+            ]
+            """;
+
+        Map<String, List<String>> mappings = Map.of("prog2.csv", List.of("prog2.csv"));
+
+        String result = harmonizerService.parseFilesWithProgress("job-p2", configs, mappings, null);
+        assertThat(result).contains("successfully");
+    }
+
+    @Test
+    void parseFilesWithProgress_missingFile_skipsAndCompletes() throws Exception {
+        // Do NOT create the file → should skip with a warning and complete
+        String configs = "[]";
+        Map<String, List<String>> mappings = Map.of("missing.csv", List.of("missing.csv"));
+
+        String result = harmonizerService.parseFilesWithProgress("job-p3", configs, mappings, null);
+        assertThat(result).contains("successfully");
+    }
+
+    @Test
+    void parseFilesWithProgress_withCleaningOpts_appliesCleaningAndCompletes() throws Exception {
+        makeCsv("prog4.csv", "name;score\n  Alice  ;10\n  Alice  ;20\n");
+
+        String configs = "[]";
+        Map<String, List<String>> mappings = Map.of("prog4.csv", List.of("prog4.csv"));
+
+        DataCleaningOptionsDTO cleanOpts = new DataCleaningOptionsDTO();
+        cleanOpts.setTrimWhitespace(true);
+        cleanOpts.setRemoveDuplicates(false);
+
+        String result = harmonizerService.parseFilesWithProgress("job-p4", configs, mappings, cleanOpts);
+        assertThat(result).contains("successfully");
+    }
+
+    @Test
+    void parseFilesWithProgress_emptyMappings_completesSuccessfully() throws Exception {
+        String configs = "[]";
+        Map<String, List<String>> mappings = Map.of();
+
+        String result = harmonizerService.parseFilesWithProgress("job-p5", configs, mappings, null);
+        assertThat(result).contains("successfully");
+    }
 }

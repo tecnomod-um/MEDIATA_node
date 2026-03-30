@@ -297,6 +297,21 @@ class NodeSyncServiceTest {
     }
 
     // -------------------------------------------------------------------------
+    // registerWithCentralBackend – CONFLICT path
+    // -------------------------------------------------------------------------
+
+    @Test
+    void registerWithCentralBackend_conflict_logsAndDoesNotSetKeytab() {
+        when(jwtUtil.generateToken("user")).thenReturn("JWT-CONFLICT");
+        when(retryTemplate.execute(any()))
+                .thenThrow(new HttpClientErrorException(HttpStatus.CONFLICT));
+
+        service.registerWithCentralBackend();
+
+        verify(principalService, never()).setKeytab(any());
+    }
+
+    // -------------------------------------------------------------------------
     // Helpers
     // -------------------------------------------------------------------------
 

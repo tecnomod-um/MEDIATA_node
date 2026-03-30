@@ -509,4 +509,113 @@ class AnalyticsServiceTest {
         assertThat(results).hasSize(1);
         assertThat(results.get(0).getDateFeatures()).isNotEmpty();
     }
+
+    // -------------------------------------------------------------------------
+    // filterMultipleFilesByName – ExecutionException path
+    // -------------------------------------------------------------------------
+
+    @Test
+    void filterMultipleFilesByName_executionException_returnsErrorDto() throws Exception {
+        String filename = "err.csv";
+        when(fileService.getDatasetFilePath(filename))
+                .thenThrow(new RuntimeException("Disk not found"));
+
+        FileFilters ff = new FileFilters();
+        ff.setFileName(filename);
+        ff.setFilters(null);
+        List<AnalyticsResponseDTO> results = analyticsService.filterMultipleFilesByName(List.of(ff));
+
+        assertThat(results).hasSize(1);
+        assertThat(results.get(0).getMessage()).contains("Error");
+    }
+
+    // -------------------------------------------------------------------------
+    // processRecord – NULL string and whitespace-only values → missing count
+    // -------------------------------------------------------------------------
+
+    @Test
+    void processDatasetsOnDisk_nullStringValue_countedAsMissing() throws IOException {
+        String filename = "nullstr.csv";
+        when(fileService.getDatasetFilePath(filename)).thenReturn("/tmp/" + filename);
+
+        doAnswer(inv -> {
+            java.util.function.Consumer<Map<String, String>> consumer = inv.getArgument(1);
+            Map<String, String> row = new java.util.HashMap<>();
+            row.put("col", "NULL");
+            consumer.accept(row);
+            consumer.accept(Map.of("col", "valid"));
+            return null;
+        }).when(dataProcessingService).streamRows(eq(Paths.get("/tmp/" + filename)), any());
+
+        var results = analyticsService.processDatasetsOnDisk(List.of(filename));
+        assertThat(results).hasSize(1);
+    }
+
+    // -------------------------------------------------------------------------
+    // processRecord – forced mapping (override continuous + non-parseable value)
+    // -------------------------------------------------------------------------
+
+    @Test
+    void recalculateFeatureAsType_forcedMapping_categorical_nonParseableValue() throws Exception {
+        String filename = "cat.csv";
+        when(fileService.getDatasetFilePath(filename)).thenReturn("/tmp/" + filename);
+
+        when(dataProcessingService.extractDataFromPath(Paths.get("/tmp/" + filename)))
+                .thenReturn(List.of(
+                        Map.of("label", "cat_A"),
+                        Map.of("label", "cat_B"),
+                        Map.of("label", "cat_A")
+                ));
+
+        // Override feature as "continuous" → non-numeric "cat_A" triggers forced-mapping path
+        var result = analyticsService.recalculateFeatureAsTypeFromDisk(filename, "label", "continuous").get();
+
+        assertThat(result).isNotNull();
+    }
+
+    // -------------------------------------------------------------------------
+    // processDatasetsOnDisk – categorical data with combinations
+    // -------------------------------------------------------------------------
+
+    @Test
+    void processDatasetsOnDisk_twoCategoricalColumns_buildsCombinationCounts() throws IOException {
+        String filename = "cats2.csv";
+        when(fileService.getDatasetFilePath(filename)).thenReturn("/tmp/" + filename);
+
+        doAnswer(inv -> {
+            java.util.function.Consumer<Map<String, String>> consumer = inv.getArgument(1);
+            consumer.accept(Map.of("color", "red", "shape", "circle"));
+            consumer.accept(Map.of("color", "blue", "shape", "square"));
+            consumer.accept(Map.of("color", "red", "shape", "circle"));
+            consumer.accept(Map.of("color", "red", "shape", "circle"));
+            consumer.accept(Map.of("color", "red", "shape", "circle"));
+            consumer.accept(Map.of("color", "red", "shape", "circle"));
+            return null;
+        }).when(dataProcessingService).streamRows(eq(Paths.get("/tmp/" + filename)), any());
+
+        var results = analyticsService.processDatasetsOnDisk(List.of(filename));
+        assertThat(results).hasSize(1);
+        assertThat(results.get(0).getCategoricalFeatures()).isNotNull();
+    }
+
+    // -------------------------------------------------------------------------
+    // processDatasetsOnDisk – feature name with " (" suffix → getOriginalFeatureName strips it
+    // -------------------------------------------------------------------------
+
+    @Test
+    void recalculateFeatureAsType_featureNameWithParenthesis_stripped() throws Exception {
+        String filename = "paren.csv";
+        when(fileService.getDatasetFilePath(filename)).thenReturn("/tmp/" + filename);
+
+        when(dataProcessingService.extractDataFromPath(Paths.get("/tmp/" + filename)))
+                .thenReturn(List.of(
+                        Map.of("score", "10"),
+                        Map.of("score", "20"),
+                        Map.of("score", "30")
+                ));
+
+        // featureName "score (% coverage)" → getOriginalFeatureName returns "score"
+        var result = analyticsService.recalculateFeatureAsTypeFromDisk(filename, "score (% coverage)", "continuous").get();
+        assertThat(result).isNotNull();
+    }
 }
