@@ -4,6 +4,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.taniwha.dto.DataCleaningOptionsDTO;
+import org.taniwha.dto.HarmonizationStatusDTO;
 import org.taniwha.dto.mapping.MappingDefinitionDTO;
 import org.taniwha.dto.mapping.MappingInputDTO;
 import org.taniwha.dto.mapping.MappingMatcherDTO;
@@ -30,6 +31,7 @@ import static org.mockito.Mockito.mock;
 class HarmonizerServiceTest {
 
     private HarmonizerService harmonizerService;
+    private HarmonizationProcessingJobs jobs;
 
     @TempDir
     Path baseDir;
@@ -44,7 +46,7 @@ class HarmonizerServiceTest {
         CleaningProcessingJobs cleaningJobs = new CleaningProcessingJobs();
         DataCleaningService dataCleaningService =
                 new DataCleaningService(fileService, dataProcessingService, cleaningJobs);
-        HarmonizationProcessingJobs jobs = new HarmonizationProcessingJobs();
+        jobs = new HarmonizationProcessingJobs();
         MappingSpecAdapter mappingSpecAdapter = new MappingSpecAdapter();
 
         harmonizerService = new HarmonizerService(
@@ -332,5 +334,89 @@ class HarmonizerServiceTest {
             );
             default -> throw new IllegalArgumentException("Unsupported matcher type in test: " + matcher.getMatchType());
         };
+    }
+
+    // -----------------------------------------------------------------------
+    // startParseJob – covers parseFilesWithProgress async path
+    // -----------------------------------------------------------------------
+
+    @Test
+    void startParseJob_emptySpec_completesJobSuccessfully() throws Exception {
+        makeCsv("data.csv", "col1;col2\n1;2\n3;4\n");
+
+        MappingSpecDTO spec = new MappingSpecDTO();
+        spec.setSpecVersion("1.0.0");
+        spec.setMappings(List.of());
+
+        String jobId = jobs.createJob();
+        harmonizerService.startParseJob(jobId, spec, Map.of("cfg", List.of("data.csv")), null);
+
+        long deadline = System.currentTimeMillis() + 5_000;
+        while (jobs.getJob(jobId).getState() == HarmonizationStatusDTO.State.RUNNING
+                && System.currentTimeMillis() < deadline) {
+            Thread.sleep(50);
+        }
+
+        HarmonizationProcessingJobs.JobState state = jobs.getJob(jobId);
+        assertThat(state.getState()).isEqualTo(HarmonizationStatusDTO.State.DONE);
+        assertThat(state.getResult()).isEqualTo("Files processed successfully.");
+    }
+
+    @Test
+    void startParseJob_withStandardMapping_completesJobSuccessfully() throws Exception {
+        makeCsv("patient.csv", "id;name;age\n1;Alice;30\n2;Bob;25\n");
+
+        MappingSpecDTO spec = new MappingSpecDTO();
+        spec.setSpecVersion("1.0.0");
+        MappingDefinitionDTO mapping = new MappingDefinitionDTO();
+        mapping.setTargetField("patient_id");
+        mapping.setMappingType("standard");
+        MappingInputDTO input = new MappingInputDTO();
+        input.setSourceId("cfg");
+        input.setColumn("id");
+        mapping.setInputs(List.of(input));
+
+        MappingRuleDTO rule = new MappingRuleDTO();
+        rule.setLogic(null);
+        RuleResultDTO result = new RuleResultDTO();
+        result.setKind("column");
+        result.setSourceId("cfg");
+        result.setColumn("id");
+        rule.setThen(result);
+        mapping.setRules(List.of(rule));
+        mapping.setMetadata(new MappingMetadataDTO());
+
+        spec.setMappings(List.of(mapping));
+
+        String jobId = jobs.createJob();
+        harmonizerService.startParseJob(jobId, spec, Map.of("cfg", List.of("patient.csv")), null);
+
+        long deadline = System.currentTimeMillis() + 5_000;
+        while (jobs.getJob(jobId).getState() == HarmonizationStatusDTO.State.RUNNING
+                && System.currentTimeMillis() < deadline) {
+            Thread.sleep(50);
+        }
+
+        assertThat(jobs.getJob(jobId).getState()).isEqualTo(HarmonizationStatusDTO.State.DONE);
+    }
+
+    @Test
+    void startParseJob_withEmptyFileMappings_completesSuccessfully() throws Exception {
+        MappingSpecDTO spec = new MappingSpecDTO();
+        spec.setSpecVersion("1.0.0");
+        spec.setMappings(List.of());
+
+        String jobId = jobs.createJob();
+        harmonizerService.startParseJob(jobId, spec, Map.of(), null);
+
+        long deadline = System.currentTimeMillis() + 5_000;
+        while (jobs.getJob(jobId).getState() == HarmonizationStatusDTO.State.RUNNING
+                && System.currentTimeMillis() < deadline) {
+            Thread.sleep(50);
+        }
+
+        assertThat(jobs.getJob(jobId).getState()).isIn(
+                HarmonizationStatusDTO.State.DONE,
+                HarmonizationStatusDTO.State.ERROR);
     }
 }

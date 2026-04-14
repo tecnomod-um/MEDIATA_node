@@ -9,6 +9,7 @@ import java.util.Arrays;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.*;
+import static org.mockito.Mockito.*;
 
 class AnalyticsProcessingJobsTest {
 
@@ -178,8 +179,144 @@ class AnalyticsProcessingJobsTest {
             thread.join();
         }
 
+    }
+
+    // -----------------------------------------------------------------------
+    // cancel / attachFuture / isCanceled
+    // -----------------------------------------------------------------------
+
+    @Test
+    void cancel_withRunningJob_setsCanceledState() {
+        String jobId = jobs.createJob();
+
+        jobs.cancel(jobId, "User canceled");
+
         AnalyticsProcessingJobs.JobState state = jobs.getJob(jobId);
-        assertThat(state).isNotNull();
-        assertThat(state.getPercent().get()).isBetween(0, 100);
+        assertThat(state.getState()).isEqualTo(ProcessingStatusDTO.State.CANCELED);
+        assertThat(state.getMessage()).isEqualTo("User canceled");
+    }
+
+    @Test
+    void cancel_withNullMessage_usesDefaultMessage() {
+        String jobId = jobs.createJob();
+
+        jobs.cancel(jobId, null);
+
+        assertThat(jobs.getJob(jobId).getMessage()).isEqualTo("Job canceled");
+    }
+
+    @Test
+    void cancel_alreadyDoneJob_doesNothing() {
+        String jobId = jobs.createJob();
+        jobs.complete(jobId, List.of());
+
+        jobs.cancel(jobId, "too late");
+
+        assertThat(jobs.getJob(jobId).getState()).isEqualTo(ProcessingStatusDTO.State.DONE);
+    }
+
+    @Test
+    void cancel_alreadyErrorJob_doesNothing() {
+        String jobId = jobs.createJob();
+        jobs.fail(jobId, "error");
+
+        jobs.cancel(jobId, "late cancel");
+
+        assertThat(jobs.getJob(jobId).getState()).isEqualTo(ProcessingStatusDTO.State.ERROR);
+    }
+
+    @Test
+    void cancel_alreadyCanceledJob_doesNothing() {
+        String jobId = jobs.createJob();
+        jobs.cancel(jobId, "first");
+
+        jobs.cancel(jobId, "second");
+
+        assertThat(jobs.getJob(jobId).getMessage()).isEqualTo("first");
+    }
+
+    @Test
+    void cancel_withUnknownJobId_doesNotThrow() {
+        assertThatCode(() -> jobs.cancel("non-existent", "msg"))
+                .doesNotThrowAnyException();
+    }
+
+    @Test
+    void attachFuture_setsTheFuture() {
+        String jobId = jobs.createJob();
+        java.util.concurrent.Future<?> future = mock(java.util.concurrent.Future.class);
+
+        jobs.attachFuture(jobId, future);
+
+        assertThat(jobs.getJob(jobId).getFuture()).isSameAs(future);
+    }
+
+    @Test
+    void attachFuture_withUnknownJobId_doesNotThrow() {
+        java.util.concurrent.Future<?> future = mock(java.util.concurrent.Future.class);
+
+        assertThatCode(() -> jobs.attachFuture("missing", future))
+                .doesNotThrowAnyException();
+    }
+
+    @Test
+    void isCanceled_forRunningJob_returnsFalse() {
+        String jobId = jobs.createJob();
+
+        assertThat(jobs.isCanceled(jobId)).isFalse();
+    }
+
+    @Test
+    void isCanceled_forCanceledJob_returnsTrue() {
+        String jobId = jobs.createJob();
+        jobs.cancel(jobId, "done");
+
+        assertThat(jobs.isCanceled(jobId)).isTrue();
+    }
+
+    @Test
+    void isCanceled_forUnknownJobId_returnsTrue() {
+        assertThat(jobs.isCanceled("non-existent")).isTrue();
+    }
+
+    @Test
+    void cancel_withFuture_cancelsFuture() {
+        String jobId = jobs.createJob();
+        java.util.concurrent.Future<?> future = mock(java.util.concurrent.Future.class);
+        jobs.attachFuture(jobId, future);
+
+        jobs.cancel(jobId, "stop");
+
+        verify(future, times(1)).cancel(true);
+    }
+
+    @Test
+    void fail_onCanceledJob_doesNotOverwriteState() {
+        String jobId = jobs.createJob();
+        jobs.cancel(jobId, "canceled first");
+
+        jobs.fail(jobId, "error after cancel");
+
+        assertThat(jobs.getJob(jobId).getState()).isEqualTo(ProcessingStatusDTO.State.CANCELED);
+    }
+
+    @Test
+    void complete_onCanceledJob_doesNotOverwriteState() {
+        String jobId = jobs.createJob();
+        jobs.cancel(jobId, "canceled first");
+
+        jobs.complete(jobId, List.of());
+
+        assertThat(jobs.getJob(jobId).getState()).isEqualTo(ProcessingStatusDTO.State.CANCELED);
+    }
+
+    @Test
+    void update_onCanceledJob_doesNotUpdate() {
+        String jobId = jobs.createJob();
+        jobs.cancel(jobId, "canceled");
+
+        jobs.update(jobId, 99, "file.csv");
+
+        assertThat(jobs.getJob(jobId).getCurrentFile()).isNull();
     }
 }

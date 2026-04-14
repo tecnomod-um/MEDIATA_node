@@ -3,14 +3,18 @@ package org.taniwha.service;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.Mockito;
 import org.mockito.MockitoAnnotations;
 import org.taniwha.dto.AnalyticsResponseDTO;
 import org.taniwha.dto.FileFilters;
+import org.taniwha.dto.ProcessingStatusDTO;
+import org.taniwha.service.jobs.AnalyticsProcessingJobs;
 
 import java.io.IOException;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.time.LocalDate;
@@ -336,5 +340,108 @@ class AnalyticsServiceTest {
                 .anySatisfy(fs -> assertThat(fs.getFeatureName()).isEqualTo("cat"));
         assertThat(dto.getContinuousFeatures())
                 .anySatisfy(fs -> assertThat(fs.getFeatureName()).isEqualTo("num"));
+    }
+
+    // -----------------------------------------------------------------------
+    // isAnyHugeForDiscovery – covers isHugeFile, estimateCsvRows
+    // -----------------------------------------------------------------------
+
+    @TempDir
+    Path tempDir;
+
+    @Test
+    void isAnyHugeForDiscovery_smallCsvFile_returnsFalse() throws Exception {
+        Path csv = tempDir.resolve("small.csv");
+        // Write a small CSV (well below HUGE_BYTES_THRESHOLD=1MB and HUGE_ROWS_THRESHOLD=5000)
+        StringBuilder sb = new StringBuilder("col1,col2\n");
+        for (int i = 0; i < 10; i++) sb.append(i).append(",val").append(i).append("\n");
+        Files.writeString(csv, sb.toString());
+
+        when(fileService.getDatasetFilePath("small.csv")).thenReturn(csv.toString());
+
+        boolean result = analyticsService.isAnyHugeForDiscovery(List.of("small.csv"));
+
+        assertThat(result).isFalse();
+    }
+
+    @Test
+    void isAnyHugeForDiscovery_emptyList_returnsFalse() {
+        boolean result = analyticsService.isAnyHugeForDiscovery(List.of());
+        assertThat(result).isFalse();
+    }
+
+    @Test
+    void isAnyHugeForDiscovery_largeCsv_returnsTrue() throws Exception {
+        Path csv = tempDir.resolve("large.csv");
+        // Write a CSV with > 5000 rows to trigger HUGE_ROWS_THRESHOLD
+        StringBuilder sb = new StringBuilder("col1,col2\n");
+        for (int i = 0; i < 6000; i++) sb.append(i).append(",value").append(i).append("\n");
+        Files.writeString(csv, sb.toString());
+
+        when(fileService.getDatasetFilePath("large.csv")).thenReturn(csv.toString());
+
+        boolean result = analyticsService.isAnyHugeForDiscovery(List.of("large.csv"));
+
+        assertThat(result).isTrue();
+    }
+
+    @Test
+    void isAnyHugeForDiscovery_exceptionFromFileService_returnsFalse() {
+        when(fileService.getDatasetFilePath("err.csv"))
+                .thenThrow(new RuntimeException("IO error"));
+
+        boolean result = analyticsService.isAnyHugeForDiscovery(List.of("err.csv"));
+
+        assertThat(result).isFalse();
+    }
+
+    @Test
+    void isAnyHugeForDiscovery_nonExistentFile_returnsFalse() {
+        when(fileService.getDatasetFilePath("ghost.csv"))
+                .thenReturn("/nonexistent/path/ghost.csv");
+
+        boolean result = analyticsService.isAnyHugeForDiscovery(List.of("ghost.csv"));
+
+        assertThat(result).isFalse();
+    }
+
+    // -----------------------------------------------------------------------
+    // startDiscoveryJob – covers async processing path
+    // -----------------------------------------------------------------------
+
+    @Test
+    void startDiscoveryJob_singleSmallFile_completesJob() throws Exception {
+        Path csv = tempDir.resolve("data.csv");
+        StringBuilder sb = new StringBuilder("col1,col2\n");
+        for (int i = 0; i < 5; i++) sb.append(i).append(",val").append(i).append("\n");
+        Files.writeString(csv, sb.toString());
+
+        when(fileService.getDatasetFilePath("data.csv")).thenReturn(csv.toString());
+
+        // Use real AnalyticsProcessingJobs
+        AnalyticsProcessingJobs realJobs = new AnalyticsProcessingJobs();
+        // Inject real jobs via reflection
+        org.springframework.test.util.ReflectionTestUtils.setField(analyticsService, "jobs", realJobs);
+
+        // DataProcessingService needs real CSV reading – stub streamRows to provide data
+        doAnswer(inv -> {
+            java.util.function.Consumer<Map<String, String>> consumer = inv.getArgument(1);
+            consumer.accept(Map.of("col1", "0", "col2", "val0"));
+            consumer.accept(Map.of("col1", "1", "col2", "val1"));
+            return null;
+        }).when(dataProcessingService).streamRows(any(Path.class), any());
+
+        String jobId = realJobs.createJob();
+        analyticsService.startDiscoveryJob(jobId, List.of("data.csv"));
+
+        long deadline = System.currentTimeMillis() + 5_000;
+        while (realJobs.getJob(jobId).getState() == ProcessingStatusDTO.State.RUNNING
+                && System.currentTimeMillis() < deadline) {
+            Thread.sleep(50);
+        }
+
+        assertThat(realJobs.getJob(jobId).getState()).isIn(
+                ProcessingStatusDTO.State.DONE,
+                ProcessingStatusDTO.State.ERROR);
     }
 }
