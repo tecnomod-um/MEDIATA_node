@@ -163,6 +163,30 @@ class HarmonizationControllerTest {
         return result;
     }
 
+    @Test
+    void parseAndClean_serviceThrows_returns500() throws Exception {
+        Map<String, List<String>> fileMappings = Map.of("cfg1", List.of("d1.csv"));
+
+        FileMappingsDTO dto = new FileMappingsDTO();
+        dto.setFileMappings(fileMappings);
+        dto.setMappingSpec(minimalStandardSpec());
+
+        doThrow(new RuntimeException("disk error"))
+                .when(harmonizerService)
+                .startParseJob(anyString(), any(), any(), any());
+
+        mvc.perform(post("/api/harmonization/parse")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(dto)))
+                .andExpect(status().isInternalServerError());
+    }
+
+    @Test
+    void parseResult_withUnknownJob_returns404() throws Exception {
+        mvc.perform(get("/api/harmonization/parse/result/does-not-exist"))
+                .andExpect(status().isNotFound());
+    }
+
     private Map<String, Object> toJsonLogic(MappingMatcherDTO matcher) {
         String sourceId = matcher.getSourceId();
         String column = matcher.getColumn();
