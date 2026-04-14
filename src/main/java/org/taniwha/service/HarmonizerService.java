@@ -1,13 +1,12 @@
 package org.taniwha.service;
 
-import com.fasterxml.jackson.core.type.TypeReference;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.commons.csv.CSVFormat;
 import org.apache.commons.csv.CSVPrinter;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.taniwha.dto.DataCleaningOptionsDTO;
+import org.taniwha.dto.mapping.MappingSpecDTO;
 import org.taniwha.service.jobs.HarmonizationProcessingJobs;
 import org.taniwha.util.DateUtil;
 import org.taniwha.util.NumberUtil;
@@ -35,7 +34,7 @@ public class HarmonizerService {
     private final DataProcessingService dataProcessingService;
     private final DataCleaningService dataCleaningService;
     private final FileService fileService;
-    private final ObjectMapper objectMapper;
+    private final MappingSpecAdapter mappingSpecAdapter;
     private final String mappedDatasetFolder;
     private final HarmonizationProcessingJobs jobs;
     private final ExecutorService parseJobExecutor;
@@ -43,23 +42,24 @@ public class HarmonizerService {
     public HarmonizerService(DataProcessingService dataProcessingService,
                              DataCleaningService dataCleaningService,
                              FileService fileService,
-                             HarmonizationProcessingJobs jobs) {
+                             HarmonizationProcessingJobs jobs,
+                             MappingSpecAdapter mappingSpecAdapter) {
         this.dataProcessingService = dataProcessingService;
         this.dataCleaningService = dataCleaningService;
         this.fileService = fileService;
         this.jobs = jobs;
-        this.objectMapper = new ObjectMapper();
+        this.mappingSpecAdapter = mappingSpecAdapter;
         this.mappedDatasetFolder = fileService.getMappedDatasetsFolder();
         this.parseJobExecutor = Executors.newCachedThreadPool();
     }
 
     public void startParseJob(String jobId,
-                              String configs,
+                              MappingSpecDTO mappingSpec,
                               Map<String, List<String>> fileMappings,
                               DataCleaningOptionsDTO cleanOpts) {
         parseJobExecutor.submit(() -> {
             try {
-                String result = parseFilesWithProgress(jobId, configs, fileMappings, cleanOpts);
+                String result = parseFilesWithProgress(jobId, mappingSpec, fileMappings, cleanOpts);
                 jobs.complete(jobId, result);
             } catch (Exception e) {
                 logger.error("Parse job failed jobId={}", jobId, e);
@@ -69,16 +69,13 @@ public class HarmonizerService {
     }
 
     public String parseFilesWithProgress(String jobId,
-                                         String configs,
+                                         MappingSpecDTO mappingSpec,
                                          Map<String, List<String>> fileMappings,
-                                         DataCleaningOptionsDTO cleanOpts) {
+                                         DataCleaningOptionsDTO cleanOpts){
         try {
             logger.info("[parseFilesWithProgress] jobId={} fileMappings keys = {}", jobId, fileMappings.keySet());
-            logger.info("[parseFilesWithProgress] jobId={} raw configs JSON = {}", jobId, configs);
-
-            List<Map<String, Object>> configList =
-                    objectMapper.readValue(configs, new TypeReference<>() {});
-            logger.info("[parseFilesWithProgress] jobId={} parsed {} config objects", jobId, configList.size());
+            List<Map<String, Object>> configList = mappingSpecAdapter.toLegacyConfigs(mappingSpec);
+            logger.info("[parseFilesWithProgress] jobId={} adapted {} config objects from MappingSpec", jobId, configList.size());
 
             Map<String, Object> customConfig = getAllConfigsForFile(configList);
 
@@ -153,6 +150,28 @@ public class HarmonizerService {
                         Files.createDirectories(out.getParent());
                     } catch (IOException e) {
                         throw new UncheckedIOException(e);
+                    }
+
+                    if (outputHeaders.isEmpty()) {
+                        try (BufferedWriter writer = Files.newBufferedWriter(out);
+                             CSVPrinter printer = new CSVPrinter(writer,
+                                     CSVFormat.newFormat(';')
+                                             .withRecordSeparator(System.lineSeparator())
+                                             .withHeader())) {
+                            // write only the empty header row, no data rows
+                        } catch (IOException e) {
+                            throw new UncheckedIOException(e);
+                        }
+
+                        processedDatasets++;
+                        int afterPercent = (int) Math.round((processedDatasets * 100.0) / totalDatasets);
+                        jobs.update(
+                                jobId,
+                                afterPercent,
+                                datasetName,
+                                "Processed " + processedDatasets + "/" + totalDatasets + ": " + datasetName
+                        );
+                        continue;
                     }
 
                     Set<String> seen = new HashSet<>();
@@ -288,15 +307,12 @@ public class HarmonizerService {
         }
     }
 
-    public String parseFiles(String configs,
+    public String parseFiles(MappingSpecDTO mappingSpec,
                              Map<String, List<String>> fileMappings,
                              DataCleaningOptionsDTO cleanOpts) {
         try {
             logger.info("[parseFiles] fileMappings keys = {}", fileMappings.keySet());
-            logger.info("[parseFiles] raw configs JSON = {}", configs);
-
-            List<Map<String, Object>> configList =
-                    objectMapper.readValue(configs, new TypeReference<>() {});
+            List<Map<String, Object>> configList = mappingSpecAdapter.toLegacyConfigs(mappingSpec);
             logger.info("[parseFiles] parsed {} config objects", configList.size());
 
             // all custom_mapping entries across the whole configs payload
@@ -362,6 +378,18 @@ public class HarmonizerService {
                     String base = datasetName.replaceAll("\\.[^.]+$", "");
                     Path out = Paths.get(mappedDatasetFolder, "parsed_" + base + ".csv");
                     Files.createDirectories(out.getParent());
+
+                    if (outputHeaders.isEmpty()) {
+                        try (BufferedWriter writer = Files.newBufferedWriter(out);
+                             CSVPrinter printer = new CSVPrinter(writer,
+                                     CSVFormat.newFormat(';')
+                                             .withRecordSeparator(System.lineSeparator())
+                                             .withHeader())) {
+                            // write only the empty header row, no data rows
+                        }
+                        logger.info("[parseFiles] Finished writing {} -> {}", datasetName, out);
+                        continue;
+                    }
 
                     // track duplicates
                     Set<String> seen = new HashSet<>();
@@ -490,7 +518,7 @@ public class HarmonizerService {
 
 
     private Map<String, Object> getAllConfigsForFile(List<Map<String, Object>> configList) {
-        Map<String, Object> combined = new HashMap<>();
+        Map<String, Object> combined = new LinkedHashMap<>();
         for (var cfg : configList) {
             for (var e : cfg.entrySet()) {
                 @SuppressWarnings("unchecked")
