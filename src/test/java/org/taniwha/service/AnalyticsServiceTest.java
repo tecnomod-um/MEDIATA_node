@@ -1,5 +1,8 @@
 package org.taniwha.service;
 
+import org.apache.poi.ss.usermodel.Row;
+import org.apache.poi.ss.usermodel.Sheet;
+import org.apache.poi.xssf.usermodel.XSSFWorkbook;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -8,10 +11,14 @@ import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.Mockito;
 import org.mockito.MockitoAnnotations;
+import org.springframework.test.util.ReflectionTestUtils;
 import org.taniwha.dto.AnalyticsResponseDTO;
 import org.taniwha.dto.FileFilters;
+import org.taniwha.service.jobs.AnalyticsProcessingJobs;
 
+import java.io.FileOutputStream;
 import java.io.IOException;
+import java.lang.reflect.Method;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
@@ -21,6 +28,8 @@ import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.TimeUnit;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.*;
@@ -33,6 +42,9 @@ class AnalyticsServiceTest {
 
     @Mock
     private FileService fileService;
+
+    @Mock
+    private AnalyticsProcessingJobs analyticsProcessingJobs;
 
     @Mock
     private DisclosureControlService disclosureControlService;
@@ -617,5 +629,87 @@ class AnalyticsServiceTest {
         // featureName "score (% coverage)" → getOriginalFeatureName returns "score"
         var result = analyticsService.recalculateFeatureAsTypeFromDisk(filename, "score (% coverage)", "continuous").get();
         assertThat(result).isNotNull();
+    }
+
+    @Test
+    void privatePercent_handlesBoundsAndZeroTotal() throws Exception {
+        Method m = AnalyticsService.class.getDeclaredMethod("percent", long.class, long.class);
+        m.setAccessible(true);
+
+        assertThat((int) m.invoke(analyticsService, 5L, 0L)).isEqualTo(0);
+        assertThat((int) m.invoke(analyticsService, 0L, 10L)).isEqualTo(0);
+        assertThat((int) m.invoke(analyticsService, 15L, 10L)).isEqualTo(100);
+    }
+
+    @Test
+    void privateEstimateRowsFast_csvCountsLinesMinusHeader() throws Exception {
+        Path csv = Files.createTempFile("analytics_rows", ".csv");
+        Files.writeString(csv, "h1;h2\n1;2\n3;4\n");
+
+        Method m = AnalyticsService.class.getDeclaredMethod("estimateRowsFast", Path.class);
+        m.setAccessible(true);
+        long rows = (long) m.invoke(analyticsService, csv);
+
+        assertThat(rows).isEqualTo(2L);
+    }
+
+    @Test
+    void privateEstimateRowsFast_xlsxReadsSheetDimensions() throws Exception {
+        Path xlsx = Files.createTempFile("analytics_rows", ".xlsx");
+        try (XSSFWorkbook wb = new XSSFWorkbook()) {
+            Sheet sh = wb.createSheet("S1");
+            Row h = sh.createRow(0);
+            h.createCell(0).setCellValue("age");
+            sh.createRow(1).createCell(0).setCellValue(10);
+            sh.createRow(2).createCell(0).setCellValue(20);
+            try (FileOutputStream fos = new FileOutputStream(xlsx.toFile())) {
+                wb.write(fos);
+            }
+        }
+
+        Method m = AnalyticsService.class.getDeclaredMethod("estimateRowsFast", Path.class);
+        m.setAccessible(true);
+        long rows = (long) m.invoke(analyticsService, xlsx);
+
+        assertThat(rows).isGreaterThanOrEqualTo(2L);
+    }
+
+    @Test
+    void shutdown_executorTerminatesGracefully() throws Exception {
+        ExecutorService mockExec = mock(ExecutorService.class);
+        when(mockExec.awaitTermination(60, TimeUnit.SECONDS)).thenReturn(true);
+
+        ReflectionTestUtils.setField(analyticsService, "discoveryJobExecutor", mockExec);
+        analyticsService.shutdown();
+
+        verify(mockExec).shutdown();
+        verify(mockExec, never()).shutdownNow();
+    }
+
+    @Test
+    void shutdown_executorRequiresForcedShutdown() throws Exception {
+        ExecutorService mockExec = mock(ExecutorService.class);
+        when(mockExec.awaitTermination(60, TimeUnit.SECONDS)).thenReturn(false);
+        when(mockExec.awaitTermination(10, TimeUnit.SECONDS)).thenReturn(false);
+
+        ReflectionTestUtils.setField(analyticsService, "discoveryJobExecutor", mockExec);
+        analyticsService.shutdown();
+
+        verify(mockExec).shutdown();
+        verify(mockExec).shutdownNow();
+    }
+
+    @Test
+    void shutdown_interruptedDuringAwait_forcesShutdownAndPreservesInterrupt() throws Exception {
+        ExecutorService mockExec = mock(ExecutorService.class);
+        when(mockExec.awaitTermination(60, TimeUnit.SECONDS)).thenThrow(new InterruptedException("x"));
+
+        ReflectionTestUtils.setField(analyticsService, "discoveryJobExecutor", mockExec);
+        analyticsService.shutdown();
+
+        verify(mockExec).shutdown();
+        verify(mockExec).shutdownNow();
+        assertThat(Thread.currentThread().isInterrupted()).isTrue();
+        Thread.interrupted(); // clear interrupt flag for subsequent tests
     }
 }

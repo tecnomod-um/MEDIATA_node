@@ -21,6 +21,7 @@ import static org.mockito.Mockito.mock;
 class HarmonizerServiceTest {
 
     private HarmonizerService harmonizerService;
+    private HarmonizationProcessingJobs jobs;
 
     @TempDir
     Path baseDir;
@@ -35,7 +36,7 @@ class HarmonizerServiceTest {
         CleaningProcessingJobs cleaningJobs = new CleaningProcessingJobs();
         DataCleaningService dataCleaningService =
                 new DataCleaningService(fileService, dataProcessingService, cleaningJobs);
-        HarmonizationProcessingJobs jobs = new HarmonizationProcessingJobs();
+        jobs = new HarmonizationProcessingJobs();
 
         harmonizerService = new HarmonizerService(
                 dataProcessingService,
@@ -614,5 +615,133 @@ class HarmonizerServiceTest {
 
         String result = harmonizerService.parseFilesWithProgress("job-p5", configs, mappings, null);
         assertThat(result).contains("successfully");
+    }
+
+    @Test
+    void parseFilesWithProgress_withCustomOneHotAndDefaultMappings_writesMappedDataset() throws Exception {
+        makeCsv("d_prog.csv", """
+            age;score;when
+            25;88;2025-07-11T10:00:00Z
+            42;55;2025-07-12T11:00:00Z
+            """);
+
+        String configs = """
+            [
+              {
+                "cfg_prog": {
+                  "fileName":"cfg_prog",
+                  "columns":["age","score","when"],
+                  "groups":[
+                    { "column":"age", "values":[] },
+                    { "column":"score", "values":[] },
+                    { "column":"when", "values":[] }
+                  ]
+                }
+              },
+              {
+                "age_group": {
+                  "fileName":"custom_mapping",
+                  "mappingType":"one-hot",
+                  "columns":["age"],
+                  "groups":[
+                    {
+                      "values":[
+                        {
+                          "name":"MID",
+                          "mapping":[
+                            {
+                              "groupColumn":"age",
+                              "value": { "type":"integer", "minValue":40, "maxValue":60 }
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              },
+              {
+                "high_score": {
+                  "fileName":"custom_mapping",
+                  "mappingType":"default",
+                  "columns":["score"],
+                  "groups":[
+                    {
+                      "values":[
+                        {
+                          "name":"TOP",
+                          "mapping":[
+                            { "groupColumn":"score", "value":"88" }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              }
+            ]
+            """;
+
+        String msg = harmonizerService.parseFilesWithProgress(
+                "job-p6",
+                configs,
+                Map.of("cfg_prog", List.of("d_prog.csv")),
+                null
+        );
+
+        assertThat(msg).isEqualTo("Files processed successfully.");
+        Path out = baseDir.resolve("datasets").resolve("parsed_d_prog.csv");
+        assertThat(out).exists();
+        List<String> rows = Files.readAllLines(out);
+        assertThat(rows.get(0)).isEqualTo("age;score;when;age_group;high_score");
+        assertThat(rows).contains("25;88;2025-07-11T10:00:00Z;0;TOP");
+        assertThat(rows).contains("42;55;2025-07-12T11:00:00Z;1;");
+    }
+
+    @Test
+    void startParseJob_success_updatesJobToDone() throws Exception {
+        makeCsv("async_ok.csv", "a;b\n1;2\n");
+        String jobId = jobs.createJob();
+
+        harmonizerService.startParseJob(
+                jobId,
+                "[]",
+                Map.of("async_ok.csv", List.of("async_ok.csv")),
+                null
+        );
+
+        for (int i = 0; i < 60; i++) {
+            var st = jobs.getJob(jobId);
+            if (st != null && st.getState() != org.taniwha.dto.HarmonizationStatusDTO.State.RUNNING) break;
+            Thread.sleep(50);
+        }
+
+        var state = jobs.getJob(jobId);
+        assertThat(state).isNotNull();
+        assertThat(state.getState()).isEqualTo(org.taniwha.dto.HarmonizationStatusDTO.State.DONE);
+        assertThat(state.getPercent().get()).isEqualTo(100);
+    }
+
+    @Test
+    void startParseJob_invalidJson_updatesJobToError() throws Exception {
+        String jobId = jobs.createJob();
+
+        harmonizerService.startParseJob(
+                jobId,
+                "{not-json}",
+                Map.of("bad", List.of("missing.csv")),
+                null
+        );
+
+        for (int i = 0; i < 60; i++) {
+            var st = jobs.getJob(jobId);
+            if (st != null && st.getState() == org.taniwha.dto.HarmonizationStatusDTO.State.ERROR) break;
+            Thread.sleep(50);
+        }
+
+        var state = jobs.getJob(jobId);
+        assertThat(state).isNotNull();
+        assertThat(state.getState()).isEqualTo(org.taniwha.dto.HarmonizationStatusDTO.State.ERROR);
+        assertThat(state.getMessage()).contains("Error processing files");
     }
 }
