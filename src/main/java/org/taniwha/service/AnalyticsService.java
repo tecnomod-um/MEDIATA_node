@@ -846,7 +846,6 @@ public class AnalyticsService {
         response.setCovariances(calculator.calculateCovariances(continuousData));
         response.setPearsonCorrelations(calculator.calculatePearsonCorrelations(continuousData));
         response.setSpearmanCorrelations(calculator.calculateSpearmanCorrelations(continuousData));
-        response.setSpearmanCorrelations(calculator.calculateSpearmanCorrelations(continuousData));
         response.setChiSquareTest(calculator.calculateChiSquaredTest(categoricalData, categoryCombinationCounts));
 
         response.setMessage(SUCCESS_MSG);
