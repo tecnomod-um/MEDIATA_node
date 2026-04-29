@@ -12,25 +12,15 @@ import java.util.Map;
 @Getter
 @Setter
 @JsonInclude(JsonInclude.Include.NON_NULL)
-public class Distribution {
+public class Variable {
 
     private String uri;
 
-    private String title;
-    private String description;
-
-    private Object format;
-    private Object license;
-    private Object downloadURL;
-
-    private Object accessURL;
-    private Object mediaType;
-    private Object byteSize;
-    private Object availability;
-    private String issued;
-    private String modified;
-    private Object conformsTo;
-    private Object accessService;
+    private String name;
+    private String definition;
+    private Object dataType;
+    private Object codingSystem;
+    private Object valueDomain;
 
     @JsonIgnore
     private Map<String, Object> additionalProperties = new LinkedHashMap<>();

@@ -2,24 +2,26 @@ package org.taniwha.controller;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.http.HttpStatus;
-import org.springframework.http.ResponseEntity;
+import org.springframework.http.*;
 import org.springframework.web.bind.annotation.*;
 import org.taniwha.dto.FileInfoDto;
 import org.taniwha.model.FileCategory;
+import org.taniwha.model.NodeMetadata;
 import org.taniwha.service.FileService;
 
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
-import java.nio.file.Paths;
 import java.util.List;
 
 @RestController
 @RequestMapping("/api/files")
 public class FileController {
+
     private static final String ERROR_MSG = "Error listing files";
-    private final FileService fileService;
 
     private static final Logger logger = LoggerFactory.getLogger(FileController.class);
+
+    private final FileService fileService;
 
     public FileController(FileService fileService) {
         this.fileService = fileService;
@@ -28,6 +30,7 @@ public class FileController {
     @GetMapping("/datasets")
     public ResponseEntity<List<String>> listDatasetFiles() {
         logger.debug("Request to list files in datasets folder");
+
         try {
             List<String> files = fileService.listDatasetFiles();
             logger.info("Retrieved {} files from datasets folder", files.size());
@@ -41,6 +44,7 @@ public class FileController {
     @GetMapping("/mapped_datasets")
     public ResponseEntity<List<String>> listMappedDatasetFiles() {
         logger.debug("Request to list files in mapped_datasets folder");
+
         try {
             List<String> files = fileService.listMappedDatasetFiles();
             logger.info("Retrieved {} files from mapped_datasets folder", files.size());
@@ -54,6 +58,7 @@ public class FileController {
     @GetMapping("/fhir_mappings")
     public ResponseEntity<List<String>> listFhirMappingFiles() {
         logger.debug("Request to list files in fhir_mappings folder");
+
         try {
             List<String> files = fileService.listFhirMappingFiles();
             logger.info("Retrieved {} files from fhir_mappings folder", files.size());
@@ -67,6 +72,7 @@ public class FileController {
     @GetMapping("/dataset_elements")
     public ResponseEntity<List<String>> listDatasetElements() {
         logger.debug("Request to list files in dataset_elements folder");
+
         try {
             List<String> files = fileService.listElementFiles();
             logger.info("Retrieved {} files from dataset_elements folder", files.size());
@@ -83,9 +89,9 @@ public class FileController {
             @RequestBody String csvData
     ) {
         logger.debug("Request to save dataset elements: {}", fileName);
+
         try {
-            String filePath = fileService.saveDatasetElements(fileName, csvData);
-            logger.info("Dataset elements saved to {}", filePath);
+            fileService.saveDatasetElements(fileName, csvData);
             return ResponseEntity.ok("Dataset elements saved successfully.");
         } catch (Exception e) {
             logger.error("Error saving dataset elements", e);
@@ -97,9 +103,9 @@ public class FileController {
     @GetMapping("/dataset_elements/{fileName}")
     public ResponseEntity<String> getElementFile(@PathVariable String fileName) {
         logger.debug("Request to fetch element file: {}", fileName);
+
         try {
-            String filePath = fileService.getElementFilePath(fileName);
-            String fileContent = Files.readString(Paths.get(filePath));
+            String fileContent = Files.readString(fileService.resolveElementFilePath(fileName));
             logger.info("Fetched content of element file: {}", fileName);
             return ResponseEntity.ok(fileContent);
         } catch (Exception e) {
@@ -109,7 +115,44 @@ public class FileController {
         }
     }
 
+    @GetMapping(value = "/metadata/dcat", produces = MediaType.TEXT_PLAIN_VALUE)
+    public ResponseEntity<String> getRawDcatMetadata() {
+        logger.debug("Request to fetch raw DCAT metadata");
 
+        String raw = fileService.getRawNodeMetadata();
+
+        if (raw == null) {
+            return ResponseEntity.notFound().build();
+        }
+
+        String fileName = fileService.getRawNodeMetadataFileName();
+
+        HttpHeaders headers = new HttpHeaders();
+        headers.setContentType(new MediaType("text", "plain", StandardCharsets.UTF_8));
+
+        if (fileName != null) {
+            headers.setContentDisposition(
+                    ContentDisposition.inline()
+                            .filename(fileName, StandardCharsets.UTF_8)
+                            .build()
+            );
+        }
+
+        return new ResponseEntity<>(raw, headers, HttpStatus.OK);
+    }
+
+    @GetMapping(value = "/metadata/dcat/formatted", produces = MediaType.APPLICATION_JSON_VALUE)
+    public ResponseEntity<NodeMetadata> getFormattedDcatMetadata() {
+        logger.debug("Request to fetch formatted DCAT metadata");
+
+        NodeMetadata metadata = fileService.parseNodeMetadata();
+
+        if (metadata == null) {
+            return ResponseEntity.notFound().build();
+        }
+
+        return ResponseEntity.ok(metadata);
+    }
 
     @GetMapping
     public ResponseEntity<List<FileInfoDto>> listFiles(@RequestParam FileCategory category) {
@@ -124,7 +167,9 @@ public class FileController {
             @RequestParam String to
     ) {
         logger.debug("Rename file category={} from={} to={}", category, from, to);
+
         fileService.renameFile(category, from, to);
+
         return ResponseEntity.ok().build();
     }
 
@@ -134,7 +179,9 @@ public class FileController {
             @RequestParam String name
     ) {
         logger.debug("Delete file category={} name={}", category, name);
+
         fileService.deleteFile(category, name);
+
         return ResponseEntity.ok().build();
     }
 }

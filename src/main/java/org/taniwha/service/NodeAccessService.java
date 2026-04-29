@@ -51,6 +51,10 @@ public class NodeAccessService {
         return fileService.parseNodeMetadata();
     }
 
+    public String getRawMetadata() {
+        return fileService.getRawNodeMetadata();
+    }
+
     public void storeToken(SgtTicket sgtTicket) {
         String subject = sgtTicket.getClientPrincipal().getName();
         authorizedTokens.put(subject, sgtTicket);

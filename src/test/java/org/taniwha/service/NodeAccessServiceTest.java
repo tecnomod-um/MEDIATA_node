@@ -48,6 +48,12 @@ class NodeAccessServiceTest {
     }
 
     @Test
+    void getRawMetadata_delegatesToFileService() {
+        when(fileService.getRawNodeMetadata()).thenReturn("raw metadata");
+        assertThat(service.getRawMetadata()).isEqualTo("raw metadata");
+    }
+
+    @Test
     void getHostName_variousUris() {
         assertThat(service.getHostName("plain")).isEqualTo("plain");
         assertThat(service.getHostName("http://example.com/path"))
