@@ -18,6 +18,7 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.nio.file.StandardOpenOption;
 import java.util.List;
+import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
@@ -140,7 +141,10 @@ class FileServiceTest {
         assertThat(ds.getTheme()).containsExactly("http://th1");
         assertThat(ds.getLanguage()).containsExactly("http://lang1");
 
-        assertThat(ds.getPublisher()).isEqualTo("PubName");
+        assertThat(ds.getPublisher()).isInstanceOfSatisfying(Map.class, publisher ->
+                assertThat(publisher)
+                        .containsEntry("uri", "http://pub1")
+                        .containsEntry("foaf:name", "PubName"));
         assertThat(ds.getContactPoint()).isEqualTo("http://cp1");
         assertThat(ds.getSpatial()).isEqualTo("http://sp1");
         assertThat(ds.getTemporal()).isEqualTo("http://tmp1");
@@ -179,6 +183,15 @@ class FileServiceTest {
 
     @Test
     void getFilePath_methods_returnCorrectSubpaths() {
+        assertThatCode(() -> {
+            Files.createDirectories(tempBase.resolve("datasets"));
+            Files.createDirectories(tempBase.resolve("dataset_elements"));
+            Files.createDirectories(tempBase.resolve("dataset_metadata"));
+            Files.writeString(tempBase.resolve("datasets/foo.csv"), "a,b\n1,2\n");
+            Files.writeString(tempBase.resolve("dataset_elements/bar.txt"), "hello");
+            Files.writeString(tempBase.resolve("dataset_metadata/baz.ttl"), "@prefix dcat: <http://www.w3.org/ns/dcat#> .");
+        }).doesNotThrowAnyException();
+
         String ds = fileService.getDatasetFilePath("foo.csv");
         assertThat(ds).endsWith(Paths.get("datasets", "foo.csv").toString());
 
@@ -267,6 +280,43 @@ class FileServiceTest {
         String foo = fileService.getMappedDatasetsFolder();
         assertThat(foo).endsWith("/datasets");
         assertThat(fileService.listMappedDatasetFiles()).isEmpty();
+    }
+
+    @Test
+    void getRawNodeMetadata_returnsContentAndFileName() throws IOException {
+        Path md = tempBase.resolve("dataset_metadata");
+        Files.createDirectories(md);
+        Files.writeString(md.resolve("catalog.ttl"), "@prefix dcat: <http://www.w3.org/ns/dcat#> .");
+
+        assertThat(fileService.getRawNodeMetadata()).isEqualTo("@prefix dcat: <http://www.w3.org/ns/dcat#> .");
+        assertThat(fileService.getRawNodeMetadataFileName()).isEqualTo("catalog.ttl");
+    }
+
+    @Test
+    void getRawNodeMetadata_whenMissing_returnsNull() {
+        assertThat(fileService.getRawNodeMetadata()).isNull();
+        assertThat(fileService.getRawNodeMetadataFileName()).isNull();
+    }
+
+    @Test
+    void parseNodeMetadata_whenExtensionIsMisleading_usesFallbackParser() throws IOException {
+        Path md = tempBase.resolve("dataset_metadata");
+        Files.createDirectories(md);
+        String ttl = """
+                @prefix dcat: <http://www.w3.org/ns/dcat#> .
+                @prefix dct:  <http://purl.org/dc/terms/> .
+                <http://example.org/ds> a dcat:Dataset ;
+                  dct:title "Fallback title" .
+                """;
+        Files.writeString(md.resolve("catalog.json"), ttl);
+
+        NodeMetadata metadata = fileService.parseNodeMetadata();
+
+        assertThat(metadata).isNotNull();
+        assertThat(metadata.getSourceFile()).isEqualTo("catalog.json");
+        assertThat(metadata.getDataset()).singleElement()
+                .extracting(Dataset::getTitle)
+                .isEqualTo("Fallback title");
     }
 
     // -----------------------------------------------------------------------

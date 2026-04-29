@@ -6,6 +6,9 @@ out/
 target/
 taniwha.log
 
+### Local taniwha data ###
+/taniwha/
+
 # OS-specific distributable JARs
 TANIWHA_Backend_node*.jar
 
@@ -14,6 +17,7 @@ TANIWHA_Backend_node*.jar
 !**/src/test/**/target/
 
 ### IntelliJ IDEA ###
+.idea/.name
 .idea/modules.xml
 .idea/jarRepositories.xml
 .idea/compiler.xml

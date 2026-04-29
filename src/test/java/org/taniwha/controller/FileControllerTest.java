@@ -2,15 +2,18 @@ package org.taniwha.controller;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
+import org.taniwha.model.NodeMetadata;
 import org.taniwha.service.FileService;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
 
+import static org.hamcrest.Matchers.containsString;
 import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
@@ -143,8 +146,8 @@ class FileControllerTest {
     void getElementFile_success() throws Exception {
         Path tmp = Files.createTempFile("elem", ".txt");
         Files.writeString(tmp, "hello world");
-        when(fileService.getElementFilePath("my.txt"))
-                .thenReturn(tmp.toString());
+        when(fileService.resolveElementFilePath("my.txt"))
+                .thenReturn(tmp);
 
         mvc.perform(get("/api/files/dataset_elements/my.txt"))
                 .andExpect(status().isOk())
@@ -154,7 +157,7 @@ class FileControllerTest {
 
     @Test
     void getElementFile_serviceThrows_returns500() throws Exception {
-        when(fileService.getElementFilePath("none.txt"))
+        when(fileService.resolveElementFilePath("none.txt"))
                 .thenThrow(new RuntimeException("not found"));
 
         mvc.perform(get("/api/files/dataset_elements/none.txt"))
@@ -167,12 +170,57 @@ class FileControllerTest {
     void getElementFile_badPath_throwsReading_returns500() throws Exception {
         Path tmp = Files.createTempFile("bad", ".txt");
         Files.deleteIfExists(tmp);
-        when(fileService.getElementFilePath("bad.txt"))
-                .thenReturn(tmp.toString());
+        when(fileService.resolveElementFilePath("bad.txt"))
+                .thenReturn(tmp);
 
         mvc.perform(get("/api/files/dataset_elements/bad.txt"))
                 .andExpect(status().isInternalServerError())
                 .andExpect(content()
                         .string("Error fetching element file: bad.txt"));
+    }
+
+    @Test
+    void getRawDcatMetadata_success() throws Exception {
+        when(fileService.getRawNodeMetadata()).thenReturn("@prefix dcat: <http://www.w3.org/ns/dcat#> .");
+        when(fileService.getRawNodeMetadataFileName()).thenReturn("catalog.ttl");
+
+        mvc.perform(get("/api/files/metadata/dcat"))
+                .andExpect(status().isOk())
+                .andExpect(content().contentTypeCompatibleWith(MediaType.TEXT_PLAIN))
+                .andExpect(header().string(HttpHeaders.CONTENT_DISPOSITION, containsString("catalog.ttl")))
+                .andExpect(content().string("@prefix dcat: <http://www.w3.org/ns/dcat#> ."));
+    }
+
+    @Test
+    void getRawDcatMetadata_missing_returns404() throws Exception {
+        when(fileService.getRawNodeMetadata()).thenReturn(null);
+
+        mvc.perform(get("/api/files/metadata/dcat"))
+                .andExpect(status().isNotFound());
+
+        verify(fileService, never()).getRawNodeMetadataFileName();
+    }
+
+    @Test
+    void getFormattedDcatMetadata_success() throws Exception {
+        NodeMetadata metadata = new NodeMetadata();
+        metadata.setSourceFile("catalog.ttl");
+        metadata.setDataset(List.of());
+        when(fileService.parseNodeMetadata()).thenReturn(metadata);
+
+        mvc.perform(get("/api/files/metadata/dcat/formatted"))
+                .andExpect(status().isOk())
+                .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_JSON))
+                .andExpect(jsonPath("$.sourceFile").value("catalog.ttl"))
+                .andExpect(jsonPath("$.dataset").isArray())
+                .andExpect(jsonPath("$.dataset").isEmpty());
+    }
+
+    @Test
+    void getFormattedDcatMetadata_missing_returns404() throws Exception {
+        when(fileService.parseNodeMetadata()).thenReturn(null);
+
+        mvc.perform(get("/api/files/metadata/dcat/formatted"))
+                .andExpect(status().isNotFound());
     }
 }
