@@ -44,6 +44,8 @@ public class WebSecurityConfig {
                                 "/node/validate",
                                 "/node/health",
                                 "/node/metadata",
+                                "/fdp",
+                                "/fdp/**",
                                 "/api/user/login",
                                 "/api/user/register",
                                 "/api/error",

@@ -8,6 +8,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.taniwha.dto.FileInfoDto;
 import org.taniwha.model.FileCategory;
+import org.taniwha.model.MetadataDocument;
 import org.taniwha.model.NodeMetadata;
 import org.taniwha.security.AllowedExtensions;
 import org.taniwha.security.FileFilter;
@@ -153,6 +154,42 @@ public class FileService {
 
     public List<String> listMetadataFiles() {
         return listFilesInFolder(metadataFolder);
+    }
+
+    public List<MetadataDocument> readAllMetadataDocuments() {
+        List<String> fileNames = new ArrayList<>(listMetadataFiles());
+        fileNames.sort(String.CASE_INSENSITIVE_ORDER);
+
+        List<MetadataDocument> documents = new ArrayList<>();
+        for (String fileName : fileNames) {
+            Path path = resolveMetadataFilePath(fileName);
+            try {
+                fileFilter.validate(path);
+                documents.add(new MetadataDocument(fileName, Files.readString(path)));
+            } catch (IOException e) {
+                throw new UncheckedIOException("Failed to read metadata file: " + fileName, e);
+            }
+        }
+
+        return documents;
+    }
+
+    public MetadataDocument writeMetadataDocument(String fileName, String content) {
+        Path path = resolveSafePath(FileCategory.DATASET_METADATA, fileName);
+        try {
+            Files.createDirectories(metadataDir);
+            Files.writeString(
+                    path,
+                    content,
+                    StandardOpenOption.CREATE,
+                    StandardOpenOption.TRUNCATE_EXISTING,
+                    StandardOpenOption.WRITE
+            );
+            fileFilter.validate(path);
+            return new MetadataDocument(fileName, content);
+        } catch (IOException e) {
+            throw new UncheckedIOException("Failed to write metadata file: " + fileName, e);
+        }
     }
 
     public String getDatasetFilePath(String fileName) {

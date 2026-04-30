@@ -180,6 +180,32 @@ class FileControllerTest {
     }
 
     @Test
+    void getDatasetFile_success() throws Exception {
+        Path tmp = Files.createTempFile("dataset", ".csv");
+        Files.writeString(tmp, "col1,col2\n1,2\n");
+        when(fileService.resolveDatasetFilePath("my.csv"))
+                .thenReturn(tmp);
+
+        mvc.perform(get("/api/files/datasets/my.csv"))
+                .andExpect(status().isOk())
+                .andExpect(header().string(HttpHeaders.CONTENT_DISPOSITION, containsString("my.csv")))
+                .andExpect(content().contentTypeCompatibleWith("text/csv"))
+                .andExpect(content().string("col1,col2\n1,2\n"));
+
+        Files.deleteIfExists(tmp);
+    }
+
+    @Test
+    void getDatasetFile_serviceThrows_returns500() throws Exception {
+        when(fileService.resolveDatasetFilePath("missing.csv"))
+                .thenThrow(new RuntimeException("missing"));
+
+        mvc.perform(get("/api/files/datasets/missing.csv"))
+                .andExpect(status().isInternalServerError())
+                .andExpect(content().string("Error fetching dataset file: missing.csv"));
+    }
+
+    @Test
     void getRawDcatMetadata_success() throws Exception {
         when(fileService.getRawNodeMetadata()).thenReturn("@prefix dcat: <http://www.w3.org/ns/dcat#> .");
         when(fileService.getRawNodeMetadataFileName()).thenReturn("catalog.ttl");

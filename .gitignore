@@ -50,3 +50,7 @@ build/
 
 ### Mac OS ###
 .DS_Store
+
+### Python caches ###
+__pycache__/
+*.py[cod]

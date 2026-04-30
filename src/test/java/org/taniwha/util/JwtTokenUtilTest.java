@@ -140,4 +140,14 @@ class JwtTokenUtilTest {
 
         assertThat(extractedSubject).isEqualTo(specialSubject);
     }
+
+    @Test
+    void generateNodeAccessToken_setsNodeAccessClaim() {
+        JwtTokenUtil util = loadWith("myVerySecretKeyThatIsAtLeast32BytesLongForSecurityPurposes", "3600");
+
+        String token = util.generateNodeAccessToken("alice");
+
+        assertThat(util.isNodeAccessToken(token)).isTrue();
+        assertThat(util.getClaimAsString(token, "token_use")).isEqualTo("node_access");
+    }
 }

@@ -34,10 +34,6 @@ class FileCleaningControllerTest {
                 .build();
     }
 
-    // -----------------------------------------------------------------------
-    // POST /api/files/clean
-    // -----------------------------------------------------------------------
-
     @Test
     void cleanFile_callsServiceAndReturns200() throws Exception {
         doNothing().when(dataCleaningService).cleanInPlace(any(), any(), any());
@@ -63,10 +59,6 @@ class FileCleaningControllerTest {
                 .andExpect(status().isOk());
     }
 
-    // -----------------------------------------------------------------------
-    // POST /api/files/clean/start
-    // -----------------------------------------------------------------------
-
     @Test
     void startCleanFile_returns202WithJobId() throws Exception {
         doNothing().when(dataCleaningService).startCleanJob(anyString(), any(), any(), any());
@@ -83,10 +75,6 @@ class FileCleaningControllerTest {
         verify(dataCleaningService, times(1))
                 .startCleanJob(anyString(), eq(FileCategory.DATASETS), eq("file.csv"), any());
     }
-
-    // -----------------------------------------------------------------------
-    // GET /api/files/clean/status/{jobId}
-    // -----------------------------------------------------------------------
 
     @Test
     void getCleanStatus_unknownJob_returns404() throws Exception {
@@ -111,17 +99,12 @@ class FileCleaningControllerTest {
     @Test
     void getCleanStatus_nullCurrentFileAndMessage_returnsEmptyStrings() throws Exception {
         String jobId = cleaningJobs.createJob();
-        // No update — currentFile and message are null
 
         mvc.perform(get("/api/files/clean/status/{jobId}", jobId))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.currentFile").value(""))
                 .andExpect(jsonPath("$.message").value(""));
     }
-
-    // -----------------------------------------------------------------------
-    // GET /api/files/clean/result/{jobId}
-    // -----------------------------------------------------------------------
 
     @Test
     void getCleanResult_unknownJob_returns404() throws Exception {
@@ -152,7 +135,6 @@ class FileCleaningControllerTest {
     @Test
     void getCleanResult_notDoneState_returns409() throws Exception {
         String jobId = cleaningJobs.createJob();
-        // still RUNNING
 
         mvc.perform(get("/api/files/clean/result/{jobId}", jobId))
                 .andExpect(status().isConflict())
@@ -172,7 +154,6 @@ class FileCleaningControllerTest {
     @Test
     void getCleanResult_doneStateNullResult_returnsDefaultMessage() throws Exception {
         String jobId = cleaningJobs.createJob();
-        // Force DONE state with null result by directly using job state
         CleaningProcessingJobs.JobState s = cleaningJobs.getJob(jobId);
         s.setState(CleaningProcessingJobs.State.DONE);
         s.setResult(null);
