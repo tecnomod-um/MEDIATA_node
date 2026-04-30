@@ -182,10 +182,6 @@ class AnalyticsControllerTest {
                 .andExpect(jsonPath("$[0].message").value("Error filtering multiple files: boom"));
     }
 
-    // -----------------------------------------------------------------------
-    // processList – async (huge) path
-    // -----------------------------------------------------------------------
-
     @Test
     void processList_hugeFiles_returns202WithJobId() throws Exception {
         FileNamesDTO reqDto = new FileNamesDTO();
@@ -204,10 +200,6 @@ class AnalyticsControllerTest {
         verify(analyticsService, times(1)).startDiscoveryJob(eq("job-42"), anyList());
     }
 
-    // -----------------------------------------------------------------------
-    // processListStatus – job found
-    // -----------------------------------------------------------------------
-
     @Test
     void processListStatus_knownJob_returnsStatusDto() throws Exception {
         AnalyticsProcessingJobs.JobState state = mock(AnalyticsProcessingJobs.JobState.class);
@@ -221,10 +213,6 @@ class AnalyticsControllerTest {
                 .andExpect(jsonPath("$.jobId").value("job-1"))
                 .andExpect(jsonPath("$.percent").value(55));
     }
-
-    // -----------------------------------------------------------------------
-    // cancelProcessList
-    // -----------------------------------------------------------------------
 
     @Test
     void cancelProcessList_unknownJob_returns404() throws Exception {
@@ -249,10 +237,6 @@ class AnalyticsControllerTest {
 
         verify(jobs, times(1)).cancel(eq("job-99"), anyString());
     }
-
-    // -----------------------------------------------------------------------
-    // processListResult
-    // -----------------------------------------------------------------------
 
     @Test
     void processListResult_unknownJob_returns404() throws Exception {

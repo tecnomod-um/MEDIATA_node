@@ -8,6 +8,7 @@ import org.mockito.MockitoAnnotations;
 import org.taniwha.model.Dataset;
 import org.taniwha.model.Distribution;
 import org.taniwha.model.FileCategory;
+import org.taniwha.model.MetadataDocument;
 import org.taniwha.model.NodeMetadata;
 import org.taniwha.security.FileFilter;
 import org.taniwha.dto.FileInfoDto;
@@ -179,6 +180,29 @@ class FileServiceTest {
         assertThat(fileService.listFhirMappingFiles()).isEmpty();
         assertThat(fileService.listElementFiles()).isEmpty();
         assertThat(fileService.listMetadataFiles()).isEmpty();
+    }
+
+    @Test
+    void readAllMetadataDocuments_readsValidatedFilesInSortedOrder() throws IOException {
+        Path md = tempBase.resolve("dataset_metadata");
+        Files.createDirectories(md);
+
+        Files.writeString(md.resolve("b.ttl"), """
+                @prefix dcat: <http://www.w3.org/ns/dcat#> .
+                <http://example.org/b> a dcat:Dataset .
+                """);
+        Files.writeString(md.resolve("a.ttl"), """
+                @prefix dcat: <http://www.w3.org/ns/dcat#> .
+                <http://example.org/a> a dcat:Dataset .
+                """);
+        Files.createDirectories(md.resolve("nested"));
+
+        List<MetadataDocument> docs = fileService.readAllMetadataDocuments();
+
+        assertThat(docs).extracting(MetadataDocument::fileName)
+                .containsExactly("a.ttl", "b.ttl");
+        assertThat(docs).extracting(MetadataDocument::content)
+                .allSatisfy(content -> assertThat(content).contains("dcat:Dataset"));
     }
 
     @Test

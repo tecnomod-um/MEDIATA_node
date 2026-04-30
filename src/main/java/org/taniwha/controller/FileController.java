@@ -3,6 +3,7 @@ package org.taniwha.controller;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.*;
+import org.springframework.http.MediaTypeFactory;
 import org.springframework.web.bind.annotation.*;
 import org.taniwha.dto.FileInfoDto;
 import org.taniwha.model.FileCategory;
@@ -11,6 +12,7 @@ import org.taniwha.service.FileService;
 
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.List;
 
 @RestController
@@ -38,6 +40,33 @@ public class FileController {
         } catch (Exception e) {
             logger.error("Error listing files in datasets folder", e);
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(List.of(ERROR_MSG));
+        }
+    }
+
+    @GetMapping("/datasets/{fileName}")
+    public ResponseEntity<byte[]> getDatasetFile(@PathVariable String fileName) {
+        logger.debug("Request to fetch dataset file: {}", fileName);
+
+        try {
+            Path path = fileService.resolveDatasetFilePath(fileName);
+            byte[] fileContent = Files.readAllBytes(path);
+            MediaType mediaType = MediaTypeFactory.getMediaType(fileName)
+                    .orElse(MediaType.APPLICATION_OCTET_STREAM);
+
+            HttpHeaders headers = new HttpHeaders();
+            headers.setContentType(mediaType);
+            headers.setContentDisposition(
+                    ContentDisposition.inline()
+                            .filename(fileName, StandardCharsets.UTF_8)
+                            .build()
+            );
+
+            logger.info("Fetched dataset file: {}", fileName);
+            return new ResponseEntity<>(fileContent, headers, HttpStatus.OK);
+        } catch (Exception e) {
+            logger.error("Error fetching dataset file: {}", fileName, e);
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                    .body(("Error fetching dataset file: " + fileName).getBytes(StandardCharsets.UTF_8));
         }
     }
 
