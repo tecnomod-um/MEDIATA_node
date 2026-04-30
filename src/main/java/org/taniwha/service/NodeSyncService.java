@@ -19,9 +19,11 @@ import org.taniwha.util.ColorUtil;
 import org.taniwha.util.JwtTokenUtil;
 import org.taniwha.util.KeyPairUtil;
 
+import jakarta.annotation.PreDestroy;
 import javax.net.ssl.SSLHandshakeException;
 import java.time.Instant;
 import java.time.LocalDateTime;
+import java.util.Map;
 
 @Service
 public class NodeSyncService {
@@ -133,6 +135,54 @@ public class NodeSyncService {
         } catch (RestClientException e) {
             logger.error("Failed to send heartbeat to central backend after retries", e);
         }
+    }
+
+    public void deregisterFromCentralBackend() {
+        if (objectId == null || objectId.isBlank()) {
+            return;
+        }
+
+        UriComponentsBuilder builder = UriComponentsBuilder.fromHttpUrl(centralBackendUrl + "/nodes/deregister");
+        String token = jwtTokenUtil.generateToken(jwtUsername);
+        Map<String, String> node = Map.of(
+                "nodeId", objectId,
+                "name", nodeName
+        );
+
+        try {
+            retryTemplate.execute((RetryCallback<Void, RestClientException>) context -> {
+                if (context.getRetryCount() > 0) {
+                    logger.warn("Retrying deregistration with central backend. Attempt {}", context.getRetryCount() + 1);
+                }
+
+                try {
+                    restTemplateHolder.get().postForEntity(builder.toUriString(), createHttpEntity(node, token), String.class);
+                } catch (ResourceAccessException e) {
+                    if (e.getCause() instanceof SSLHandshakeException) {
+                        logger.warn("SSL handshake failed during deregistration. Refreshing RestTemplate...");
+                        restTemplateHolder.refresh();
+                        restTemplateHolder.get().postForEntity(builder.toUriString(), createHttpEntity(node, token), String.class);
+                    } else {
+                        throw e;
+                    }
+                }
+                return null;
+            });
+            logger.info("Node deregistered successfully from central backend: {}", nodeName);
+        } catch (HttpClientErrorException e) {
+            if (e.getStatusCode() == HttpStatus.NOT_FOUND) {
+                logger.info("Node was already absent from central backend during shutdown: {}", objectId);
+            } else {
+                logger.error("Failed to deregister node with central backend during shutdown", e);
+            }
+        } catch (RestClientException e) {
+            logger.error("Failed to contact central backend during node shutdown deregistration", e);
+        }
+    }
+
+    @PreDestroy
+    public void deregisterOnShutdown() {
+        deregisterFromCentralBackend();
     }
 
     public void logErrorToCentralBackend(String error, String info) {

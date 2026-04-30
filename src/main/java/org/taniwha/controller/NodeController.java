@@ -72,7 +72,7 @@ public class NodeController {
         if (nodeAccessService.validateUserToken(jwtToken, sgtToken)) {
             logger.debug("Token validation successful");
 
-            String nodeJwtToken = jwtTokenUtil.generateToken(jwtTokenUtil.getUsernameFromToken(jwtToken));
+            String nodeJwtToken = jwtTokenUtil.generateNodeAccessToken(jwtTokenUtil.getUsernameFromToken(jwtToken));
             return ResponseEntity.ok(new NodeValidationResponseDTO(nodeJwtToken));
         }
         logger.warn("Token validation failed");
