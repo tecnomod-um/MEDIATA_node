@@ -49,6 +49,7 @@ public class FairDataPointStartupListener {
 
         try {
             fairDataPointCatalogSyncService.publishCatalogs();
+            fairDataPointBrandingConfig.applyBranding();
             logger.info("FAIR Data Point startup sync completed");
         } catch (Exception e) {
             logger.error("FAIR Data Point startup sync failed; the node will continue running and can be synced later", e);

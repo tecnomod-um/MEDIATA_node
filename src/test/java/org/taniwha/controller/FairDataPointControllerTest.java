@@ -4,6 +4,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
+import org.taniwha.config.FairDataPointBrandingConfig;
 import org.taniwha.model.FairDataPointSyncResult;
 import org.taniwha.service.FairDataPointCatalogSyncService;
 import org.taniwha.service.FairDataPointInstanceService;
@@ -11,7 +12,9 @@ import org.taniwha.util.JwtTokenUtil;
 
 import java.util.List;
 
+import static org.mockito.Mockito.doNothing;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -22,17 +25,20 @@ class FairDataPointControllerTest {
     private MockMvc mvc;
     private FairDataPointCatalogSyncService fairDataPointCatalogSyncService;
     private FairDataPointInstanceService fairDataPointInstanceService;
+    private FairDataPointBrandingConfig fairDataPointBrandingConfig;
     private JwtTokenUtil jwtTokenUtil;
 
     @BeforeEach
     void setUp() {
         fairDataPointCatalogSyncService = mock(FairDataPointCatalogSyncService.class);
         fairDataPointInstanceService = mock(FairDataPointInstanceService.class);
+        fairDataPointBrandingConfig = mock(FairDataPointBrandingConfig.class);
         jwtTokenUtil = mock(JwtTokenUtil.class);
         mvc = MockMvcBuilders
                 .standaloneSetup(new FairDataPointController(
                         fairDataPointCatalogSyncService,
                         fairDataPointInstanceService,
+                        fairDataPointBrandingConfig,
                         jwtTokenUtil,
                         ""
                 ))
@@ -42,6 +48,7 @@ class FairDataPointControllerTest {
     @Test
     void syncCatalogs_success_returnsPublishedSummary() throws Exception {
         when(jwtTokenUtil.isNodeAccessToken("NODE.JWT")).thenReturn(true);
+        doNothing().when(fairDataPointBrandingConfig).applyBranding();
         when(fairDataPointCatalogSyncService.publishCatalogs()).thenReturn(
                 new FairDataPointSyncResult(
                         "COMPLETED",
@@ -65,6 +72,8 @@ class FairDataPointControllerTest {
                 .andExpect(jsonPath("$.datasetsPublished").value(2))
                 .andExpect(jsonPath("$.distributionsPublished").value(2))
                 .andExpect(jsonPath("$.publishedCatalogUris[0]").value("http://fdp:8080/catalog/123"));
+
+        verify(fairDataPointBrandingConfig).applyBranding();
     }
 
     @Test

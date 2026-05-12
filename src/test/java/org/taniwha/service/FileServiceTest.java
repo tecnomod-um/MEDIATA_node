@@ -41,7 +41,7 @@ class FileServiceTest {
     void setUp() {
         MockitoAnnotations.openMocks(this);
         doNothing().when(fileFilter).validate(any(Path.class));
-        fileService = new FileService(fileFilter, tempBase.toString());
+        fileService = new FileService(fileFilter, tempBase.toString(), "");
     }
 
     @Test
@@ -206,6 +206,30 @@ class FileServiceTest {
     }
 
     @Test
+    void parseNodeMetadata_prefersDatasetSpecificMetadataOverManagedFdpCatalog() throws Exception {
+        Path md = tempBase.resolve("dataset_metadata");
+        Files.createDirectories(md);
+
+        Files.writeString(md.resolve("fairdatapoint-generated.ttl"), """
+                @prefix dcat: <http://www.w3.org/ns/dcat#> .
+                <http://example.org/catalog> a dcat:Catalog .
+                """);
+        Files.writeString(md.resolve("GuttmannDataset.ttl"), """
+                @prefix dcat: <http://www.w3.org/ns/dcat#> .
+                @prefix dct: <http://purl.org/dc/terms/> .
+                <http://example.org/ds1> a dcat:Dataset ;
+                  dct:title "Guttmann dataset" .
+                """);
+
+        NodeMetadata nm = fileService.parseNodeMetadata();
+
+        assertThat(nm).isNotNull();
+        assertThat(nm.getSourceFile()).isEqualTo("GuttmannDataset.ttl");
+        assertThat(nm.getDataset()).hasSize(1);
+        assertThat(nm.getDataset().get(0).getTitle()).isEqualTo("Guttmann dataset");
+    }
+
+    @Test
     void getFilePath_methods_returnCorrectSubpaths() {
         assertThatCode(() -> {
             Files.createDirectories(tempBase.resolve("datasets"));
@@ -355,6 +379,107 @@ class FileServiceTest {
 
         Path p = fileService.resolveDatasetFilePath("data.csv");
         assertThat(p.getFileName().toString()).isEqualTo("data.csv");
+    }
+
+    @Test
+    void datasetDownloads_areBlockedByDefault() throws IOException {
+        Path ds = tempBase.resolve("datasets");
+        Files.createDirectories(ds);
+        Files.writeString(ds.resolve("fimbartheltodos.xlsx"), "raw");
+
+        assertThat(fileService.isDatasetDownloadAllowed("fimbartheltodos.xlsx")).isFalse();
+        assertThat(fileService.resolveSharedDatasetFilePath("fimbartheltodos.xlsx")).isNull();
+    }
+
+    @Test
+    void datasetDownloads_useSharedCopiesAndTrackRename() throws IOException {
+        fileService = new FileService(fileFilter, tempBase.toString(), "fimbartheltodos");
+
+        Path ds = tempBase.resolve("datasets");
+        Files.createDirectories(ds);
+        Files.writeString(ds.resolve("fimbartheltodos.xlsx"), "raw");
+        Files.writeString(ds.resolve("parsed_fimbartheltodos.csv"), "parsed");
+
+        assertThat(fileService.isDatasetDownloadAllowed("fimbartheltodos.xlsx")).isTrue();
+        assertThat(fileService.isDatasetDownloadAllowed("parsed_fimbartheltodos.csv")).isTrue();
+
+        Path sharedRaw = fileService.resolveSharedDatasetFilePath("fimbartheltodos.xlsx");
+        Path sharedParsed = fileService.resolveSharedDatasetFilePath("parsed_fimbartheltodos.csv");
+        assertThat(sharedRaw).exists();
+        assertThat(sharedParsed).exists();
+        assertThat(sharedRaw.toString()).contains("/fairdatapoint/datasets/fimbartheltodos/");
+        assertThat(Files.readString(sharedRaw)).isEqualTo("raw");
+
+        fileService.renameFile(FileCategory.DATASETS, "fimbartheltodos.xlsx", "renamed.xlsx");
+
+        assertThat(fileService.isDatasetDownloadAllowed("renamed.xlsx")).isTrue();
+        Path renamedShared = fileService.resolveSharedDatasetFilePath("renamed.xlsx");
+        assertThat(renamedShared).exists();
+        assertThat(renamedShared.getFileName().toString()).isEqualTo("renamed.xlsx");
+        assertThat(Files.readString(renamedShared)).isEqualTo("raw");
+    }
+
+    @Test
+    void renamingUnauthorizedFileToAllowedNameDoesNotBypassPolicy() throws IOException {
+        fileService = new FileService(fileFilter, tempBase.toString(), "fimbartheltodos");
+
+        Path ds = tempBase.resolve("datasets");
+        Files.createDirectories(ds);
+        Files.writeString(ds.resolve("fimbartheltodos.xlsx"), "allowed-raw");
+        Files.writeString(ds.resolve("secret.xlsx"), "secret");
+
+        assertThat(fileService.isDatasetDownloadAllowed("fimbartheltodos.xlsx")).isTrue();
+        fileService.renameFile(FileCategory.DATASETS, "secret.xlsx", "fimbartheltodos-copy.xlsx");
+
+        assertThat(fileService.isDatasetDownloadAllowed("fimbartheltodos-copy.xlsx")).isFalse();
+    }
+
+    @Test
+    void explicitShareabilityToggle_marksWholeDatasetFamilyAndCanBeRevoked() throws IOException {
+        Path ds = tempBase.resolve("datasets");
+        Files.createDirectories(ds);
+        Files.writeString(ds.resolve("samplefile.csv"), "raw");
+        Files.writeString(ds.resolve("parsed_samplefile.csv"), "parsed");
+
+        assertThat(fileService.setDatasetFamilyDownloadable("samplefile.csv", true))
+                .containsExactly("parsed_samplefile.csv", "samplefile.csv");
+        assertThat(fileService.isDatasetDownloadAllowed("samplefile.csv")).isTrue();
+        assertThat(fileService.isDatasetDownloadAllowed("parsed_samplefile.csv")).isTrue();
+
+        Path sharedRaw = fileService.resolveSharedDatasetFilePath("samplefile.csv");
+        Path sharedParsed = fileService.resolveSharedDatasetFilePath("parsed_samplefile.csv");
+        assertThat(sharedRaw).exists();
+        assertThat(sharedParsed).exists();
+
+        assertThat(fileService.setDatasetFamilyDownloadable("samplefile.csv", false))
+                .containsExactly("parsed_samplefile.csv", "samplefile.csv");
+        assertThat(fileService.isDatasetDownloadAllowed("samplefile.csv")).isFalse();
+        assertThat(fileService.isDatasetDownloadAllowed("parsed_samplefile.csv")).isFalse();
+        assertThat(sharedRaw).doesNotExist();
+        assertThat(sharedParsed).doesNotExist();
+    }
+
+    @Test
+    void derivedShareability_isInheritedOnlyFromTrackedSourceDataset() throws IOException {
+        Path ds = tempBase.resolve("datasets");
+        Files.createDirectories(ds);
+        Files.writeString(ds.resolve("samplefile.csv"), "raw");
+        Files.writeString(ds.resolve("parsed_samplefile.csv"), "parsed");
+
+        fileService.setDatasetFamilyDownloadable("samplefile.csv", true);
+        fileService.setDatasetFamilyDownloadable("samplefile.csv", false);
+        fileService.setDatasetFamilyDownloadable("samplefile.csv", true);
+
+        Files.writeString(ds.resolve("parsed_samplefile_v2.csv"), "parsed-v2");
+        fileService.registerDerivedDatasetShareability("samplefile.csv", "parsed_samplefile_v2.csv");
+
+        assertThat(fileService.isDatasetDownloadAllowed("parsed_samplefile_v2.csv")).isTrue();
+
+        Files.writeString(ds.resolve("secret.csv"), "secret");
+        Files.writeString(ds.resolve("parsed_secret.csv"), "secret-parsed");
+        fileService.registerDerivedDatasetShareability("secret.csv", "parsed_secret.csv");
+
+        assertThat(fileService.isDatasetDownloadAllowed("parsed_secret.csv")).isFalse();
     }
 
     @Test

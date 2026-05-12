@@ -8,6 +8,7 @@ import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 import org.springframework.web.filter.ForwardedHeaderFilter;
+import org.taniwha.config.FairDataPointBrandingConfig;
 import org.taniwha.dto.FairDataPointAccessResponseDTO;
 import org.taniwha.service.FairDataPointCatalogSyncService;
 import org.taniwha.service.FairDataPointInstanceService;
@@ -28,15 +29,17 @@ class FairDataPointMetadataControllerTest {
     private MockMvc mvc;
     private FairDataPointInstanceService instanceService;
     private FairDataPointCatalogSyncService syncService;
+    private FairDataPointBrandingConfig fairDataPointBrandingConfig;
     private JwtTokenUtil jwtTokenUtil;
 
     @BeforeEach
     void setUp() {
         instanceService = mock(FairDataPointInstanceService.class);
         syncService = mock(FairDataPointCatalogSyncService.class);
+        fairDataPointBrandingConfig = mock(FairDataPointBrandingConfig.class);
         jwtTokenUtil = mock(JwtTokenUtil.class);
         mvc = MockMvcBuilders
-                .standaloneSetup(new FairDataPointController(syncService, instanceService, jwtTokenUtil, ""))
+                .standaloneSetup(new FairDataPointController(syncService, instanceService, fairDataPointBrandingConfig, jwtTokenUtil, ""))
                 .addFilters(new ForwardedHeaderFilter())
                 .build();
     }
@@ -299,7 +302,7 @@ class FairDataPointMetadataControllerTest {
     @Test
     void metadataRoutes_preferConfiguredPublicNodeUrlWithoutForwardedHeaders() throws Exception {
         MockMvc configuredMvc = MockMvcBuilders
-                .standaloneSetup(new FairDataPointController(syncService, instanceService, jwtTokenUtil, "https://stratif.guttmann.tech"))
+                .standaloneSetup(new FairDataPointController(syncService, instanceService, fairDataPointBrandingConfig, jwtTokenUtil, "https://stratif.guttmann.tech"))
                 .build();
 
         when(instanceService.fetchMetadata(anyString(), org.mockito.ArgumentMatchers.nullable(String.class), anyString()))

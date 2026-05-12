@@ -47,7 +47,12 @@ class FairDataPointMetadataUtilTest {
                 "Rehabilitation datasets",
                 "http://node.example:8080",
                 "8080",
-                "/taniwha"
+                "/taniwha",
+                "https://node.example",
+                "Data Office",
+                "data@example.org",
+                "http://purl.org/NET/rdflicense/allrightsreserved",
+                "http://publications.europa.eu/resource/authority/language/ENG"
         );
 
         MetadataDocument document = util.generateManagedMetadataDocument();
@@ -59,6 +64,8 @@ class FairDataPointMetadataUtilTest {
         assertThat(document.content()).contains("/fdp/access/barthel");
         assertThat(document.content()).contains("/fdp/access/fim");
         assertThat(document.content()).contains("\"text/csv\"");
+        assertThat(document.content()).contains("data@example.org");
+        assertThat(document.content()).contains("allrightsreserved");
 
         Model model = DCatUtil.readModel(document.content(), document.fileName());
 
@@ -82,7 +89,12 @@ class FairDataPointMetadataUtilTest {
                 "Spreadsheet datasets",
                 "",
                 "9090",
-                "/"
+                "/",
+                "",
+                "",
+                "",
+                "http://purl.org/NET/rdflicense/allrightsreserved",
+                "http://publications.europa.eu/resource/authority/language/ENG"
         );
 
         MetadataDocument document = util.generateManagedMetadataDocument();
@@ -93,5 +105,38 @@ class FairDataPointMetadataUtilTest {
         assertThat(document.content()).contains("\"text/tab-separated-values\"");
         assertThat(document.content())
                 .contains("\"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet\"");
+    }
+
+    @Test
+    void generateManagedMetadataDocument_groupsParsedAndRawFilesIntoOneDatasetWithTwoDistributions() throws Exception {
+        Files.createDirectories(tempBase.resolve("datasets"));
+        Files.writeString(tempBase.resolve("datasets/fimbartheltodos.xlsx"), "placeholder");
+        Files.writeString(tempBase.resolve("datasets/parsed_fimbartheltodos.csv"), "score\n100\n");
+
+        FairDataPointMetadataUtil util = new FairDataPointMetadataUtil(
+                fileService,
+                "Guttmann",
+                "Stroke rehabilitation datasets",
+                "https://stratif.guttmann.tech",
+                "8080",
+                "/taniwha",
+                "https://www.guttmann.com/en",
+                "Data Office",
+                "data@guttmann.example",
+                "http://purl.org/NET/rdflicense/allrightsreserved",
+                "http://publications.europa.eu/resource/authority/language/ENG"
+        );
+
+        MetadataDocument document = util.generateManagedMetadataDocument();
+        Model model = DCatUtil.readModel(document.content(), document.fileName());
+
+        assertThat(model.listResourcesWithProperty(RDF.type, model.createResource("http://www.w3.org/ns/dcat#Dataset")).toList())
+                .hasSize(1);
+        assertThat(model.listResourcesWithProperty(RDF.type, model.createResource("http://www.w3.org/ns/dcat#Distribution")).toList())
+                .hasSize(2);
+        assertThat(document.content()).contains("/fdp/dataset/fimbartheltodos");
+        assertThat(document.content()).contains("/fdp/distribution/fimbartheltodos");
+        assertThat(document.content()).contains("/fdp/distribution/parsed-fimbartheltodos");
+        assertThat(document.content()).contains("Logical dataset exposed by the Guttmann node with 2 available distributions.");
     }
 }

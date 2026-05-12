@@ -6,6 +6,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.servlet.support.ServletUriComponentsBuilder;
+import org.taniwha.config.FairDataPointBrandingConfig;
 import org.taniwha.dto.FairDataPointAccessResponseDTO;
 import org.taniwha.dto.FairDataPointSyncResponseDTO;
 import org.taniwha.service.FairDataPointCatalogSyncService;
@@ -17,15 +18,18 @@ public class FairDataPointController {
 
     private final FairDataPointCatalogSyncService fairDataPointCatalogSyncService;
     private final FairDataPointInstanceService fairDataPointInstanceService;
+    private final FairDataPointBrandingConfig fairDataPointBrandingConfig;
     private final JwtTokenUtil jwtTokenUtil;
     private final String configuredNodeIp;
 
     public FairDataPointController(FairDataPointCatalogSyncService fairDataPointCatalogSyncService,
                                    FairDataPointInstanceService fairDataPointInstanceService,
+                                   FairDataPointBrandingConfig fairDataPointBrandingConfig,
                                    JwtTokenUtil jwtTokenUtil,
                                    @Value("${node.ip:}") String configuredNodeIp) {
         this.fairDataPointCatalogSyncService = fairDataPointCatalogSyncService;
         this.fairDataPointInstanceService = fairDataPointInstanceService;
+        this.fairDataPointBrandingConfig = fairDataPointBrandingConfig;
         this.jwtTokenUtil = jwtTokenUtil;
         this.configuredNodeIp = configuredNodeIp == null ? "" : configuredNodeIp.trim();
     }
@@ -85,7 +89,10 @@ public class FairDataPointController {
         }
 
         try {
-            return ResponseEntity.ok(FairDataPointSyncResponseDTO.from(fairDataPointCatalogSyncService.publishCatalogs()));
+            FairDataPointSyncResponseDTO response =
+                    FairDataPointSyncResponseDTO.from(fairDataPointCatalogSyncService.publishCatalogs());
+            fairDataPointBrandingConfig.applyBranding();
+            return ResponseEntity.ok(response);
         } catch (IllegalStateException e) {
             return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(FairDataPointSyncResponseDTO.error(e.getMessage()));
         }

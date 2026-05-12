@@ -32,6 +32,7 @@ class HarmonizerServiceTest {
 
     private HarmonizerService harmonizerService;
     private HarmonizationProcessingJobs jobs;
+    private FileService fileService;
 
     @TempDir
     Path baseDir;
@@ -41,7 +42,7 @@ class HarmonizerServiceTest {
         FileFilter fileFilter = mock(FileFilter.class);
         doNothing().when(fileFilter).validate(any(Path.class));
 
-        FileService fileService = new FileService(fileFilter, baseDir.toString());
+        fileService = new FileService(fileFilter, baseDir.toString());
         DataProcessingService dataProcessingService = new DataProcessingService(fileFilter);
         CleaningProcessingJobs cleaningJobs = new CleaningProcessingJobs();
         DataCleaningService dataCleaningService =
@@ -194,6 +195,50 @@ class HarmonizerServiceTest {
         assertThat(rows.get(3)).isEqualTo("0;");
     }
 
+    @Test
+    void parseFiles_inheritsShareabilityForGeneratedParsedDataset() throws Exception {
+        makeCsv("samplefile.csv", "a;b\n1;2\n");
+        fileService.setDatasetFamilyDownloadable("samplefile.csv", true);
+
+        MappingSpecDTO spec = standardCopySchemaSpec("a", "b");
+        var mappings = Map.of("cfg1", List.of("samplefile.csv"));
+
+        String result = harmonizerService.parseFiles(spec, mappings, null);
+        assertThat(result).isEqualTo("Files processed successfully.");
+        assertThat(fileService.isDatasetDownloadAllowed("parsed_samplefile.csv")).isTrue();
+        assertThat(fileService.resolveSharedDatasetFilePath("parsed_samplefile.csv")).exists();
+    }
+
+    @Test
+    void parseFiles_customMappingsOnlyIncludeTargetsThatReferenceCurrentSourceFile() throws Exception {
+        makeCsv("d4d.csv", """
+            Barthel Change;Age
+            6;68
+            8;62
+            """);
+
+        MappingSpecDTO spec = new MappingSpecDTO();
+        spec.setSpecVersion("1.0.0");
+        spec.setMappings(List.of(
+                customTypedPassthroughSpec("BarthelTotalChange", "n1::cfgD4D", "Barthel Change", "integer"),
+                customExactMappingSpec("Feeding", "n1::cfgOther", "Feeding source", "independent", "Independent")
+        ));
+
+        var mappings = Map.of("cfgD4D", List.of("d4d.csv"));
+
+        String result = harmonizerService.parseFiles(spec, mappings, null);
+        assertThat(result).isEqualTo("Files processed successfully.");
+
+        Path out = baseDir.resolve("datasets").resolve("parsed_d4d.csv");
+        assertThat(out).exists();
+
+        List<String> lines = Files.readAllLines(out);
+        assertThat(lines).hasSize(3);
+        assertThat(lines.get(0)).isEqualTo("BarthelTotalChange");
+        assertThat(lines.get(1)).isEqualTo("6");
+        assertThat(lines.get(2)).isEqualTo("8");
+    }
+
     private MappingSpecDTO standardCopySchemaSpec(String... fields) {
         List<MappingDefinitionDTO> defs = java.util.Arrays.stream(fields)
                 .map(field -> {
@@ -274,6 +319,69 @@ class HarmonizerServiceTest {
         def.setMappingType("one-hot");
         def.setInputs(List.of(input));
         def.setOutputs(List.of(output));
+        def.setMetadata(new MappingMetadataDTO());
+        return def;
+    }
+
+    private MappingDefinitionDTO customTypedPassthroughSpec(String targetField,
+                                                            String sourceId,
+                                                            String sourceColumn,
+                                                            String valueType) {
+        MappingMatcherDTO matcher = new MappingMatcherDTO();
+        matcher.setSourceId(sourceId);
+        matcher.setColumn(sourceColumn);
+        matcher.setMatchType("type");
+        matcher.setValueType(valueType);
+
+        MappingRuleDTO rule = new MappingRuleDTO();
+        rule.setId("rule-" + targetField);
+        rule.setLogic(toJsonLogic(matcher));
+        RuleResultDTO result = new RuleResultDTO();
+        result.setKind("source-value");
+        result.setSourceId(sourceId);
+        result.setColumn(sourceColumn);
+        rule.setThen(result);
+        rule.setMetadata(new MappingMetadataDTO());
+
+        MappingInputDTO input = new MappingInputDTO();
+        input.setSourceId(sourceId);
+        input.setColumn(sourceColumn);
+
+        MappingDefinitionDTO def = new MappingDefinitionDTO();
+        def.setId("map-" + targetField);
+        def.setTargetField(targetField);
+        def.setMappingType("standard");
+        def.setSourceConfigFile("custom_mapping");
+        def.setInputs(List.of(input));
+        def.setRules(List.of(rule));
+        def.setMetadata(new MappingMetadataDTO());
+        return def;
+    }
+
+    private MappingDefinitionDTO customExactMappingSpec(String targetField,
+                                                        String sourceId,
+                                                        String sourceColumn,
+                                                        String matchValue,
+                                                        String outputValue) {
+        MappingMatcherDTO matcher = exactMatcher(sourceId, sourceColumn, matchValue);
+
+        MappingRuleDTO rule = new MappingRuleDTO();
+        rule.setId("rule-" + targetField);
+        rule.setLogic(toJsonLogic(matcher));
+        rule.setThen(literalResult(outputValue));
+        rule.setMetadata(new MappingMetadataDTO());
+
+        MappingInputDTO input = new MappingInputDTO();
+        input.setSourceId(sourceId);
+        input.setColumn(sourceColumn);
+
+        MappingDefinitionDTO def = new MappingDefinitionDTO();
+        def.setId("map-" + targetField);
+        def.setTargetField(targetField);
+        def.setMappingType("standard");
+        def.setSourceConfigFile("custom_mapping");
+        def.setInputs(List.of(input));
+        def.setRules(List.of(rule));
         def.setMetadata(new MappingMetadataDTO());
         return def;
     }

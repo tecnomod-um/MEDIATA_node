@@ -77,8 +77,6 @@ public class HarmonizerService {
             List<Map<String, Object>> configList = mappingSpecAdapter.toLegacyConfigs(mappingSpec);
             logger.info("[parseFilesWithProgress] jobId={} adapted {} config objects from MappingSpec", jobId, configList.size());
 
-            Map<String, Object> customConfig = getAllConfigsForFile(configList);
-
             int totalDatasets = fileMappings.values().stream().mapToInt(List::size).sum();
             if (totalDatasets <= 0) totalDatasets = 1;
 
@@ -87,6 +85,7 @@ public class HarmonizerService {
             for (var entry : fileMappings.entrySet()) {
                 String configFileName = entry.getKey();
                 Map<String, Object> configForKey = getConfigForFile(configFileName, configList);
+                Map<String, Object> customConfig = getAllConfigsForFile(configFileName, configList);
 
                 boolean customOnlyMode = configForKey.isEmpty();
 
@@ -162,6 +161,7 @@ public class HarmonizerService {
                         } catch (IOException e) {
                             throw new UncheckedIOException(e);
                         }
+                        fileService.registerDerivedDatasetShareability(datasetName, out.getFileName().toString());
 
                         processedDatasets++;
                         int afterPercent = (int) Math.round((processedDatasets * 100.0) / totalDatasets);
@@ -288,6 +288,7 @@ public class HarmonizerService {
                         throw new UncheckedIOException(e);
                     }
 
+                    fileService.registerDerivedDatasetShareability(datasetName, out.getFileName().toString());
                     processedDatasets++;
                     int afterPercent = (int) Math.round((processedDatasets * 100.0) / totalDatasets);
                     jobs.update(
@@ -316,12 +317,11 @@ public class HarmonizerService {
             logger.info("[parseFiles] parsed {} config objects", configList.size());
 
             // all custom_mapping entries across the whole configs payload
-            Map<String, Object> customConfig = getAllConfigsForFile(configList);
-
             // for each element-file key -> list of dataset file names
             for (var entry : fileMappings.entrySet()) {
                 String configFileName = entry.getKey();
                 Map<String, Object> configForKey = getConfigForFile(configFileName, configList);
+                Map<String, Object> customConfig = getAllConfigsForFile(configFileName, configList);
 
                 boolean customOnlyMode = configForKey.isEmpty();
 
@@ -387,6 +387,7 @@ public class HarmonizerService {
                                              .withHeader())) {
                             // write only the empty header row, no data rows
                         }
+                        fileService.registerDerivedDatasetShareability(datasetName, out.getFileName().toString());
                         logger.info("[parseFiles] Finished writing {} -> {}", datasetName, out);
                         continue;
                     }
@@ -507,6 +508,7 @@ public class HarmonizerService {
                             }
                         });
                     }
+                    fileService.registerDerivedDatasetShareability(datasetName, out.getFileName().toString());
                     logger.info("[parseFiles] Finished writing {} -> {}", datasetName, out);
                 }
             }
@@ -517,18 +519,20 @@ public class HarmonizerService {
     }
 
 
-    private Map<String, Object> getAllConfigsForFile(List<Map<String, Object>> configList) {
+    private Map<String, Object> getAllConfigsForFile(String key, List<Map<String, Object>> configList) {
         Map<String, Object> combined = new LinkedHashMap<>();
         for (var cfg : configList) {
             for (var e : cfg.entrySet()) {
                 @SuppressWarnings("unchecked")
                 var details = (Map<String, Object>) e.getValue();
-                if ("custom_mapping".equals(details.get("fileName"))) {
+                if ("custom_mapping".equals(details.get("fileName")) && matchesConfigKey(details, key)) {
                     combined.put(e.getKey(), details);
                 }
             }
         }
-        if (combined.isEmpty()) logger.warn("No custom_mapping found");
+        if (combined.isEmpty()) {
+            logger.warn("No custom_mapping found for key {}", key);
+        }
         return combined;
     }
 
