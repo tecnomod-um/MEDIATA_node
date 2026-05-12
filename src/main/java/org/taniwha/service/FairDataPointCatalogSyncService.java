@@ -34,7 +34,6 @@ public class FairDataPointCatalogSyncService {
     private static final String XSD_DATE = "http://www.w3.org/2001/XMLSchema#date";
     private static final String XSD_DATE_TIME = "http://www.w3.org/2001/XMLSchema#dateTime";
     private static final MediaType TURTLE = MediaType.parseMediaType("text/turtle");
-    private static final Pattern NON_SLUG = Pattern.compile("[^a-z0-9]+");
     private static final String HEALTH_THEME = "http://publications.europa.eu/resource/authority/data-theme/HEAL";
     private static final String DEFAULT_MEDIA_TYPE = "application/octet-stream";
     private static final String DEFAULT_FDP_EMAIL = "albert.einstein@example.com";
