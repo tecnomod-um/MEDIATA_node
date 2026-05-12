@@ -7,7 +7,6 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.MockitoAnnotations;
 import org.springframework.http.HttpEntity;
-import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
@@ -15,6 +14,7 @@ import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.client.RestTemplate;
 import org.taniwha.config.RestTemplateHolder;
 import org.taniwha.dto.FairDataPointAccessResponseDTO;
+import org.taniwha.model.FairDataPointPublishedManifest;
 import org.taniwha.security.FileFilter;
 
 import java.nio.charset.StandardCharsets;
@@ -80,7 +80,8 @@ class FairDataPointInstanceServiceTest {
     }
 
     @Test
-    void fetchMetadata_rewritesInstanceUrisToLocalFacadeUris() {
+    void fetchMetadata_rewritesInstanceUrisToLocalFacadeUris() throws Exception {
+        writeManifest("http://fdp/catalog/node-catalog");
         when(restTemplate.exchange(
                 eq("http://127.0.0.1:18180/"),
                 eq(HttpMethod.GET),
@@ -99,6 +100,7 @@ class FairDataPointInstanceServiceTest {
         assertThat(response.getHeaders().getContentType()).isEqualTo(MediaType.valueOf("text/turtle"));
         assertThat(response.getBody()).contains("http://example.test/taniwha/fdp/catalog/123");
         assertThat(response.getBody()).doesNotContain("http://fdp/catalog/123");
+        assertThat(response.getBody()).contains("http://example.test/taniwha/fdp/catalog/node-catalog");
     }
 
         @Test
@@ -194,35 +196,63 @@ class FairDataPointInstanceServiceTest {
     }
 
     @Test
-    void fetchMetadata_preservesInstanceMethodNotAllowedResponses() {
-        HttpHeaders headers = new HttpHeaders();
-        headers.setContentType(MediaType.APPLICATION_JSON);
+    void fetchMetadata_proxiesCatalogResourcesFromUpstream() {
         when(restTemplate.exchange(
-                eq("http://127.0.0.1:18180/catalog/"),
+                eq("http://127.0.0.1:18180/catalog/abc-123"),
                 eq(HttpMethod.GET),
                 any(HttpEntity.class),
                 eq(String.class)
-        )).thenThrow(HttpClientErrorException.create(
-                org.springframework.http.HttpStatus.METHOD_NOT_ALLOWED,
-                "Method Not Allowed",
-                headers,
-                "{\"status\":405}".getBytes(StandardCharsets.UTF_8),
-                StandardCharsets.UTF_8
-        ));
+        )).thenReturn(ResponseEntity.ok()
+                .contentType(MediaType.valueOf("text/turtle"))
+                .body("<http://fdp/catalog/abc-123> <http://www.w3.org/ns/dcat#dataset> <http://fdp/dataset/def-456> ."));
 
-        FairDataPointInstanceService.FetchResult result = service.fetchMetadata("/catalog/", "text/turtle", "http://example.test/taniwha/fdp");
+        FairDataPointInstanceService.FetchResult result = service.fetchMetadata(
+                "/catalog/abc-123",
+                "text/turtle",
+                "http://example.test/taniwha/fdp"
+        );
 
         assertThat(result.status()).isEqualTo(FairDataPointInstanceService.FetchStatus.OK);
         assertThat(result.response()).isNotNull();
-        assertThat(result.response().getStatusCode().value()).isEqualTo(405);
-        assertThat(result.response().getHeaders().getContentType()).isEqualTo(MediaType.APPLICATION_JSON);
-        assertThat(result.response().getBody()).contains("\"status\":405");
+        assertThat(result.response().getBody()).contains("http://example.test/taniwha/fdp/catalog/abc-123");
+        assertThat(result.response().getBody()).contains("http://example.test/taniwha/fdp/dataset/def-456");
+    }
+
+    @Test
+    void fetchMetadata_normalizesXmlContentTypeWhenBodyIsTurtle() {
+        when(restTemplate.exchange(
+                eq("http://127.0.0.1:18180/"),
+                eq(HttpMethod.GET),
+                any(HttpEntity.class),
+                eq(String.class)
+        )).thenReturn(ResponseEntity.ok()
+                .contentType(MediaType.APPLICATION_XML)
+                .body("@prefix dcat: <http://www.w3.org/ns/dcat#> .\n<http://fdp> a dcat:Catalog ."));
+
+        FairDataPointInstanceService.FetchResult result = service.fetchMetadata(
+                "/",
+                "application/xml",
+                "http://example.test/taniwha/fdp"
+        );
+
+        assertThat(result.status()).isEqualTo(FairDataPointInstanceService.FetchStatus.OK);
+        assertThat(result.response()).isNotNull();
+        assertThat(result.response().getHeaders().getContentType()).isEqualTo(MediaType.valueOf("text/turtle"));
+        assertThat(result.response().getBody()).contains("@prefix dcat:");
     }
 
     @Test
     void buildAccessResponse_usesNodeAuthorizationFlow() throws Exception {
         Files.createDirectories(tempBase.resolve("datasets"));
         Files.writeString(tempBase.resolve("datasets/FIM.csv"), "score\n90\n");
+        fileService = new FileService(fileFilter, tempBase.toString(), "fim");
+        service = new FairDataPointInstanceService(
+                new RestTemplateHolder(() -> restTemplate),
+                fileService,
+                true,
+                "http://127.0.0.1:18180",
+                "http://fdp"
+        );
 
         FairDataPointAccessResponseDTO response = service.buildAccessResponse("http://example.test/taniwha/fdp", "fim");
 
@@ -230,12 +260,21 @@ class FairDataPointInstanceServiceTest {
         assertThat(response.getAuthorizeEndpoint()).isEqualTo("http://example.test/taniwha/node/authorize");
         assertThat(response.getValidateEndpoint()).isEqualTo("http://example.test/taniwha/node/validate");
         assertThat(response.getDatasetDownloadEndpoint()).isEqualTo("http://example.test/taniwha/api/files/datasets/FIM.csv");
+        assertThat(response.getDatasetId()).isEqualTo("fim");
     }
 
         @Test
         void buildAccessResponse_withoutFdpSuffix_keepsBaseUrlIntact() throws Exception {
                 Files.createDirectories(tempBase.resolve("datasets"));
                 Files.writeString(tempBase.resolve("datasets/FIM.csv"), "score\n90\n");
+                fileService = new FileService(fileFilter, tempBase.toString(), "fim");
+                service = new FairDataPointInstanceService(
+                        new RestTemplateHolder(() -> restTemplate),
+                        fileService,
+                        true,
+                        "http://127.0.0.1:18180",
+                        "http://fdp"
+                );
 
                 FairDataPointAccessResponseDTO response = service.buildAccessResponse("http://example.test/taniwha", "fim");
 
@@ -248,5 +287,52 @@ class FairDataPointInstanceServiceTest {
         FairDataPointAccessResponseDTO response = service.buildAccessResponse("http://example.test/taniwha/fdp", "missing");
 
         assertThat(response).isNull();
+    }
+
+    @Test
+    void buildAccessResponse_groupsParsedDistributionUnderLogicalDatasetId() throws Exception {
+        Files.createDirectories(tempBase.resolve("datasets"));
+        Files.writeString(tempBase.resolve("datasets/parsed_fimbartheltodos.csv"), "score\n100\n");
+        fileService = new FileService(fileFilter, tempBase.toString(), "fimbartheltodos");
+        service = new FairDataPointInstanceService(
+                new RestTemplateHolder(() -> restTemplate),
+                fileService,
+                true,
+                "http://127.0.0.1:18180",
+                "http://fdp"
+        );
+
+        FairDataPointAccessResponseDTO response = service.buildAccessResponse("http://example.test/taniwha/fdp", "parsed-fimbartheltodos");
+
+        assertThat(response).isNotNull();
+        assertThat(response.getDistributionId()).isEqualTo("parsed-fimbartheltodos");
+        assertThat(response.getDatasetId()).isEqualTo("fimbartheltodos");
+        assertThat(response.getDatasetDownloadEndpoint()).isEqualTo("http://example.test/taniwha/api/files/datasets/parsed_fimbartheltodos.csv");
+    }
+
+    @Test
+    void buildAccessResponse_blocksDownloadByDefault() throws Exception {
+        Files.createDirectories(tempBase.resolve("datasets"));
+        Files.writeString(tempBase.resolve("datasets/FIM.csv"), "score\n90\n");
+
+        FairDataPointAccessResponseDTO response = service.buildAccessResponse("http://example.test/taniwha/fdp", "fim");
+
+        assertThat(response).isNotNull();
+        assertThat(response.getDatasetDownloadEndpoint()).isNull();
+        assertThat(response.getAuthorizeEndpoint()).isNull();
+        assertThat(response.getValidateEndpoint()).isNull();
+        assertThat(response.getMessage()).contains("not leave the server");
+    }
+
+    private void writeMetadata(String fileName, String content) throws Exception {
+        Files.writeString(tempBase.resolve("dataset_metadata").resolve(fileName), content);
+    }
+
+    private void writeManifest(String... catalogUris) {
+        fileService.writeFairDataPointPublishedManifest(new FairDataPointPublishedManifest(
+                List.of(catalogUris),
+                List.of(),
+                List.of()
+        ));
     }
 }

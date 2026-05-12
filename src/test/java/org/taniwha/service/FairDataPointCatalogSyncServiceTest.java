@@ -16,6 +16,7 @@ import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -82,6 +83,8 @@ class FairDataPointCatalogSyncServiceTest {
                 .thenReturn(Map.of("token", "service-token"));
         when(restTemplate.exchange(eq("http://fdp:8080/"), eq(HttpMethod.GET), any(HttpEntity.class), eq(String.class)))
                 .thenReturn(ResponseEntity.ok("root"));
+        when(restTemplate.exchange(eq("http://fdp:8080/reset"), eq(HttpMethod.POST), any(HttpEntity.class), eq(Void.class)))
+                .thenReturn(ResponseEntity.noContent().build());
         when(restTemplate.exchange(eq("http://fdp:8080/catalog"), eq(HttpMethod.POST), any(HttpEntity.class), eq(String.class)))
                 .thenReturn(ResponseEntity.created(URI.create("http://fdp:8080/catalog/123")).body(""));
         when(restTemplate.exchange(eq("http://fdp:8080/dataset"), eq(HttpMethod.POST), any(HttpEntity.class), eq(String.class)))
@@ -144,6 +147,13 @@ class FairDataPointCatalogSyncServiceTest {
         HttpEntity<?> stateEntity = stateCaptor.getValue();
         assertThat(stateEntity.getHeaders().getFirst(HttpHeaders.AUTHORIZATION)).isEqualTo("Bearer service-token");
         assertThat(String.valueOf(stateEntity.getBody())).contains("PUBLISHED");
+
+        ArgumentCaptor<HttpEntity> resetCaptor = ArgumentCaptor.forClass(HttpEntity.class);
+        verify(restTemplate).exchange(eq("http://fdp:8080/reset"), eq(HttpMethod.POST), resetCaptor.capture(), eq(Void.class));
+        @SuppressWarnings("unchecked")
+        Map<String, Boolean> resetBody = (Map<String, Boolean>) resetCaptor.getValue().getBody();
+        assertThat(resetBody).containsEntry("metadata", true);
+        assertThat(resetBody).containsEntry("resourceDefinitions", false);
     }
 
     @Test
@@ -173,6 +183,8 @@ class FairDataPointCatalogSyncServiceTest {
         ));
         when(restTemplate.exchange(eq("http://fdp:8080/"), eq(HttpMethod.GET), any(HttpEntity.class), eq(String.class)))
                 .thenReturn(ResponseEntity.ok("root"));
+        when(restTemplate.exchange(eq("http://fdp:8080/reset"), eq(HttpMethod.POST), any(HttpEntity.class), eq(Void.class)))
+                .thenReturn(ResponseEntity.noContent().build());
         when(restTemplate.exchange(eq("http://fdp:8080/catalog"), eq(HttpMethod.POST), any(HttpEntity.class), eq(String.class)))
                 .thenReturn(ResponseEntity.created(URI.create("http://fdp:8080/catalog/abc")).body(""));
         when(restTemplate.exchange(eq("http://fdp:8080/catalog/abc/meta/state"), eq(HttpMethod.PUT), any(HttpEntity.class), eq(Void.class)))
@@ -213,6 +225,8 @@ class FairDataPointCatalogSyncServiceTest {
                 .thenReturn(Map.of("token", "service-token"));
         when(restTemplate.exchange(eq("http://fdp:8080/"), eq(HttpMethod.GET), any(HttpEntity.class), eq(String.class)))
                 .thenReturn(ResponseEntity.ok("root"));
+        when(restTemplate.exchange(eq("http://fdp:8080/reset"), eq(HttpMethod.POST), any(HttpEntity.class), eq(Void.class)))
+                .thenReturn(ResponseEntity.noContent().build());
         when(restTemplate.exchange(eq("http://fdp:8080/catalog"), eq(HttpMethod.POST), any(HttpEntity.class), eq(String.class)))
                 .thenReturn(ResponseEntity.created(URI.create("http://fdp:8080/catalog/abc")).body(""));
         when(restTemplate.exchange(eq("http://fdp:8080/catalog/abc/meta/state"), eq(HttpMethod.PUT), any(HttpEntity.class), eq(Void.class)))
@@ -260,6 +274,8 @@ class FairDataPointCatalogSyncServiceTest {
                 .thenReturn(Map.of("token", "service-token"));
         when(restTemplate.exchange(eq("http://127.0.0.1:18180/"), eq(HttpMethod.GET), any(HttpEntity.class), eq(String.class)))
                 .thenReturn(ResponseEntity.ok("root"));
+        when(restTemplate.exchange(eq("http://127.0.0.1:18180/reset"), eq(HttpMethod.POST), any(HttpEntity.class), eq(Void.class)))
+                .thenReturn(ResponseEntity.noContent().build());
         when(restTemplate.exchange(eq("http://127.0.0.1:18180/catalog"), eq(HttpMethod.POST), any(HttpEntity.class), eq(String.class)))
                 .thenReturn(ResponseEntity.created(URI.create("http://fdp/catalog/abc")).body(""));
         when(restTemplate.exchange(eq("http://127.0.0.1:18180/catalog/abc/meta/state"), eq(HttpMethod.PUT), any(HttpEntity.class), eq(Void.class)))
@@ -318,6 +334,8 @@ class FairDataPointCatalogSyncServiceTest {
                 .thenReturn(Map.of("token", "service-token"));
         when(restTemplate.exchange(eq("http://fdp:8080/"), eq(HttpMethod.GET), any(HttpEntity.class), eq(String.class)))
                 .thenReturn(ResponseEntity.ok("root"));
+        when(restTemplate.exchange(eq("http://fdp:8080/reset"), eq(HttpMethod.POST), any(HttpEntity.class), eq(Void.class)))
+                .thenReturn(ResponseEntity.noContent().build());
         when(restTemplate.exchange(eq("http://fdp:8080/catalog"), eq(HttpMethod.POST), any(HttpEntity.class), eq(String.class)))
                 .thenReturn(ResponseEntity.created(URI.create("http://fdp:8080/catalog/123")).body(""));
         when(restTemplate.exchange(eq("http://fdp:8080/dataset"), eq(HttpMethod.POST), any(HttpEntity.class), eq(String.class)))
@@ -344,6 +362,7 @@ class FairDataPointCatalogSyncServiceTest {
         assertThat(datasetBody).contains("Partner Org");
         assertThat(datasetBody).contains("Data Office");
         assertThat(datasetBody).contains("2025-02-13T00:00:00Z");
+        assertThat(countOccurrences(datasetBody, "dct:publisher")).isEqualTo(1);
 
         ArgumentCaptor<HttpEntity> distributionCaptor = ArgumentCaptor.forClass(HttpEntity.class);
         verify(restTemplate).exchange(eq("http://fdp:8080/distribution"), eq(HttpMethod.POST), distributionCaptor.capture(), eq(String.class));
@@ -387,5 +406,54 @@ class FairDataPointCatalogSyncServiceTest {
         assertThat(result.datasetsPublished()).isZero();
         assertThat(result.distributionsPublished()).isZero();
         verifyNoInteractions(restTemplate);
+    }
+
+    @Test
+    void publishCatalogs_whenPublicationFails_resetsAgainToCleanPartialState() {
+        when(metadataUtil.generateManagedMetadataDocument()).thenReturn(
+                new MetadataDocument("fairdatapoint-generated.ttl", "")
+        );
+        when(fileService.readAllMetadataDocuments()).thenReturn(List.of(
+                new MetadataDocument("catalog.ttl", """
+                        @prefix dcat: <http://www.w3.org/ns/dcat#> .
+                        @prefix dct: <http://purl.org/dc/terms/> .
+
+                        <http://example.org/catalog> a dcat:Catalog ;
+                            dct:title "Node Catalog" ;
+                            dcat:dataset <http://example.org/dataset> .
+
+                        <http://example.org/dataset> a dcat:Dataset ;
+                            dct:title "Dataset" .
+                        """)
+        ));
+
+        when(restTemplate.postForObject(eq("http://fdp:8080/tokens"), any(HttpEntity.class), eq(Map.class)))
+                .thenReturn(Map.of("token", "service-token"));
+        when(restTemplate.exchange(eq("http://fdp:8080/"), eq(HttpMethod.GET), any(HttpEntity.class), eq(String.class)))
+                .thenReturn(ResponseEntity.ok("root"));
+        when(restTemplate.exchange(eq("http://fdp:8080/reset"), eq(HttpMethod.POST), any(HttpEntity.class), eq(Void.class)))
+                .thenReturn(ResponseEntity.noContent().build());
+        when(restTemplate.exchange(eq("http://fdp:8080/catalog"), eq(HttpMethod.POST), any(HttpEntity.class), eq(String.class)))
+                .thenReturn(ResponseEntity.created(URI.create("http://fdp:8080/catalog/123")).body(""));
+        when(restTemplate.exchange(eq("http://fdp:8080/catalog/123/meta/state"), eq(HttpMethod.PUT), any(HttpEntity.class), eq(Void.class)))
+                .thenReturn(ResponseEntity.ok().build());
+        when(restTemplate.exchange(eq("http://fdp:8080/dataset"), eq(HttpMethod.POST), any(HttpEntity.class), eq(String.class)))
+                .thenThrow(HttpClientErrorException.create(HttpStatus.BAD_REQUEST, "Bad Request", HttpHeaders.EMPTY, new byte[0], StandardCharsets.UTF_8));
+
+        assertThatThrownBy(() -> service.publishCatalogs())
+                .isInstanceOf(HttpClientErrorException.BadRequest.class);
+
+        verify(restTemplate, times(2))
+                .exchange(eq("http://fdp:8080/reset"), eq(HttpMethod.POST), any(HttpEntity.class), eq(Void.class));
+    }
+
+    private int countOccurrences(String value, String token) {
+        AtomicInteger count = new AtomicInteger();
+        int index = 0;
+        while ((index = value.indexOf(token, index)) >= 0) {
+            count.incrementAndGet();
+            index += token.length();
+        }
+        return count.get();
     }
 }
