@@ -877,8 +877,6 @@ public class FileService {
             Files.deleteIfExists(groupDir);
         } catch (IOException e) {
             throw new UncheckedIOException("Failed to remove shared dataset group " + groupId, e);
-        } catch (UncheckedIOException e) {
-            throw e;
         }
     }
 

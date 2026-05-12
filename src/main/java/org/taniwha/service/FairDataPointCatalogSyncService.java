@@ -797,12 +797,6 @@ public class FairDataPointCatalogSyncService {
         return lastDot > 0 ? fileName.substring(0, lastDot) : fileName;
     }
 
-    private String slugify(String value) {
-        String normalized = value == null ? "" : value.trim().toLowerCase(Locale.ROOT);
-        normalized = NON_SLUG.matcher(normalized).replaceAll("-");
-        return normalized.replaceAll("^-+|-+$", "");
-    }
-
     private boolean isBlank(String value) {
         return value == null || value.isBlank();
     }
