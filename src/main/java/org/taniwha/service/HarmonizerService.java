@@ -562,7 +562,6 @@ public class HarmonizerService {
         return isConfigForElementFile(details, key);
     }
 
-    @SuppressWarnings("unchecked")
     private boolean isConfigForElementFile(Map<String, Object> details, String key) {
         Object groupsObj = details.get(GROUPS_KEY);
         if (!(groupsObj instanceof List<?> groups)) {
