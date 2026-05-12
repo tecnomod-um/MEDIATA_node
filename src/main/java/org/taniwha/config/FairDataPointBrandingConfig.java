@@ -35,6 +35,10 @@ public class FairDataPointBrandingConfig {
     private static final String SIO = "http://semanticscience.org/resource/";
     private static final String DEFAULT_FDP_EMAIL = "albert.einstein@example.com";
     private static final String DEFAULT_FDP_PASSWORD = "password";
+    private static final String DEFAULT_ROOT_DESCRIPTION =
+            "The MEDIATA platform provides a unified, browser-accessible interface for the secure exploration, " +
+            "cleaning, harmonization, and semantic annotation of distributed clinical datasets while keeping " +
+            "sensitive raw data on local servers.";
     private static final MediaType TURTLE = MediaType.parseMediaType("text/turtle");
 
     private final RestTemplateHolder restTemplateHolder;
@@ -46,6 +50,9 @@ public class FairDataPointBrandingConfig {
     private final String apiKey;
     private final String nodeName;
     private final String nodeDescription;
+    private final String rootTitle;
+    private final String rootDescription;
+    private final String publisherName;
 
     public FairDataPointBrandingConfig(RestTemplateHolder restTemplateHolder,
                                        RetryTemplate retryTemplate,
@@ -55,7 +62,10 @@ public class FairDataPointBrandingConfig {
                                        @Value("${fairdatapoint.password:}") String password,
                                        @Value("${fairdatapoint.api-key:}") String apiKey,
                                        @Value("${name:unnamed}") String nodeName,
-                                       @Value("${desc:no description available}") String nodeDescription) {
+                                       @Value("${desc:no description available}") String nodeDescription,
+                                       @Value("${fairdatapoint.root-title:}") String rootTitle,
+                                       @Value("${fairdatapoint.root-description:" + DEFAULT_ROOT_DESCRIPTION + "}") String rootDescription,
+                                       @Value("${fairdatapoint.publisher-name:}") String publisherName) {
         this.restTemplateHolder = restTemplateHolder;
         this.retryTemplate = retryTemplate;
         this.enabled = enabled;
@@ -67,6 +77,15 @@ public class FairDataPointBrandingConfig {
         this.nodeDescription = nodeDescription == null || nodeDescription.isBlank()
                 ? "no description available"
                 : nodeDescription.trim();
+        this.rootTitle = rootTitle == null || rootTitle.isBlank()
+                ? this.nodeName + " FAIR Data Point"
+                : rootTitle.trim();
+        this.rootDescription = rootDescription == null || rootDescription.isBlank()
+                ? DEFAULT_ROOT_DESCRIPTION
+                : rootDescription.trim();
+        this.publisherName = publisherName == null || publisherName.isBlank()
+                ? this.nodeName
+                : publisherName.trim();
     }
 
     public void applyBranding() {
@@ -172,8 +191,8 @@ public class FairDataPointBrandingConfig {
         model.removeAll(root, descriptionProperty, null);
         model.removeAll(root, publisherProperty, null);
 
-        root.addProperty(titleProperty, nodeName + " FAIR Data Point");
-        root.addProperty(descriptionProperty, nodeDescription);
+        root.addProperty(titleProperty, rootTitle);
+        root.addProperty(descriptionProperty, rootDescription);
 
         Resource publisher = null;
         StmtIterator publisherStatements = root.listProperties(publisherProperty);
@@ -186,7 +205,7 @@ public class FairDataPointBrandingConfig {
         }
         publisher.removeProperties();
         publisher.addProperty(RDF.type, model.createResource(FOAF + "Agent"));
-        publisher.addProperty(nameProperty, nodeName);
+        publisher.addProperty(nameProperty, publisherName);
         root.addProperty(publisherProperty, publisher);
 
         StringWriter writer = new StringWriter();

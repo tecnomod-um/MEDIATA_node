@@ -14,6 +14,7 @@ import org.springframework.web.client.RestClientException;
 import org.springframework.web.client.RestTemplate;
 import org.taniwha.config.RestTemplateHolder;
 import org.taniwha.model.FairDataPointSyncResult;
+import org.taniwha.model.FairDataPointPublishedManifest;
 import org.taniwha.model.MetadataDocument;
 import org.taniwha.util.DCatUtil;
 import org.taniwha.util.FairDataPointMetadataUtil;
@@ -81,6 +82,7 @@ public class FairDataPointCatalogSyncService {
 
         List<MetadataDocument> documents = fileService.readAllMetadataDocuments();
         if (documents.isEmpty()) {
+            fileService.deleteFairDataPointPublishedManifest();
             return new FairDataPointSyncResult(
                     "NO_METADATA",
                     0,
@@ -96,20 +98,32 @@ public class FairDataPointCatalogSyncService {
 
         String bearerToken = resolveBearerToken();
         assertMetadataServiceRootAvailable(bearerToken);
+        resetPublishedMetadataState(bearerToken);
+        assertMetadataServiceRootAvailable(bearerToken);
         List<String> createdCatalogUris = new ArrayList<>();
         List<String> createdDatasetUris = new ArrayList<>();
         List<String> createdDistributionUris = new ArrayList<>();
 
-        for (MetadataDocument document : documents) {
-            Model model = DCatUtil.readModel(document.content(), document.fileName());
-            publishDocumentGraph(
-                    bearerToken,
-                    model,
-                    document.fileName(),
-                    createdCatalogUris,
-                    createdDatasetUris,
-                    createdDistributionUris
-            );
+        try {
+            for (MetadataDocument document : documents) {
+                Model model = DCatUtil.readModel(document.content(), document.fileName());
+                publishDocumentGraph(
+                        bearerToken,
+                        model,
+                        document.fileName(),
+                        createdCatalogUris,
+                        createdDatasetUris,
+                        createdDistributionUris
+                );
+            }
+            fileService.writeFairDataPointPublishedManifest(new FairDataPointPublishedManifest(
+                    List.copyOf(createdCatalogUris),
+                    List.copyOf(createdDatasetUris),
+                    List.copyOf(createdDistributionUris)
+            ));
+        } catch (RuntimeException e) {
+            cleanupPartialPublishedState(bearerToken, e);
+            throw e;
         }
 
         return new FairDataPointSyncResult(
@@ -238,6 +252,44 @@ public class FairDataPointCatalogSyncService {
             throw new IllegalStateException(
                     "FAIR Data Point root metadata is not initialized. Initialize the MetadataService root before syncing catalogs."
             );
+        }
+    }
+
+    private void resetPublishedMetadataState(String bearerToken) {
+        HttpHeaders headers = new HttpHeaders();
+        headers.setBearerAuth(bearerToken);
+        headers.setContentType(MediaType.APPLICATION_JSON);
+        headers.setAccept(List.of(MediaType.APPLICATION_JSON));
+
+        Map<String, Boolean> body = Map.of(
+                "metadata", true,
+                "users", false,
+                "resourceDefinitions", false,
+                "settings", false
+        );
+
+        retryTemplate.execute((RetryCallback<ResponseEntity<Void>, RestClientException>) context -> {
+            if (context.getRetryCount() > 0) {
+                logger.warn("Retrying FAIR Data Point metadata reset. Attempt {}", context.getRetryCount() + 1);
+            }
+            return restTemplateHolder.get().exchange(
+                    normalizeBaseUrl(baseUrl) + "/reset",
+                    HttpMethod.POST,
+                    new HttpEntity<>(body, headers),
+                    Void.class
+            );
+        });
+    }
+
+    private void cleanupPartialPublishedState(String bearerToken, RuntimeException originalError) {
+        try {
+            resetPublishedMetadataState(bearerToken);
+            fileService.deleteFairDataPointPublishedManifest();
+            assertMetadataServiceRootAvailable(bearerToken);
+            logger.warn("Cleaned partially published FAIR Data Point state after sync failure.");
+        } catch (RuntimeException cleanupError) {
+            logger.error("Failed to clean FAIR Data Point state after sync failure", cleanupError);
+            originalError.addSuppressed(cleanupError);
         }
     }
 
@@ -405,6 +457,7 @@ public class FairDataPointCatalogSyncService {
         normalizeDateTimeLiteral(catalog, model, model.createProperty(DCT + "issued"));
         normalizeDateTimeLiteral(catalog, model, model.createProperty(DCT + "modified"));
         ensureAgentResource(source, originalCatalog, catalog, model, publisherProperty, foafNameProperty);
+        keepSingleResourceValue(catalog, model, publisherProperty);
     }
 
     private void ensureDatasetMinimumFields(Model source,
@@ -444,6 +497,9 @@ public class FairDataPointCatalogSyncService {
         ensureAgentResource(source, originalDataset, dataset, model, publisherProperty, foafNameProperty);
         ensureAgentResource(source, originalDataset, dataset, model, creatorProperty, foafNameProperty);
         materializeReferencedResources(source, originalDataset, model, contactPointProperty);
+        keepSingleResourceValue(dataset, model, publisherProperty);
+        keepSingleResourceValue(dataset, model, creatorProperty);
+        keepSingleResourceValue(dataset, model, contactPointProperty);
     }
 
     private void ensureDistributionMinimumFields(Model source,
@@ -489,6 +545,8 @@ public class FairDataPointCatalogSyncService {
         normalizeDateTimeLiteral(distribution, model, model.createProperty(DCT + "modified"));
         ensureAgentResource(source, originalDistribution, distribution, model, publisherProperty, foafNameProperty);
         materializeReferencedResources(source, originalDistribution, model, contactPointProperty);
+        keepSingleResourceValue(distribution, model, publisherProperty);
+        keepSingleResourceValue(distribution, model, contactPointProperty);
     }
 
     private void publishMetadataResource(String bearerToken, URI catalogUri) {
@@ -616,6 +674,26 @@ public class FairDataPointCatalogSyncService {
             if (!targetModel.contains(resource, nameProperty)) {
                 resource.addProperty(RDF.type, targetModel.createResource(FOAF + "Agent"));
                 resource.addProperty(nameProperty, nodeName);
+            }
+        }
+    }
+
+    private void keepSingleResourceValue(Resource subject, Model model, Property property) {
+        List<Statement> statements = model.listStatements(subject, property, (RDFNode) null).toList();
+        if (statements.size() <= 1) {
+            return;
+        }
+
+        Statement preferred = statements.stream()
+                .filter(statement -> statement.getObject().isResource())
+                .filter(statement -> statement.getObject().asResource().hasProperty(model.createProperty(FOAF + "name"))
+                        || statement.getObject().asResource().hasProperty(RDF.type))
+                .findFirst()
+                .orElse(statements.get(0));
+
+        for (Statement statement : statements) {
+            if (!statement.equals(preferred)) {
+                model.remove(statement);
             }
         }
     }

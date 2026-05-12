@@ -5,6 +5,8 @@ nohup.out
 out/
 target/
 taniwha.log
+*.log
+hs_err_pid*.log
 
 ### Local taniwha data ###
 /taniwha/

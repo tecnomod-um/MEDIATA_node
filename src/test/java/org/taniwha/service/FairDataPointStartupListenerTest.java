@@ -59,7 +59,7 @@ class FairDataPointStartupListenerTest {
 
         listener.syncCatalogsOnStartup();
 
-        verify(brandingService).applyBranding();
+        verify(brandingService, times(2)).applyBranding();
         verify(syncService).publishCatalogs();
     }
 

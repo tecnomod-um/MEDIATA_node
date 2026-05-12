@@ -1,21 +1,23 @@
 package org.taniwha.service;
 
+import org.apache.jena.rdf.model.Resource;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.*;
 import org.springframework.stereotype.Service;
+import org.springframework.util.MimeTypeUtils;
 import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.client.HttpStatusCodeException;
 import org.springframework.web.client.RestClientException;
 import org.springframework.web.util.UriUtils;
 import org.taniwha.config.RestTemplateHolder;
 import org.taniwha.dto.FairDataPointAccessResponseDTO;
+import org.taniwha.model.FairDataPointPublishedManifest;
+import org.taniwha.util.DCatUtil;
 
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
-import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
-import java.util.Set;
 import java.util.regex.Pattern;
 
 @Service
@@ -23,6 +25,7 @@ public class FairDataPointInstanceService {
 
     private static final MediaType TURTLE = MediaType.valueOf("text/turtle");
     private static final Pattern NON_SLUG = Pattern.compile("[^a-z0-9]+");
+    private static final String FDP_O = "https://w3id.org/fdp/fdp-o#";
 
     private final RestTemplateHolder restTemplateHolder;
     private final FileService fileService;
@@ -60,11 +63,12 @@ public class FairDataPointInstanceService {
 
             MediaType contentType = upstream.getHeaders().getContentType();
             String body = upstream.getBody();
+            String adaptedBody = body == null ? "" : adaptUpstreamMetadata(localFdpPath, body, normalizeBaseUrl(localFacadeBaseUrl));
 
             return new FetchResult(
                     ResponseEntity.status(upstream.getStatusCode())
-                            .contentType(contentType == null ? TURTLE : contentType)
-                            .body(body == null ? "" : rewriteInstanceUris(body, normalizeBaseUrl(localFacadeBaseUrl))),
+                            .contentType(resolveResponseContentType(contentType, adaptedBody))
+                            .body(adaptedBody),
                     FetchStatus.OK
             );
         } catch (HttpClientErrorException.NotFound e) {
@@ -72,10 +76,11 @@ public class FairDataPointInstanceService {
         } catch (HttpStatusCodeException e) {
             MediaType contentType = e.getResponseHeaders() == null ? null : e.getResponseHeaders().getContentType();
             String body = e.getResponseBodyAsString();
+            String adaptedBody = adaptUpstreamMetadata(localFdpPath, body == null ? "" : body, normalizeBaseUrl(localFacadeBaseUrl));
             return new FetchResult(
                     ResponseEntity.status(e.getStatusCode())
-                            .contentType(contentType == null ? MediaType.TEXT_PLAIN : contentType)
-                            .body(rewriteInstanceUris(body == null ? "" : body, normalizeBaseUrl(localFacadeBaseUrl))),
+                            .contentType(resolveErrorResponseContentType(contentType, adaptedBody))
+                            .body(adaptedBody),
                     FetchStatus.OK
             );
         } catch (RestClientException e) {
@@ -93,14 +98,18 @@ public class FairDataPointInstanceService {
         String applicationBaseUrl = baseUrl.endsWith("/fdp")
                 ? baseUrl.substring(0, baseUrl.length() - 4)
                 : baseUrl;
+        boolean downloadable = fileService.isDatasetDownloadAllowed(entry.fileName());
+        String message = downloadable
+                ? "Access requires the node authorization flow. First submit the Kerberos service ticket to /node/authorize, then validate the user JWT and Kerberos token at /node/validate. Use the returned node JWT to call the authenticated dataset file endpoint."
+                : fileService.datasetDownloadBlockedMessage(entry.fileName()) + " The file has been set to not leave the server.";
         return new FairDataPointAccessResponseDTO(
                 entry.distributionId(),
                 entry.datasetId(),
                 entry.fileName(),
-                "Access requires the node authorization flow. First submit the Kerberos service ticket to /node/authorize, then validate the user JWT and Kerberos token at /node/validate. Use the returned node JWT to call the authenticated dataset file endpoint.",
-                applicationBaseUrl + "/node/authorize",
-                applicationBaseUrl + "/node/validate",
-                applicationBaseUrl + "/api/files/datasets/" + UriUtils.encodePathSegment(entry.fileName(), StandardCharsets.UTF_8)
+                message,
+                downloadable ? applicationBaseUrl + "/node/authorize" : null,
+                downloadable ? applicationBaseUrl + "/node/validate" : null,
+                downloadable ? applicationBaseUrl + "/api/files/datasets/" + UriUtils.encodePathSegment(entry.fileName(), StandardCharsets.UTF_8) : null
         );
     }
 
@@ -120,7 +129,7 @@ public class FairDataPointInstanceService {
 
         try {
             List<MediaType> mediaTypes = new ArrayList<>(MediaType.parseMediaTypes(acceptHeader));
-            MediaType.sortBySpecificityAndQuality(mediaTypes);
+            MimeTypeUtils.sortBySpecificity(mediaTypes);
 
             boolean onlyWildcards = mediaTypes.stream()
                     .allMatch(mediaType -> mediaType.isWildcardType() && mediaType.isWildcardSubtype());
@@ -142,6 +151,84 @@ public class FairDataPointInstanceService {
         return rewritten;
     }
 
+    private String adaptUpstreamMetadata(String localFdpPath, String body, String localFacadeBaseUrl) {
+        String rewritten = rewriteInstanceUris(body, localFacadeBaseUrl);
+        String path = normalizeLocalPath(localFdpPath);
+        if (!"/".equals(path) || rewritten.isBlank()) {
+            return rewritten;
+        }
+
+        try {
+            var rootModel = DCatUtil.readModel(rewritten, "root.ttl");
+            FairDataPointPublishedManifest manifest = fileService.readFairDataPointPublishedManifest();
+            if (manifest == null || manifest.catalogUris() == null || manifest.catalogUris().isEmpty()) {
+                return rewritten;
+            }
+
+            Resource root = rootModel.createResource(localFacadeBaseUrl);
+            for (String catalogUri : manifest.catalogUris()) {
+                String localCatalogUri = rewriteSingleInstanceUri(catalogUri, localFacadeBaseUrl);
+                root.addProperty(rootModel.createProperty(FDP_O + "metadataCatalog"),
+                        rootModel.createResource(localCatalogUri));
+            }
+
+            java.io.StringWriter writer = new java.io.StringWriter();
+            rootModel.write(writer, "TTL");
+            return writer.toString();
+        } catch (Exception ignored) {
+            return rewritten;
+        }
+    }
+
+    private MediaType resolveResponseContentType(MediaType upstreamContentType, String body) {
+        if (upstreamContentType == null) {
+            return TURTLE;
+        }
+        if (looksLikeTurtle(body) && isXmlish(upstreamContentType)) {
+            return TURTLE;
+        }
+        return upstreamContentType;
+    }
+
+    private MediaType resolveErrorResponseContentType(MediaType upstreamContentType, String body) {
+        if (upstreamContentType == null) {
+            return MediaType.TEXT_PLAIN;
+        }
+        if (looksLikeTurtle(body) && isXmlish(upstreamContentType)) {
+            return TURTLE;
+        }
+        return upstreamContentType;
+    }
+
+    private boolean isXmlish(MediaType mediaType) {
+        String type = mediaType.getType();
+        String subtype = mediaType.getSubtype();
+        return "application".equalsIgnoreCase(type) && "xml".equalsIgnoreCase(subtype)
+                || "text".equalsIgnoreCase(type) && "xml".equalsIgnoreCase(subtype);
+    }
+
+    private boolean looksLikeTurtle(String body) {
+        if (body == null) {
+            return false;
+        }
+        String trimmed = body.stripLeading();
+        return trimmed.startsWith("@prefix")
+                || trimmed.startsWith("@base")
+                || trimmed.startsWith("<")
+                || trimmed.startsWith("PREFIX ")
+                || trimmed.startsWith("prefix ");
+    }
+
+    private String rewriteSingleInstanceUri(String uri, String localFacadeBaseUrl) {
+        String rewritten = uri;
+        for (String instanceBase : instanceUriBases()) {
+            if (rewritten.startsWith(instanceBase)) {
+                rewritten = localFacadeBaseUrl + rewritten.substring(instanceBase.length());
+            }
+        }
+        return rewritten;
+    }
+
     private String mapLocalPathToInstancePath(String localFdpPath) {
         if (localFdpPath.matches("^/metadata-schemas/[0-9a-fA-F\\-]+/?$")) {
             return "/spec";
@@ -149,8 +236,8 @@ public class FairDataPointInstanceService {
         return localFdpPath;
     }
 
-    private Set<String> instanceUriBases() {
-        Set<String> bases = new LinkedHashSet<>();
+    private java.util.Set<String> instanceUriBases() {
+        java.util.Set<String> bases = new java.util.LinkedHashSet<>();
         if (!isBlank(persistentUrl)) {
             bases.add(normalizeBaseUrl(persistentUrl));
         }
@@ -158,6 +245,11 @@ public class FairDataPointInstanceService {
             bases.add(normalizeBaseUrl(baseUrl));
         }
         return bases;
+    }
+
+    private String normalizeLocalPath(String localFdpPath) {
+        String path = localFdpPath == null || localFdpPath.isBlank() ? "/" : localFdpPath;
+        return path.startsWith("/") ? path : "/" + path;
     }
 
     private DatasetEntry findDistributionEntry(String distributionId) {
@@ -174,10 +266,23 @@ public class FairDataPointInstanceService {
         List<DatasetEntry> entries = new ArrayList<>();
         for (String datasetFile : datasetFiles) {
             String stem = stripExtension(datasetFile);
-            String slug = slugify(stem);
-            entries.add(new DatasetEntry(slug, slug, datasetFile));
+            String datasetSlug = slugify(logicalDatasetStem(stem));
+            String distributionSlug = slugify(stem);
+            entries.add(new DatasetEntry(datasetSlug, distributionSlug, datasetFile));
         }
         return entries;
+    }
+
+    private String logicalDatasetStem(String stem) {
+        String normalized = stem == null ? "" : stem.trim();
+        String lower = normalized.toLowerCase(Locale.ROOT);
+        if (lower.startsWith("parsed_") && normalized.length() > 7) {
+            return normalized.substring(7);
+        }
+        if (lower.startsWith("parsed-") && normalized.length() > 7) {
+            return normalized.substring(7);
+        }
+        return normalized;
     }
 
     private String normalizeBaseUrl(String value) {

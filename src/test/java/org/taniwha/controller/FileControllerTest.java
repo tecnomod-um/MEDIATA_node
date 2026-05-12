@@ -8,6 +8,7 @@ import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 import org.taniwha.model.NodeMetadata;
 import org.taniwha.service.FileService;
+import org.taniwha.util.JwtTokenUtil;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -23,12 +24,14 @@ class FileControllerTest {
 
     private MockMvc mvc;
     private FileService fileService;
+    private JwtTokenUtil jwtTokenUtil;
 
     @BeforeEach
     void setUp() {
         fileService = mock(FileService.class);
+        jwtTokenUtil = mock(JwtTokenUtil.class);
         mvc = MockMvcBuilders
-                .standaloneSetup(new FileController(fileService))
+                .standaloneSetup(new FileController(fileService, jwtTokenUtil))
                 .build();
     }
 
@@ -183,7 +186,8 @@ class FileControllerTest {
     void getDatasetFile_success() throws Exception {
         Path tmp = Files.createTempFile("dataset", ".csv");
         Files.writeString(tmp, "col1,col2\n1,2\n");
-        when(fileService.resolveDatasetFilePath("my.csv"))
+        when(fileService.isDatasetDownloadAllowed("my.csv")).thenReturn(true);
+        when(fileService.resolveSharedDatasetFilePath("my.csv"))
                 .thenReturn(tmp);
 
         mvc.perform(get("/api/files/datasets/my.csv"))
@@ -197,12 +201,55 @@ class FileControllerTest {
 
     @Test
     void getDatasetFile_serviceThrows_returns500() throws Exception {
-        when(fileService.resolveDatasetFilePath("missing.csv"))
+        when(fileService.isDatasetDownloadAllowed("missing.csv")).thenReturn(true);
+        when(fileService.resolveSharedDatasetFilePath("missing.csv"))
                 .thenThrow(new RuntimeException("missing"));
 
         mvc.perform(get("/api/files/datasets/missing.csv"))
                 .andExpect(status().isInternalServerError())
                 .andExpect(content().string("Error fetching dataset file: missing.csv"));
+    }
+
+    @Test
+    void getDatasetFile_blockedByPolicy_returns403() throws Exception {
+        when(fileService.isDatasetDownloadAllowed("my.csv")).thenReturn(false);
+        when(fileService.datasetDownloadBlockedMessage("my.csv"))
+                .thenReturn("This dataset has been configured to not leave the server. Download is disabled for my.csv.");
+
+        mvc.perform(get("/api/files/datasets/my.csv"))
+                .andExpect(status().isForbidden())
+                .andExpect(content().string("This dataset has been configured to not leave the server. Download is disabled for my.csv."));
+    }
+
+    @Test
+    void updateDatasetShareability_requiresNodeValidatedToken() throws Exception {
+        mvc.perform(post("/api/files/datasets/shareability")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"fileName":"samplefile.csv","downloadable":true}
+                                """))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.message").value("Updating dataset shareability requires a node-validated token issued by /node/validate."));
+    }
+
+    @Test
+    void updateDatasetShareability_updatesDatasetFamily() throws Exception {
+        when(jwtTokenUtil.isNodeAccessToken("node-token")).thenReturn(true);
+        when(fileService.setDatasetFamilyDownloadable("samplefile.csv", true))
+                .thenReturn(List.of("samplefile.csv", "parsed_samplefile.csv"));
+        when(fileService.logicalDatasetIdFor("samplefile.csv")).thenReturn("samplefile");
+
+        mvc.perform(post("/api/files/datasets/shareability")
+                        .header(HttpHeaders.AUTHORIZATION, "Bearer node-token")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"fileName":"samplefile.csv","downloadable":true}
+                                """))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.logicalDatasetId").value("samplefile"))
+                .andExpect(jsonPath("$.downloadable").value(true))
+                .andExpect(jsonPath("$.affectedFiles[0]").value("samplefile.csv"))
+                .andExpect(jsonPath("$.affectedFiles[1]").value("parsed_samplefile.csv"));
     }
 
     @Test

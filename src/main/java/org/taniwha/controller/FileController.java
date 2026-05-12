@@ -5,10 +5,13 @@ import org.slf4j.LoggerFactory;
 import org.springframework.http.*;
 import org.springframework.http.MediaTypeFactory;
 import org.springframework.web.bind.annotation.*;
+import org.taniwha.dto.DatasetShareabilityUpdateRequestDTO;
+import org.taniwha.dto.DatasetShareabilityUpdateResponseDTO;
 import org.taniwha.dto.FileInfoDto;
 import org.taniwha.model.FileCategory;
 import org.taniwha.model.NodeMetadata;
 import org.taniwha.service.FileService;
+import org.taniwha.util.JwtTokenUtil;
 
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -24,9 +27,11 @@ public class FileController {
     private static final Logger logger = LoggerFactory.getLogger(FileController.class);
 
     private final FileService fileService;
+    private final JwtTokenUtil jwtTokenUtil;
 
-    public FileController(FileService fileService) {
+    public FileController(FileService fileService, JwtTokenUtil jwtTokenUtil) {
         this.fileService = fileService;
+        this.jwtTokenUtil = jwtTokenUtil;
     }
 
     @GetMapping("/datasets")
@@ -48,7 +53,15 @@ public class FileController {
         logger.debug("Request to fetch dataset file: {}", fileName);
 
         try {
-            Path path = fileService.resolveDatasetFilePath(fileName);
+            if (!fileService.isDatasetDownloadAllowed(fileName)) {
+                String message = fileService.datasetDownloadBlockedMessage(fileName);
+                logger.info("Blocked dataset download by policy: {}", fileName);
+                return ResponseEntity.status(HttpStatus.FORBIDDEN)
+                        .contentType(MediaType.TEXT_PLAIN)
+                        .body(message.getBytes(StandardCharsets.UTF_8));
+            }
+
+            Path path = fileService.resolveSharedDatasetFilePath(fileName);
             byte[] fileContent = Files.readAllBytes(path);
             MediaType mediaType = MediaTypeFactory.getMediaType(fileName)
                     .orElse(MediaType.APPLICATION_OCTET_STREAM);
@@ -68,6 +81,35 @@ public class FileController {
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
                     .body(("Error fetching dataset file: " + fileName).getBytes(StandardCharsets.UTF_8));
         }
+    }
+
+    @PostMapping("/datasets/shareability")
+    public ResponseEntity<DatasetShareabilityUpdateResponseDTO> updateDatasetShareability(
+            @RequestHeader(value = "Authorization", required = false) String authorizationHeader,
+            @RequestBody DatasetShareabilityUpdateRequestDTO request
+    ) {
+        if (!isNodeValidatedToken(authorizationHeader)) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN).body(
+                    new DatasetShareabilityUpdateResponseDTO(
+                            null,
+                            false,
+                            List.of(),
+                            "Updating dataset shareability requires a node-validated token issued by /node/validate."
+                    )
+            );
+        }
+
+        List<String> affectedFiles = fileService.setDatasetFamilyDownloadable(request.fileName(), request.downloadable());
+        String logicalDatasetId = fileService.logicalDatasetIdFor(request.fileName());
+        String message = request.downloadable()
+                ? "Dataset family is now downloadable."
+                : "Dataset family has been configured to not leave the server.";
+        return ResponseEntity.ok(new DatasetShareabilityUpdateResponseDTO(
+                logicalDatasetId,
+                request.downloadable(),
+                affectedFiles,
+                message
+        ));
     }
 
     @GetMapping("/mapped_datasets")
@@ -212,5 +254,13 @@ public class FileController {
         fileService.deleteFile(category, name);
 
         return ResponseEntity.ok().build();
+    }
+
+    private boolean isNodeValidatedToken(String authorizationHeader) {
+        if (authorizationHeader == null || !authorizationHeader.startsWith("Bearer ")) {
+            return false;
+        }
+        String token = authorizationHeader.substring(7);
+        return jwtTokenUtil.isNodeAccessToken(token);
     }
 }

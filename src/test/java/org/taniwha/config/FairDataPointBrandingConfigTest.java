@@ -65,7 +65,10 @@ class FairDataPointBrandingConfigTest {
                 "",
                 "",
                 "Mediata_local",
-                "UMU MEDIATA server"
+                "UMU MEDIATA server",
+                "",
+                "",
+                ""
         );
 
         String branded = config.brandRootMetadata(ROOT_TURTLE);
@@ -80,7 +83,10 @@ class FairDataPointBrandingConfigTest {
         Property nameProperty = model.createProperty("http://xmlns.com/foaf/0.1/name");
 
         assertTrue(root.hasProperty(titleProperty, "Mediata_local FAIR Data Point"));
-        assertTrue(root.hasProperty(descriptionProperty, "UMU MEDIATA server"));
+        assertTrue(root.hasProperty(descriptionProperty,
+                "The MEDIATA platform provides a unified, browser-accessible interface for the secure exploration, " +
+                        "cleaning, harmonization, and semantic annotation of distributed clinical datasets while keeping " +
+                        "sensitive raw data on local servers."));
         assertFalse(root.hasProperty(model.createProperty("http://purl.org/dc/terms/conformsTo")));
         assertFalse(root.hasProperty(model.createProperty("http://www.w3.org/ns/dcat#endpointURL")));
         assertFalse(root.hasProperty(model.createProperty("https://w3id.org/fdp/fdp-o#fdpSoftwareVersion")));
@@ -118,7 +124,10 @@ class FairDataPointBrandingConfigTest {
                 "",
                 "api-token",
                 "Mediata_local",
-                "UMU MEDIATA server"
+                "UMU MEDIATA server",
+                "",
+                "",
+                ""
         );
 
         config.applyBranding();
@@ -174,7 +183,10 @@ class FairDataPointBrandingConfigTest {
                 "",
                 "",
                 "Mediata_local",
-                "UMU MEDIATA server"
+                "UMU MEDIATA server",
+                "",
+                "",
+                ""
         );
 
         config.applyBranding();
@@ -212,7 +224,10 @@ class FairDataPointBrandingConfigTest {
                 "",
                 "",
                 "Mediata_local",
-                "UMU MEDIATA server"
+                "UMU MEDIATA server",
+                "",
+                "",
+                ""
         );
 
         IllegalStateException exception = assertThrows(IllegalStateException.class, config::applyBranding);
@@ -230,7 +245,10 @@ class FairDataPointBrandingConfigTest {
                 "",
                 "",
                 "Mediata_local",
-                "UMU MEDIATA server"
+                "UMU MEDIATA server",
+                "",
+                "",
+                ""
         );
 
         IllegalStateException exception = assertThrows(IllegalStateException.class,
