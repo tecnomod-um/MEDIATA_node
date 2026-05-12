@@ -22,7 +22,6 @@ import org.taniwha.util.FairDataPointMetadataUtil;
 import java.io.StringWriter;
 import java.net.URI;
 import java.util.*;
-import java.util.regex.Pattern;
 
 @Service
 public class FairDataPointCatalogSyncService {
@@ -561,7 +560,7 @@ public class FairDataPointCatalogSyncService {
                 logger.warn("Retrying FAIR Data Point catalog publish state change. Attempt {}", context.getRetryCount() + 1);
             }
             return restTemplateHolder.get().exchange(
-                    resolveManageableResourceUri(catalogUri).toString() + "/meta/state",
+                    resolveManageableResourceUri(catalogUri) + "/meta/state",
                     HttpMethod.PUT,
                     new HttpEntity<>(body, headers),
                     Void.class
