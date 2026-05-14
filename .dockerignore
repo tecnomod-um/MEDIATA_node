@@ -4,7 +4,6 @@
 node-secrets.env
 *.jar
 *.jar.original
-src
 target/*
 !target/TANIWHA_Backend_node.jar
 taniwha
