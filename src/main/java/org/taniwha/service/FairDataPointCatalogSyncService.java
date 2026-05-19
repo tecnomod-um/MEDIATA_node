@@ -354,7 +354,7 @@ public class FairDataPointCatalogSyncService {
         return location;
     }
 
-    private Model prepareCatalogModel(Model source, Resource originalCatalog, String fileName, int catalogIndex) {
+    private Model prepareCatalogModel(Model source, Resource originalCatalog, String fileName) {
         Model result = ModelFactory.createDefaultModel();
         result.setNsPrefixes(source.getNsPrefixMap());
 
