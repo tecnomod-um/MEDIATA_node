@@ -11,7 +11,14 @@ import java.util.List;
 @Setter
 @JsonInclude(JsonInclude.Include.NON_NULL)
 public class NodeMetadata {
+
     @JsonProperty("@context")
     private String context;
+
+    @JsonProperty("@type")
+    private String type;
+
+    private String sourceFile;
+
     private List<Dataset> dataset;
 }

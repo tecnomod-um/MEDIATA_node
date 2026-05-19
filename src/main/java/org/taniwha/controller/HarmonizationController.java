@@ -1,7 +1,5 @@
 package org.taniwha.controller;
 
-import com.fasterxml.jackson.core.type.TypeReference;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
@@ -11,6 +9,7 @@ import org.taniwha.dto.DataCleaningOptionsDTO;
 import org.taniwha.dto.FileMappingsDTO;
 import org.taniwha.dto.HarmonizationStartDTO;
 import org.taniwha.dto.HarmonizationStatusDTO;
+import org.taniwha.dto.mapping.MappingSpecDTO;
 import org.taniwha.service.HarmonizerService;
 import org.taniwha.service.jobs.HarmonizationProcessingJobs;
 
@@ -25,31 +24,28 @@ public class HarmonizationController {
 
     private final HarmonizerService harmonizerService;
     private final HarmonizationProcessingJobs jobs;
-    private final ObjectMapper objectMapper;
 
     public HarmonizationController(HarmonizerService harmonizerService,
-                                   HarmonizationProcessingJobs jobs,
-                                   ObjectMapper objectMapper) {
+                                   HarmonizationProcessingJobs jobs) {
         this.harmonizerService = harmonizerService;
         this.jobs = jobs;
-        this.objectMapper = objectMapper;
     }
 
     @PostMapping("/parse")
     public ResponseEntity<HarmonizationStartDTO> parseAndClean(@RequestBody FileMappingsDTO dto) {
         try {
-            Map<String, List<String>> fileMappings = objectMapper.readValue(
-                    dto.getFileMappings(),
-                    new TypeReference<>() {}
-            );
-
-            String configs = dto.getConfigs();
             DataCleaningOptionsDTO cleanOpts = dto.getCleaningOptions();
+            Map<String, List<String>> fileMappings = dto.getFileMappings();
+            MappingSpecDTO mappingSpec = dto.getMappingSpec();
+
+            if (fileMappings == null || fileMappings.isEmpty() || mappingSpec == null) {
+                return ResponseEntity.badRequest().build();
+            }
 
             String jobId = jobs.createJob();
             logger.info("Starting harmonization parse jobId={} for {} config file(s)", jobId, fileMappings.size());
 
-            harmonizerService.startParseJob(jobId, configs, fileMappings, cleanOpts);
+            harmonizerService.startParseJob(jobId, mappingSpec, fileMappings, cleanOpts);
 
             return ResponseEntity.status(HttpStatus.ACCEPTED)
                     .body(new HarmonizationStartDTO(jobId, true));

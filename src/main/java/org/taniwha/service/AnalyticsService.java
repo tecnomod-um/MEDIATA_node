@@ -49,7 +49,6 @@ public class AnalyticsService {
     private static final String NO_DATA_FOUND_MSG = "No data found in file: ";
     private static final int MIN_RECORDS_FOR_UNIQUE_FILTER = 10;
 
-    // Huge detection thresholds (tune as needed)
     private static final long HUGE_BYTES_THRESHOLD = 1_000_000; // ~1MB
     private static final long HUGE_ROWS_THRESHOLD = 5_000;      // ~5k rows
 
@@ -75,7 +74,7 @@ public class AnalyticsService {
         ThreadFactory threadFactory = r -> {
             Thread t = new Thread(r);
             t.setName("analytics-discovery-" + threadCounter.incrementAndGet());
-            t.setDaemon(true); // Daemon threads won't prevent JVM shutdown
+            t.setDaemon(true);
             return t;
         };
         this.discoveryJobExecutor = Executors.newCachedThreadPool(threadFactory);
@@ -829,7 +828,6 @@ public class AnalyticsService {
 
         response.setCovariances(calculator.calculateCovariances(continuousData));
         response.setPearsonCorrelations(calculator.calculatePearsonCorrelations(continuousData));
-        response.setSpearmanCorrelations(calculator.calculateSpearmanCorrelations(continuousData));
         response.setSpearmanCorrelations(calculator.calculateSpearmanCorrelations(continuousData));
         response.setChiSquareTest(calculator.calculateChiSquaredTest(categoricalData, categoryCombinationCounts));
 

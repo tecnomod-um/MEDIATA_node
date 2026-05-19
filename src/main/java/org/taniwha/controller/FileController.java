@@ -2,32 +2,42 @@ package org.taniwha.controller;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.http.HttpStatus;
-import org.springframework.http.ResponseEntity;
+import org.springframework.http.*;
+import org.springframework.http.MediaTypeFactory;
 import org.springframework.web.bind.annotation.*;
+import org.taniwha.dto.DatasetShareabilityUpdateRequestDTO;
+import org.taniwha.dto.DatasetShareabilityUpdateResponseDTO;
 import org.taniwha.dto.FileInfoDto;
 import org.taniwha.model.FileCategory;
+import org.taniwha.model.NodeMetadata;
 import org.taniwha.service.FileService;
+import org.taniwha.util.JwtTokenUtil;
 
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
-import java.nio.file.Paths;
+import java.nio.file.Path;
 import java.util.List;
 
 @RestController
 @RequestMapping("/api/files")
 public class FileController {
+
     private static final String ERROR_MSG = "Error listing files";
-    private final FileService fileService;
 
     private static final Logger logger = LoggerFactory.getLogger(FileController.class);
 
-    public FileController(FileService fileService) {
+    private final FileService fileService;
+    private final JwtTokenUtil jwtTokenUtil;
+
+    public FileController(FileService fileService, JwtTokenUtil jwtTokenUtil) {
         this.fileService = fileService;
+        this.jwtTokenUtil = jwtTokenUtil;
     }
 
     @GetMapping("/datasets")
     public ResponseEntity<List<String>> listDatasetFiles() {
         logger.debug("Request to list files in datasets folder");
+
         try {
             List<String> files = fileService.listDatasetFiles();
             logger.info("Retrieved {} files from datasets folder", files.size());
@@ -38,9 +48,74 @@ public class FileController {
         }
     }
 
+    @GetMapping("/datasets/{fileName}")
+    public ResponseEntity<byte[]> getDatasetFile(@PathVariable String fileName) {
+        logger.debug("Request to fetch dataset file: {}", fileName);
+
+        try {
+            if (!fileService.isDatasetDownloadAllowed(fileName)) {
+                String message = fileService.datasetDownloadBlockedMessage(fileName);
+                logger.info("Blocked dataset download by policy: {}", fileName);
+                return ResponseEntity.status(HttpStatus.FORBIDDEN)
+                        .contentType(MediaType.TEXT_PLAIN)
+                        .body(message.getBytes(StandardCharsets.UTF_8));
+            }
+
+            Path path = fileService.resolveSharedDatasetFilePath(fileName);
+            byte[] fileContent = Files.readAllBytes(path);
+            MediaType mediaType = MediaTypeFactory.getMediaType(fileName)
+                    .orElse(MediaType.APPLICATION_OCTET_STREAM);
+
+            HttpHeaders headers = new HttpHeaders();
+            headers.setContentType(mediaType);
+            headers.setContentDisposition(
+                    ContentDisposition.inline()
+                            .filename(fileName, StandardCharsets.UTF_8)
+                            .build()
+            );
+
+            logger.info("Fetched dataset file: {}", fileName);
+            return new ResponseEntity<>(fileContent, headers, HttpStatus.OK);
+        } catch (Exception e) {
+            logger.error("Error fetching dataset file: {}", fileName, e);
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                    .body(("Error fetching dataset file: " + fileName).getBytes(StandardCharsets.UTF_8));
+        }
+    }
+
+    @PostMapping("/datasets/shareability")
+    public ResponseEntity<DatasetShareabilityUpdateResponseDTO> updateDatasetShareability(
+            @RequestHeader(value = "Authorization", required = false) String authorizationHeader,
+            @RequestBody DatasetShareabilityUpdateRequestDTO request
+    ) {
+        if (!isNodeValidatedToken(authorizationHeader)) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN).body(
+                    new DatasetShareabilityUpdateResponseDTO(
+                            null,
+                            false,
+                            List.of(),
+                            "Updating dataset shareability requires a node-validated token issued by /node/validate."
+                    )
+            );
+        }
+
+        List<String> affectedFiles = fileService.setDatasetFamilyDownloadable(request.fileName(), request.downloadable());
+        String logicalDatasetId = fileService.logicalDatasetIdFor(request.fileName());
+        String message = request.downloadable()
+                ? "Dataset family is now downloadable."
+                : "Dataset family has been configured to not leave the server.";
+        return ResponseEntity.ok(new DatasetShareabilityUpdateResponseDTO(
+                logicalDatasetId,
+                request.downloadable(),
+                affectedFiles,
+                message
+        ));
+    }
+
     @GetMapping("/mapped_datasets")
     public ResponseEntity<List<String>> listMappedDatasetFiles() {
         logger.debug("Request to list files in mapped_datasets folder");
+
         try {
             List<String> files = fileService.listMappedDatasetFiles();
             logger.info("Retrieved {} files from mapped_datasets folder", files.size());
@@ -54,6 +129,7 @@ public class FileController {
     @GetMapping("/fhir_mappings")
     public ResponseEntity<List<String>> listFhirMappingFiles() {
         logger.debug("Request to list files in fhir_mappings folder");
+
         try {
             List<String> files = fileService.listFhirMappingFiles();
             logger.info("Retrieved {} files from fhir_mappings folder", files.size());
@@ -67,6 +143,7 @@ public class FileController {
     @GetMapping("/dataset_elements")
     public ResponseEntity<List<String>> listDatasetElements() {
         logger.debug("Request to list files in dataset_elements folder");
+
         try {
             List<String> files = fileService.listElementFiles();
             logger.info("Retrieved {} files from dataset_elements folder", files.size());
@@ -83,9 +160,9 @@ public class FileController {
             @RequestBody String csvData
     ) {
         logger.debug("Request to save dataset elements: {}", fileName);
+
         try {
-            String filePath = fileService.saveDatasetElements(fileName, csvData);
-            logger.info("Dataset elements saved to {}", filePath);
+            fileService.saveDatasetElements(fileName, csvData);
             return ResponseEntity.ok("Dataset elements saved successfully.");
         } catch (Exception e) {
             logger.error("Error saving dataset elements", e);
@@ -97,9 +174,9 @@ public class FileController {
     @GetMapping("/dataset_elements/{fileName}")
     public ResponseEntity<String> getElementFile(@PathVariable String fileName) {
         logger.debug("Request to fetch element file: {}", fileName);
+
         try {
-            String filePath = fileService.getElementFilePath(fileName);
-            String fileContent = Files.readString(Paths.get(filePath));
+            String fileContent = Files.readString(fileService.resolveElementFilePath(fileName));
             logger.info("Fetched content of element file: {}", fileName);
             return ResponseEntity.ok(fileContent);
         } catch (Exception e) {
@@ -109,7 +186,44 @@ public class FileController {
         }
     }
 
+    @GetMapping(value = "/metadata/dcat", produces = MediaType.TEXT_PLAIN_VALUE)
+    public ResponseEntity<String> getRawDcatMetadata() {
+        logger.debug("Request to fetch raw DCAT metadata");
 
+        String raw = fileService.getRawNodeMetadata();
+
+        if (raw == null) {
+            return ResponseEntity.notFound().build();
+        }
+
+        String fileName = fileService.getRawNodeMetadataFileName();
+
+        HttpHeaders headers = new HttpHeaders();
+        headers.setContentType(new MediaType("text", "plain", StandardCharsets.UTF_8));
+
+        if (fileName != null) {
+            headers.setContentDisposition(
+                    ContentDisposition.inline()
+                            .filename(fileName, StandardCharsets.UTF_8)
+                            .build()
+            );
+        }
+
+        return new ResponseEntity<>(raw, headers, HttpStatus.OK);
+    }
+
+    @GetMapping(value = "/metadata/dcat/formatted", produces = MediaType.APPLICATION_JSON_VALUE)
+    public ResponseEntity<NodeMetadata> getFormattedDcatMetadata() {
+        logger.debug("Request to fetch formatted DCAT metadata");
+
+        NodeMetadata metadata = fileService.parseNodeMetadata();
+
+        if (metadata == null) {
+            return ResponseEntity.notFound().build();
+        }
+
+        return ResponseEntity.ok(metadata);
+    }
 
     @GetMapping
     public ResponseEntity<List<FileInfoDto>> listFiles(@RequestParam FileCategory category) {
@@ -124,7 +238,9 @@ public class FileController {
             @RequestParam String to
     ) {
         logger.debug("Rename file category={} from={} to={}", category, from, to);
+
         fileService.renameFile(category, from, to);
+
         return ResponseEntity.ok().build();
     }
 
@@ -134,7 +250,17 @@ public class FileController {
             @RequestParam String name
     ) {
         logger.debug("Delete file category={} name={}", category, name);
+
         fileService.deleteFile(category, name);
+
         return ResponseEntity.ok().build();
+    }
+
+    private boolean isNodeValidatedToken(String authorizationHeader) {
+        if (authorizationHeader == null || !authorizationHeader.startsWith("Bearer ")) {
+            return false;
+        }
+        String token = authorizationHeader.substring(7);
+        return jwtTokenUtil.isNodeAccessToken(token);
     }
 }

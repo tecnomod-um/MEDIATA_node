@@ -48,12 +48,24 @@ class NodeAccessServiceTest {
     }
 
     @Test
+    void getRawMetadata_delegatesToFileService() {
+        when(fileService.getRawNodeMetadata()).thenReturn("raw metadata");
+        assertThat(service.getRawMetadata()).isEqualTo("raw metadata");
+    }
+
+    @Test
     void getHostName_variousUris() {
         assertThat(service.getHostName("plain")).isEqualTo("plain");
         assertThat(service.getHostName("http://example.com/path"))
                 .isEqualTo("HTTP/example.com");
         assertThat(service.getHostName("https://test.org"))
                 .isEqualTo("HTTPS/test.org");
+    }
+
+    @Test
+    void getHostName_invalidUriReturnsOriginalValue() {
+        assertThat(service.getHostName("http://exa mple.com"))
+                .isEqualTo("http://exa mple.com");
     }
 
     @Test
@@ -102,6 +114,29 @@ class NodeAccessServiceTest {
         when(t.getRealm()).thenReturn("REALM");
         when(t.getSname()).thenReturn(pn);
         when(part.getKey()).thenReturn(null);
+        assertThat(service.verifySgtTicket(sgt)).isFalse();
+    }
+
+    @Test
+    void verifySgtTicket_nullKeytab_returnsFalse() {
+        SgtTicket sgt = mock(SgtTicket.class);
+        Ticket t = mock(Ticket.class);
+        EncKdcRepPart part = mock(EncKdcRepPart.class);
+        PrincipalName pn = mock(PrincipalName.class);
+
+        when(pn.getName()).thenReturn("HTTP/host.domain");
+        when(sgt.getTicket()).thenReturn(t);
+        when(sgt.getEncKdcRepPart()).thenReturn(part);
+        when(t.getTktvno()).thenReturn(5);
+        when(t.getRealm()).thenReturn("REALM");
+        when(t.getSname()).thenReturn(pn);
+        when(part.getKey()).thenReturn(mock(EncryptionKey.class));
+        when(part.getFlags()).thenReturn(new org.apache.kerby.kerberos.kerb.type.ticket.TicketFlags());
+        when(part.getAuthTime()).thenReturn(null);
+        when(part.getEndTime()).thenReturn(null);
+        when(part.getRenewTill()).thenReturn(null);
+        when(principalService.getKeytab()).thenReturn(null);
+
         assertThat(service.verifySgtTicket(sgt)).isFalse();
     }
 
@@ -167,6 +202,13 @@ class NodeAccessServiceTest {
     @Test
     void validateUserToken_noStored_returnsFalse() {
         when(jwtUtil.getUsernameFromToken("jwt")).thenReturn("user");
+        assertThat(service.validateUserToken("jwt", "sgt")).isFalse();
+    }
+
+    @Test
+    void validateUserToken_usernameLookupFails_returnsFalse() {
+        when(jwtUtil.getUsernameFromToken("jwt")).thenThrow(new RuntimeException("bad jwt"));
+
         assertThat(service.validateUserToken("jwt", "sgt")).isFalse();
     }
 

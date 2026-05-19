@@ -9,6 +9,8 @@ import org.springframework.web.cors.CorsConfiguration;
 import org.springframework.web.cors.CorsConfigurationSource;
 import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
 import org.taniwha.security.JwtRequestFilter;
+import org.taniwha.security.TrustedProxyRequestFilter;
+import org.taniwha.security.TrustedProxyResponseSigningFilter;
 
 import java.util.Map;
 
@@ -21,6 +23,8 @@ class WebSecurityConfigTest {
     void securityBeans_and_corsConfiguration_areCreatedCorrectly() {
         try (var ctx = new AnnotationConfigApplicationContext()) {
             ctx.registerBean(JwtRequestFilter.class, () -> mock(JwtRequestFilter.class));
+            ctx.registerBean(TrustedProxyRequestFilter.class, () -> mock(TrustedProxyRequestFilter.class));
+            ctx.registerBean(TrustedProxyResponseSigningFilter.class, () -> mock(TrustedProxyResponseSigningFilter.class));
             ctx.register(WebSecurityConfig.class);
             ctx.refresh();
             SecurityFilterChain chain = ctx.getBean(SecurityFilterChain.class);

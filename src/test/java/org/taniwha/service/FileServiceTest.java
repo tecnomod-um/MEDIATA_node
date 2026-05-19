@@ -7,8 +7,11 @@ import org.mockito.Mock;
 import org.mockito.MockitoAnnotations;
 import org.taniwha.model.Dataset;
 import org.taniwha.model.Distribution;
+import org.taniwha.model.FileCategory;
+import org.taniwha.model.MetadataDocument;
 import org.taniwha.model.NodeMetadata;
 import org.taniwha.security.FileFilter;
+import org.taniwha.dto.FileInfoDto;
 
 import java.io.IOException;
 import java.nio.file.Files;
@@ -16,8 +19,10 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.nio.file.StandardOpenOption;
 import java.util.List;
+import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.doNothing;
@@ -36,7 +41,7 @@ class FileServiceTest {
     void setUp() {
         MockitoAnnotations.openMocks(this);
         doNothing().when(fileFilter).validate(any(Path.class));
-        fileService = new FileService(fileFilter, tempBase.toString());
+        fileService = new FileService(fileFilter, tempBase.toString(), "");
     }
 
     @Test
@@ -137,7 +142,10 @@ class FileServiceTest {
         assertThat(ds.getTheme()).containsExactly("http://th1");
         assertThat(ds.getLanguage()).containsExactly("http://lang1");
 
-        assertThat(ds.getPublisher()).isEqualTo("PubName");
+        assertThat(ds.getPublisher()).isInstanceOfSatisfying(Map.class, publisher ->
+                assertThat(publisher)
+                        .containsEntry("uri", "http://pub1")
+                        .containsEntry("foaf:name", "PubName"));
         assertThat(ds.getContactPoint()).isEqualTo("http://cp1");
         assertThat(ds.getSpatial()).isEqualTo("http://sp1");
         assertThat(ds.getTemporal()).isEqualTo("http://tmp1");
@@ -175,7 +183,63 @@ class FileServiceTest {
     }
 
     @Test
+    void readAllMetadataDocuments_readsValidatedFilesInSortedOrder() throws IOException {
+        Path md = tempBase.resolve("dataset_metadata");
+        Files.createDirectories(md);
+
+        Files.writeString(md.resolve("b.ttl"), """
+                @prefix dcat: <http://www.w3.org/ns/dcat#> .
+                <http://example.org/b> a dcat:Dataset .
+                """);
+        Files.writeString(md.resolve("a.ttl"), """
+                @prefix dcat: <http://www.w3.org/ns/dcat#> .
+                <http://example.org/a> a dcat:Dataset .
+                """);
+        Files.createDirectories(md.resolve("nested"));
+
+        List<MetadataDocument> docs = fileService.readAllMetadataDocuments();
+
+        assertThat(docs).extracting(MetadataDocument::fileName)
+                .containsExactly("a.ttl", "b.ttl");
+        assertThat(docs).extracting(MetadataDocument::content)
+                .allSatisfy(content -> assertThat(content).contains("dcat:Dataset"));
+    }
+
+    @Test
+    void parseNodeMetadata_prefersDatasetSpecificMetadataOverManagedFdpCatalog() throws Exception {
+        Path md = tempBase.resolve("dataset_metadata");
+        Files.createDirectories(md);
+
+        Files.writeString(md.resolve("fairdatapoint-generated.ttl"), """
+                @prefix dcat: <http://www.w3.org/ns/dcat#> .
+                <http://example.org/catalog> a dcat:Catalog .
+                """);
+        Files.writeString(md.resolve("GuttmannDataset.ttl"), """
+                @prefix dcat: <http://www.w3.org/ns/dcat#> .
+                @prefix dct: <http://purl.org/dc/terms/> .
+                <http://example.org/ds1> a dcat:Dataset ;
+                  dct:title "Guttmann dataset" .
+                """);
+
+        NodeMetadata nm = fileService.parseNodeMetadata();
+
+        assertThat(nm).isNotNull();
+        assertThat(nm.getSourceFile()).isEqualTo("GuttmannDataset.ttl");
+        assertThat(nm.getDataset()).hasSize(1);
+        assertThat(nm.getDataset().get(0).getTitle()).isEqualTo("Guttmann dataset");
+    }
+
+    @Test
     void getFilePath_methods_returnCorrectSubpaths() {
+        assertThatCode(() -> {
+            Files.createDirectories(tempBase.resolve("datasets"));
+            Files.createDirectories(tempBase.resolve("dataset_elements"));
+            Files.createDirectories(tempBase.resolve("dataset_metadata"));
+            Files.writeString(tempBase.resolve("datasets/foo.csv"), "a,b\n1,2\n");
+            Files.writeString(tempBase.resolve("dataset_elements/bar.txt"), "hello");
+            Files.writeString(tempBase.resolve("dataset_metadata/baz.ttl"), "@prefix dcat: <http://www.w3.org/ns/dcat#> .");
+        }).doesNotThrowAnyException();
+
         String ds = fileService.getDatasetFilePath("foo.csv");
         assertThat(ds).endsWith(Paths.get("datasets", "foo.csv").toString());
 
@@ -264,5 +328,369 @@ class FileServiceTest {
         String foo = fileService.getMappedDatasetsFolder();
         assertThat(foo).endsWith("/datasets");
         assertThat(fileService.listMappedDatasetFiles()).isEmpty();
+    }
+
+    @Test
+    void getRawNodeMetadata_returnsContentAndFileName() throws IOException {
+        Path md = tempBase.resolve("dataset_metadata");
+        Files.createDirectories(md);
+        Files.writeString(md.resolve("catalog.ttl"), "@prefix dcat: <http://www.w3.org/ns/dcat#> .");
+
+        assertThat(fileService.getRawNodeMetadata()).isEqualTo("@prefix dcat: <http://www.w3.org/ns/dcat#> .");
+        assertThat(fileService.getRawNodeMetadataFileName()).isEqualTo("catalog.ttl");
+    }
+
+    @Test
+    void getRawNodeMetadata_whenMissing_returnsNull() {
+        assertThat(fileService.getRawNodeMetadata()).isNull();
+        assertThat(fileService.getRawNodeMetadataFileName()).isNull();
+    }
+
+    @Test
+    void parseNodeMetadata_whenExtensionIsMisleading_usesFallbackParser() throws IOException {
+        Path md = tempBase.resolve("dataset_metadata");
+        Files.createDirectories(md);
+        String ttl = """
+                @prefix dcat: <http://www.w3.org/ns/dcat#> .
+                @prefix dct:  <http://purl.org/dc/terms/> .
+                <http://example.org/ds> a dcat:Dataset ;
+                  dct:title "Fallback title" .
+                """;
+        Files.writeString(md.resolve("catalog.json"), ttl);
+
+        NodeMetadata metadata = fileService.parseNodeMetadata();
+
+        assertThat(metadata).isNotNull();
+        assertThat(metadata.getSourceFile()).isEqualTo("catalog.json");
+        assertThat(metadata.getDataset()).singleElement()
+                .extracting(Dataset::getTitle)
+                .isEqualTo("Fallback title");
+    }
+
+    // -----------------------------------------------------------------------
+    // resolveXxxFilePath delegates
+    // -----------------------------------------------------------------------
+
+    @Test
+    void resolveDatasetFilePath_existingFile_returnsPath() throws IOException {
+        Path ds = tempBase.resolve("datasets");
+        Files.createDirectories(ds);
+        Files.createFile(ds.resolve("data.csv"));
+
+        Path p = fileService.resolveDatasetFilePath("data.csv");
+        assertThat(p.getFileName().toString()).isEqualTo("data.csv");
+    }
+
+    @Test
+    void datasetDownloads_areBlockedByDefault() throws IOException {
+        Path ds = tempBase.resolve("datasets");
+        Files.createDirectories(ds);
+        Files.writeString(ds.resolve("fimbartheltodos.xlsx"), "raw");
+
+        assertThat(fileService.isDatasetDownloadAllowed("fimbartheltodos.xlsx")).isFalse();
+        assertThat(fileService.resolveSharedDatasetFilePath("fimbartheltodos.xlsx")).isNull();
+    }
+
+    @Test
+    void datasetDownloads_useSharedCopiesAndTrackRename() throws IOException {
+        fileService = new FileService(fileFilter, tempBase.toString(), "fimbartheltodos");
+
+        Path ds = tempBase.resolve("datasets");
+        Files.createDirectories(ds);
+        Files.writeString(ds.resolve("fimbartheltodos.xlsx"), "raw");
+        Files.writeString(ds.resolve("parsed_fimbartheltodos.csv"), "parsed");
+
+        assertThat(fileService.isDatasetDownloadAllowed("fimbartheltodos.xlsx")).isTrue();
+        assertThat(fileService.isDatasetDownloadAllowed("parsed_fimbartheltodos.csv")).isTrue();
+
+        Path sharedRaw = fileService.resolveSharedDatasetFilePath("fimbartheltodos.xlsx");
+        Path sharedParsed = fileService.resolveSharedDatasetFilePath("parsed_fimbartheltodos.csv");
+        assertThat(sharedRaw).exists();
+        assertThat(sharedParsed).exists();
+        assertThat(sharedRaw.toString()).contains("/fairdatapoint/datasets/fimbartheltodos/");
+        assertThat(Files.readString(sharedRaw)).isEqualTo("raw");
+
+        fileService.renameFile(FileCategory.DATASETS, "fimbartheltodos.xlsx", "renamed.xlsx");
+
+        assertThat(fileService.isDatasetDownloadAllowed("renamed.xlsx")).isTrue();
+        Path renamedShared = fileService.resolveSharedDatasetFilePath("renamed.xlsx");
+        assertThat(renamedShared).exists();
+        assertThat(renamedShared.getFileName().toString()).isEqualTo("renamed.xlsx");
+        assertThat(Files.readString(renamedShared)).isEqualTo("raw");
+    }
+
+    @Test
+    void renamingUnauthorizedFileToAllowedNameDoesNotBypassPolicy() throws IOException {
+        fileService = new FileService(fileFilter, tempBase.toString(), "fimbartheltodos");
+
+        Path ds = tempBase.resolve("datasets");
+        Files.createDirectories(ds);
+        Files.writeString(ds.resolve("fimbartheltodos.xlsx"), "allowed-raw");
+        Files.writeString(ds.resolve("secret.xlsx"), "secret");
+
+        assertThat(fileService.isDatasetDownloadAllowed("fimbartheltodos.xlsx")).isTrue();
+        fileService.renameFile(FileCategory.DATASETS, "secret.xlsx", "fimbartheltodos-copy.xlsx");
+
+        assertThat(fileService.isDatasetDownloadAllowed("fimbartheltodos-copy.xlsx")).isFalse();
+    }
+
+    @Test
+    void explicitShareabilityToggle_marksWholeDatasetFamilyAndCanBeRevoked() throws IOException {
+        Path ds = tempBase.resolve("datasets");
+        Files.createDirectories(ds);
+        Files.writeString(ds.resolve("samplefile.csv"), "raw");
+        Files.writeString(ds.resolve("parsed_samplefile.csv"), "parsed");
+
+        assertThat(fileService.setDatasetFamilyDownloadable("samplefile.csv", true))
+                .containsExactly("parsed_samplefile.csv", "samplefile.csv");
+        assertThat(fileService.isDatasetDownloadAllowed("samplefile.csv")).isTrue();
+        assertThat(fileService.isDatasetDownloadAllowed("parsed_samplefile.csv")).isTrue();
+
+        Path sharedRaw = fileService.resolveSharedDatasetFilePath("samplefile.csv");
+        Path sharedParsed = fileService.resolveSharedDatasetFilePath("parsed_samplefile.csv");
+        assertThat(sharedRaw).exists();
+        assertThat(sharedParsed).exists();
+
+        assertThat(fileService.setDatasetFamilyDownloadable("samplefile.csv", false))
+                .containsExactly("parsed_samplefile.csv", "samplefile.csv");
+        assertThat(fileService.isDatasetDownloadAllowed("samplefile.csv")).isFalse();
+        assertThat(fileService.isDatasetDownloadAllowed("parsed_samplefile.csv")).isFalse();
+        assertThat(sharedRaw).doesNotExist();
+        assertThat(sharedParsed).doesNotExist();
+    }
+
+    @Test
+    void derivedShareability_isInheritedOnlyFromTrackedSourceDataset() throws IOException {
+        Path ds = tempBase.resolve("datasets");
+        Files.createDirectories(ds);
+        Files.writeString(ds.resolve("samplefile.csv"), "raw");
+        Files.writeString(ds.resolve("parsed_samplefile.csv"), "parsed");
+
+        fileService.setDatasetFamilyDownloadable("samplefile.csv", true);
+        fileService.setDatasetFamilyDownloadable("samplefile.csv", false);
+        fileService.setDatasetFamilyDownloadable("samplefile.csv", true);
+
+        Files.writeString(ds.resolve("parsed_samplefile_v2.csv"), "parsed-v2");
+        fileService.registerDerivedDatasetShareability("samplefile.csv", "parsed_samplefile_v2.csv");
+
+        assertThat(fileService.isDatasetDownloadAllowed("parsed_samplefile_v2.csv")).isTrue();
+
+        Files.writeString(ds.resolve("secret.csv"), "secret");
+        Files.writeString(ds.resolve("parsed_secret.csv"), "secret-parsed");
+        fileService.registerDerivedDatasetShareability("secret.csv", "parsed_secret.csv");
+
+        assertThat(fileService.isDatasetDownloadAllowed("parsed_secret.csv")).isFalse();
+    }
+
+    @Test
+    void resolveElementFilePath_existingFile_returnsPath() throws IOException {
+        Path el = tempBase.resolve("dataset_elements");
+        Files.createDirectories(el);
+        Files.createFile(el.resolve("el.csv"));
+
+        Path p = fileService.resolveElementFilePath("el.csv");
+        assertThat(p.getFileName().toString()).isEqualTo("el.csv");
+    }
+
+    @Test
+    void resolveMappedDatasetFilePath_existingFile_returnsPath() throws IOException {
+        Path ds = tempBase.resolve("datasets");
+        Files.createDirectories(ds);
+        Files.createFile(ds.resolve("mapped.csv"));
+
+        Path p = fileService.resolveMappedDatasetFilePath("mapped.csv");
+        assertThat(p.getFileName().toString()).isEqualTo("mapped.csv");
+    }
+
+    @Test
+    void resolveMetadataFilePath_existingFile_returnsPath() throws IOException {
+        Path md = tempBase.resolve("dataset_metadata");
+        Files.createDirectories(md);
+        Files.createFile(md.resolve("meta.ttl"));
+
+        Path p = fileService.resolveMetadataFilePath("meta.ttl");
+        assertThat(p.getFileName().toString()).isEqualTo("meta.ttl");
+    }
+
+    // -----------------------------------------------------------------------
+    // resolveExistingFilePath – error cases (dirFor coverage for all categories)
+    // -----------------------------------------------------------------------
+
+    @Test
+    void resolveExistingFilePath_fhirMappings_existingFile() throws IOException {
+        Path dir = tempBase.resolve("fhir_mappings");
+        Files.createDirectories(dir);
+        Files.createFile(dir.resolve("map.json"));
+
+        Path p = fileService.resolveExistingFilePath(FileCategory.FHIR_MAPPINGS, "map.json");
+        assertThat(p.getFileName().toString()).isEqualTo("map.json");
+    }
+
+    @Test
+    void resolveExistingFilePath_datasetElements_existingFile() throws IOException {
+        Path dir = tempBase.resolve("dataset_elements");
+        Files.createDirectories(dir);
+        Files.createFile(dir.resolve("el.csv"));
+
+        Path p = fileService.resolveExistingFilePath(FileCategory.DATASET_ELEMENTS, "el.csv");
+        assertThat(p.getFileName().toString()).isEqualTo("el.csv");
+    }
+
+    @Test
+    void resolveExistingFilePath_datasetMetadata_existingFile() throws IOException {
+        Path dir = tempBase.resolve("dataset_metadata");
+        Files.createDirectories(dir);
+        Files.createFile(dir.resolve("meta.ttl"));
+
+        Path p = fileService.resolveExistingFilePath(FileCategory.DATASET_METADATA, "meta.ttl");
+        assertThat(p.getFileName().toString()).isEqualTo("meta.ttl");
+    }
+
+    @Test
+    void resolveExistingFilePath_mappedDatasets_existingFile() throws IOException {
+        Path dir = tempBase.resolve("datasets");
+        Files.createDirectories(dir);
+        Files.createFile(dir.resolve("parsed.csv"));
+
+        Path p = fileService.resolveExistingFilePath(FileCategory.MAPPED_DATASETS, "parsed.csv");
+        assertThat(p.getFileName().toString()).isEqualTo("parsed.csv");
+    }
+
+    @Test
+    void resolveExistingFilePath_missingFile_throwsIllegalArgument() throws IOException {
+        Path dir = tempBase.resolve("datasets");
+        Files.createDirectories(dir);
+
+        assertThatThrownBy(() -> fileService.resolveExistingFilePath(FileCategory.DATASETS, "missing.csv"))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("File does not exist");
+    }
+
+    @Test
+    void resolveExistingFilePath_pathTraversal_throwsIllegalArgument() {
+        assertThatThrownBy(() -> fileService.resolveExistingFilePath(FileCategory.DATASETS, "../escape.csv"))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    // -----------------------------------------------------------------------
+    // listFilesWithInfo
+    // -----------------------------------------------------------------------
+
+    @Test
+    void listFilesWithInfo_returnsFileMetadata() throws IOException {
+        Path ds = tempBase.resolve("datasets");
+        Files.createDirectories(ds);
+        Files.writeString(ds.resolve("a.csv"), "col1,col2\n1,2\n");
+        Files.writeString(ds.resolve("b.csv"), "x\n");
+
+        List<FileInfoDto> infos = fileService.listFilesWithInfo(FileCategory.DATASETS);
+
+        assertThat(infos).hasSize(2);
+        // sorted alphabetically
+        assertThat(infos.get(0).getName()).isEqualTo("a.csv");
+        assertThat(infos.get(1).getName()).isEqualTo("b.csv");
+        assertThat(infos.get(0).getSizeBytes()).isGreaterThan(0);
+    }
+
+    @Test
+    void listFilesWithInfo_emptyDirectory_returnsEmptyList() throws IOException {
+        Path ds = tempBase.resolve("datasets");
+        Files.createDirectories(ds);
+
+        List<FileInfoDto> infos = fileService.listFilesWithInfo(FileCategory.DATASETS);
+
+        assertThat(infos).isEmpty();
+    }
+
+    @Test
+    void listFilesWithInfo_nonExistentDirectory_returnsEmptyList() {
+        List<FileInfoDto> infos = fileService.listFilesWithInfo(FileCategory.DATASETS);
+        assertThat(infos).isEmpty();
+    }
+
+    @Test
+    void listFilesWithInfo_skipsSubdirectories() throws IOException {
+        Path ds = tempBase.resolve("datasets");
+        Files.createDirectories(ds);
+        Files.writeString(ds.resolve("real.csv"), "data");
+        Files.createDirectories(ds.resolve("subdir"));
+
+        List<FileInfoDto> infos = fileService.listFilesWithInfo(FileCategory.DATASETS);
+        assertThat(infos).hasSize(1).extracting(FileInfoDto::getName).containsExactly("real.csv");
+    }
+
+    // -----------------------------------------------------------------------
+    // deleteFile
+    // -----------------------------------------------------------------------
+
+    @Test
+    void deleteFile_existingFile_deletesIt() throws IOException {
+        Path ds = tempBase.resolve("datasets");
+        Files.createDirectories(ds);
+        Path f = ds.resolve("del.csv");
+        Files.writeString(f, "data");
+
+        fileService.deleteFile(FileCategory.DATASETS, "del.csv");
+
+        assertThat(Files.exists(f)).isFalse();
+    }
+
+    @Test
+    void deleteFile_nonExistentFile_doesNotThrow() throws IOException {
+        Path ds = tempBase.resolve("datasets");
+        Files.createDirectories(ds);
+
+        assertThatCode(() -> fileService.deleteFile(FileCategory.DATASETS, "ghost.csv"))
+                .doesNotThrowAnyException();
+    }
+
+    // -----------------------------------------------------------------------
+    // renameFile
+    // -----------------------------------------------------------------------
+
+    @Test
+    void renameFile_renamesSuccessfully() throws IOException {
+        Path ds = tempBase.resolve("datasets");
+        Files.createDirectories(ds);
+        Files.writeString(ds.resolve("old.csv"), "data");
+
+        fileService.renameFile(FileCategory.DATASETS, "old.csv", "new.csv");
+
+        assertThat(Files.exists(ds.resolve("old.csv"))).isFalse();
+        assertThat(Files.exists(ds.resolve("new.csv"))).isTrue();
+    }
+
+    @Test
+    void renameFile_sameSourceAndDest_doesNothing() throws IOException {
+        Path ds = tempBase.resolve("datasets");
+        Files.createDirectories(ds);
+        Files.writeString(ds.resolve("same.csv"), "data");
+
+        assertThatCode(() -> fileService.renameFile(FileCategory.DATASETS, "same.csv", "same.csv"))
+                .doesNotThrowAnyException();
+
+        assertThat(Files.exists(ds.resolve("same.csv"))).isTrue();
+    }
+
+    @Test
+    void renameFile_destinationAlreadyExists_throws() throws IOException {
+        Path ds = tempBase.resolve("datasets");
+        Files.createDirectories(ds);
+        Files.writeString(ds.resolve("src.csv"), "data");
+        Files.writeString(ds.resolve("dst.csv"), "existing");
+
+        assertThatThrownBy(() -> fileService.renameFile(FileCategory.DATASETS, "src.csv", "dst.csv"))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("Destination already exists");
+    }
+
+    @Test
+    void renameFile_emptyDestinationName_throws() throws IOException {
+        Path ds = tempBase.resolve("datasets");
+        Files.createDirectories(ds);
+        Files.writeString(ds.resolve("src.csv"), "data");
+
+        assertThatThrownBy(() -> fileService.renameFile(FileCategory.DATASETS, "src.csv", ""))
+                .isInstanceOf(IllegalArgumentException.class);
     }
 }

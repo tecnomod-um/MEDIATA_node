@@ -9,10 +9,18 @@ import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 import org.taniwha.dto.DataCleaningOptionsDTO;
 import org.taniwha.dto.FileMappingsDTO;
 import org.taniwha.dto.HarmonizationStatusDTO;
+import org.taniwha.dto.mapping.MappingDefinitionDTO;
+import org.taniwha.dto.mapping.MappingInputDTO;
+import org.taniwha.dto.mapping.MappingMatcherDTO;
+import org.taniwha.dto.mapping.MappingMetadataDTO;
+import org.taniwha.dto.mapping.MappingRuleDTO;
+import org.taniwha.dto.mapping.MappingSpecDTO;
+import org.taniwha.dto.mapping.RuleResultDTO;
 import org.taniwha.service.HarmonizerService;
 import org.taniwha.service.jobs.HarmonizationProcessingJobs;
 
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 
 import static org.mockito.ArgumentMatchers.*;
@@ -35,19 +43,17 @@ class HarmonizationControllerTest {
         objectMapper = new ObjectMapper();
 
         mvc = MockMvcBuilders
-                .standaloneSetup(new HarmonizationController(harmonizerService, jobs, objectMapper))
+                .standaloneSetup(new HarmonizationController(harmonizerService, jobs))
                 .build();
     }
 
     @Test
     void parseAndClean_success_returns202AndJobId() throws Exception {
-        Map<String, List<String>> mapping = Map.of("f1.csv", List.of("colA", "colB"));
-        String mappingsJson = objectMapper.writeValueAsString(mapping);
-        String configs = "{\"foo\":\"bar\"}";
+        Map<String, List<String>> fileMappings = Map.of("cfg1", List.of("d1.csv"));
 
         FileMappingsDTO dto = new FileMappingsDTO();
-        dto.setFileMappings(mappingsJson);
-        dto.setConfigs(configs);
+        dto.setFileMappings(fileMappings);
+        dto.setMappingSpec(minimalStandardSpec());
         dto.setCleaningOptions(new DataCleaningOptionsDTO());
 
         mvc.perform(post("/api/harmonization/parse")
@@ -58,20 +64,15 @@ class HarmonizationControllerTest {
                 .andExpect(jsonPath("$.progress").value(true));
 
         verify(harmonizerService, times(1))
-                .startParseJob(anyString(), eq(configs), eq(mapping), any(DataCleaningOptionsDTO.class));
+                .startParseJob(anyString(), any(MappingSpecDTO.class), eq(fileMappings), any(DataCleaningOptionsDTO.class));
     }
 
     @Test
-    void parseAndClean_badJsonInMappings_returns500() throws Exception {
-        FileMappingsDTO dto = new FileMappingsDTO();
-        dto.setFileMappings("not a valid JSON");
-        dto.setConfigs("");
-        dto.setCleaningOptions(new DataCleaningOptionsDTO());
-
+    void parseAndClean_badBody_returns400() throws Exception {
         mvc.perform(post("/api/harmonization/parse")
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(dto)))
-                .andExpect(status().isInternalServerError());
+                        .content("{\"fileMappings\":\"not-an-object\"}"))
+                .andExpect(status().isBadRequest());
 
         verifyNoInteractions(harmonizerService);
     }
@@ -122,5 +123,98 @@ class HarmonizationControllerTest {
 
         mvc.perform(get("/api/harmonization/parse/result/{jobId}", jobId))
                 .andExpect(status().isConflict());
+    }
+
+    private MappingSpecDTO minimalStandardSpec() {
+        MappingMatcherDTO matcher = new MappingMatcherDTO();
+        matcher.setSourceId("n1::elements.csv");
+        matcher.setColumn("a");
+        matcher.setMatchType("exact");
+        matcher.setValue("foo");
+
+        MappingRuleDTO rule = new MappingRuleDTO();
+        rule.setId("r1");
+        rule.setLogic(toJsonLogic(matcher));
+        rule.setThen(literalResult("YES"));
+        rule.setMetadata(new MappingMetadataDTO());
+
+        MappingInputDTO input = new MappingInputDTO();
+        input.setSourceId("n1::elements.csv");
+        input.setColumn("a");
+
+        MappingDefinitionDTO mapping = new MappingDefinitionDTO();
+        mapping.setId("m1");
+        mapping.setTargetField("mapped");
+        mapping.setMappingType("standard");
+        mapping.setInputs(List.of(input));
+        mapping.setRules(List.of(rule));
+        mapping.setMetadata(new MappingMetadataDTO());
+
+        MappingSpecDTO spec = new MappingSpecDTO();
+        spec.setSpecVersion("1.0.0");
+        spec.setMappings(List.of(mapping));
+        return spec;
+    }
+
+    private RuleResultDTO literalResult(String value) {
+        RuleResultDTO result = new RuleResultDTO();
+        result.setKind("literal");
+        result.setValue(value);
+        return result;
+    }
+
+    @Test
+    void parseAndClean_serviceThrows_returns500() throws Exception {
+        Map<String, List<String>> fileMappings = Map.of("cfg1", List.of("d1.csv"));
+
+        FileMappingsDTO dto = new FileMappingsDTO();
+        dto.setFileMappings(fileMappings);
+        dto.setMappingSpec(minimalStandardSpec());
+
+        doThrow(new RuntimeException("disk error"))
+                .when(harmonizerService)
+                .startParseJob(anyString(), any(), any(), any());
+
+        mvc.perform(post("/api/harmonization/parse")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(dto)))
+                .andExpect(status().isInternalServerError());
+    }
+
+    @Test
+    void parseResult_withUnknownJob_returns404() throws Exception {
+        mvc.perform(get("/api/harmonization/parse/result/does-not-exist"))
+                .andExpect(status().isNotFound());
+    }
+
+    private Map<String, Object> toJsonLogic(MappingMatcherDTO matcher) {
+        String sourceId = matcher.getSourceId();
+        String column = matcher.getColumn();
+        String varPath = sourceId + "::" + column;
+        String matchType = matcher.getMatchType() == null
+                ? ""
+                : matcher.getMatchType().trim().toLowerCase(Locale.ROOT);
+
+        return switch (matchType) {
+            case "exact" -> Map.of(
+                    "==", List.of(
+                            Map.of("var", varPath),
+                            matcher.getValue()
+                    )
+            );
+            case "type" -> Map.of(
+                    "type", List.of(
+                            Map.of("var", varPath),
+                            matcher.getValueType()
+                    )
+            );
+            case "range" -> Map.of(
+                    "and", List.of(
+                            Map.of(">=", List.of(Map.of("var", varPath), matcher.getMinValue())),
+                            Map.of("<=", List.of(Map.of("var", varPath), matcher.getMaxValue()))
+                    )
+            );
+            default -> throw new IllegalArgumentException("Unsupported matcher type in test: " + matcher.getMatchType());
+        };
     }
 }

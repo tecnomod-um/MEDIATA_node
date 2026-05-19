@@ -125,7 +125,7 @@ class NodeControllerTest {
         String sgt = "SGT456";
         when(nodeAccessService.validateUserToken(oldJwt, sgt)).thenReturn(true);
         when(jwtTokenUtil.getUsernameFromToken(oldJwt)).thenReturn("alice");
-        when(jwtTokenUtil.generateToken("alice")).thenReturn("NEW.JWT");
+        when(jwtTokenUtil.generateNodeAccessToken("alice")).thenReturn("NEW.JWT");
 
         NodeValidationRequestDTO req = new NodeValidationRequestDTO();
         req.setKerberosToken(sgt);

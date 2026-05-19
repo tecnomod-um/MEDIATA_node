@@ -47,7 +47,12 @@ public class JwtRequestFilter extends OncePerRequestFilter {
 
     private boolean isExemptedEndpoint(HttpServletRequest request) {
         String requestURI = request.getRequestURI();
-        return requestURI.startsWith("/taniwha/node");
+        String contextPath = request.getContextPath();
+        String applicationPath = contextPath != null && !contextPath.isEmpty() && requestURI.startsWith(contextPath)
+                ? requestURI.substring(contextPath.length())
+                : requestURI;
+
+        return applicationPath.startsWith("/node") || applicationPath.startsWith("/fdp");
     }
 
     private String extractJwtToken(HttpServletRequest request, HttpServletResponse response) throws IOException {

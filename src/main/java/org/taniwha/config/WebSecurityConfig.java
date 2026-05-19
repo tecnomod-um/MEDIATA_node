@@ -18,6 +18,8 @@ import org.springframework.web.cors.CorsConfiguration;
 import org.springframework.web.cors.CorsConfigurationSource;
 import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
 import org.taniwha.security.JwtRequestFilter;
+import org.taniwha.security.TrustedProxyRequestFilter;
+import org.taniwha.security.TrustedProxyResponseSigningFilter;
 
 import java.util.Collections;
 
@@ -27,9 +29,15 @@ import java.util.Collections;
 public class WebSecurityConfig {
 
     private final JwtRequestFilter jwtRequestFilter;
+    private final TrustedProxyRequestFilter trustedProxyRequestFilter;
+    private final TrustedProxyResponseSigningFilter trustedProxyResponseSigningFilter;
 
-    public WebSecurityConfig(JwtRequestFilter jwtRequestFilter) {
+    public WebSecurityConfig(JwtRequestFilter jwtRequestFilter,
+                             TrustedProxyRequestFilter trustedProxyRequestFilter,
+                             TrustedProxyResponseSigningFilter trustedProxyResponseSigningFilter) {
         this.jwtRequestFilter = jwtRequestFilter;
+        this.trustedProxyRequestFilter = trustedProxyRequestFilter;
+        this.trustedProxyResponseSigningFilter = trustedProxyResponseSigningFilter;
     }
 
     @Bean
@@ -44,6 +52,8 @@ public class WebSecurityConfig {
                                 "/node/validate",
                                 "/node/health",
                                 "/node/metadata",
+                                "/fdp",
+                                "/fdp/**",
                                 "/api/user/login",
                                 "/api/user/register",
                                 "/api/error",
@@ -55,7 +65,9 @@ public class WebSecurityConfig {
                 .sessionManagement(session -> session
                         .sessionCreationPolicy(SessionCreationPolicy.STATELESS)
                 );
-        http.addFilterBefore(jwtRequestFilter, UsernamePasswordAuthenticationFilter.class);
+        http.addFilterBefore(trustedProxyRequestFilter, UsernamePasswordAuthenticationFilter.class);
+        http.addFilterAfter(jwtRequestFilter, TrustedProxyRequestFilter.class);
+        http.addFilterAfter(trustedProxyResponseSigningFilter, JwtRequestFilter.class);
         return http.build();
     }
 

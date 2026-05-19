@@ -1,0 +1,17 @@
+.git
+.idea
+.env
+node-secrets.env
+*.jar
+*.jar.original
+target/*
+!target/TANIWHA_Backend_node.jar
+taniwha
+taniwha.log
+__pycache__/
+*.py[cod]
+README.md
+GUIDELINES.md
+LICENSE.md
+node-secrets.env.example
+badges

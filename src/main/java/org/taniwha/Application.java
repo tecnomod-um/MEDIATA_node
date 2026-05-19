@@ -51,8 +51,12 @@ public class Application {
             Application app = context.getBean(Application.class);
             NodeSyncService nodeService = context.getBean(NodeSyncService.class);
 
-            // Register node with central backend
-            nodeService.registerWithCentralBackend();
+            try {
+                // Keep the node available locally even if the central backend is offline.
+                nodeService.registerWithCentralBackend();
+            } catch (Exception registrationFailure) {
+                logger.warn("Node registration during startup failed; continuing without a central backend session.", registrationFailure);
+            }
             app.startHeartbeatScheduler(nodeService);
 
 

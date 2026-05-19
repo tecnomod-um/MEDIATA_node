@@ -44,6 +44,7 @@ class JwtRequestFilterTest {
     @Test
     void doFilterInternal_exemptedEndpoint_shouldBypassFilter() throws ServletException, IOException {
         request.setRequestURI("/taniwha/node/register");
+        request.setContextPath("/taniwha");
 
         jwtRequestFilter.doFilterInternal(request, response, filterChain);
 
@@ -54,6 +55,7 @@ class JwtRequestFilterTest {
     @Test
     void doFilterInternal_validToken_shouldAuthenticateAndContinue() throws ServletException, IOException {
         request.setRequestURI("/taniwha/api/data");
+        request.setContextPath("/taniwha");
         request.addHeader("Authorization", "Bearer validToken123");
         when(jwtTokenUtil.validateToken("validToken123")).thenReturn(true);
 
@@ -67,6 +69,19 @@ class JwtRequestFilterTest {
     @Test
     void doFilterInternal_missingAuthorizationHeader_shouldReturnUnauthorized() throws ServletException, IOException {
         request.setRequestURI("/taniwha/api/data");
+        request.setContextPath("/taniwha");
+
+        jwtRequestFilter.doFilterInternal(request, response, filterChain);
+
+        assertThat(response.getStatus()).isEqualTo(401);
+        assertThat(response.getErrorMessage()).contains("JWT Token does not begin with Bearer String");
+        verify(filterChain, never()).doFilter(any(), any());
+    }
+
+    @Test
+    void doFilterInternal_fairDataPointSyncPathWithoutAuthorization_shouldRemainProtected() throws ServletException, IOException {
+        request.setRequestURI("/taniwha/api/fairdatapoint/sync/catalogs");
+        request.setContextPath("/taniwha");
 
         jwtRequestFilter.doFilterInternal(request, response, filterChain);
 
@@ -78,6 +93,7 @@ class JwtRequestFilterTest {
     @Test
     void doFilterInternal_invalidBearerFormat_shouldReturnUnauthorized() throws ServletException, IOException {
         request.setRequestURI("/taniwha/api/data");
+        request.setContextPath("/taniwha");
         request.addHeader("Authorization", "Basic invalidFormat");
 
         jwtRequestFilter.doFilterInternal(request, response, filterChain);
@@ -90,6 +106,7 @@ class JwtRequestFilterTest {
     @Test
     void doFilterInternal_expiredToken_shouldReturnUnauthorized() throws ServletException, IOException {
         request.setRequestURI("/taniwha/api/data");
+        request.setContextPath("/taniwha");
         request.addHeader("Authorization", "Bearer expiredToken");
         when(jwtTokenUtil.validateToken("expiredToken"))
                 .thenThrow(new ExpiredJwtException(null, null, "Token expired"));
@@ -105,6 +122,7 @@ class JwtRequestFilterTest {
     @Test
     void doFilterInternal_invalidSignature_shouldReturnUnauthorized() throws ServletException, IOException {
         request.setRequestURI("/taniwha/api/data");
+        request.setContextPath("/taniwha");
         request.addHeader("Authorization", "Bearer invalidSignatureToken");
         when(jwtTokenUtil.validateToken("invalidSignatureToken"))
                 .thenThrow(new SignatureException("Invalid signature"));
@@ -119,6 +137,7 @@ class JwtRequestFilterTest {
     @Test
     void doFilterInternal_malformedToken_shouldReturnUnauthorized() throws ServletException, IOException {
         request.setRequestURI("/taniwha/api/data");
+        request.setContextPath("/taniwha");
         request.addHeader("Authorization", "Bearer malformedToken");
         when(jwtTokenUtil.validateToken("malformedToken"))
                 .thenThrow(new MalformedJwtException("Malformed JWT"));
@@ -133,6 +152,7 @@ class JwtRequestFilterTest {
     @Test
     void doFilterInternal_tokenValidationReturnsFalse_shouldReturnUnauthorized() throws ServletException, IOException {
         request.setRequestURI("/taniwha/api/data");
+        request.setContextPath("/taniwha");
         request.addHeader("Authorization", "Bearer invalidToken");
         when(jwtTokenUtil.validateToken("invalidToken")).thenReturn(false);
 
@@ -146,6 +166,7 @@ class JwtRequestFilterTest {
     @Test
     void isExemptedEndpoint_nodeEndpoints_shouldBeExempted() {
         request.setRequestURI("/taniwha/node/status");
+        request.setContextPath("/taniwha");
         
         // Access the filter to test - this would normally be tested via doFilterInternal
         // but we can verify behavior through the main method
@@ -162,7 +183,9 @@ class JwtRequestFilterTest {
         String[] exemptedPaths = {
             "/taniwha/node/register",
             "/taniwha/node/heartbeat",
-            "/taniwha/node/status"
+            "/taniwha/node/status",
+            "/taniwha/fdp",
+            "/taniwha/fdp/catalog/node-catalog"
         };
 
         for (String path : exemptedPaths) {
@@ -171,6 +194,7 @@ class JwtRequestFilterTest {
             FilterChain chain = mock(FilterChain.class);
             
             req.setRequestURI(path);
+            req.setContextPath("/taniwha");
             jwtRequestFilter.doFilterInternal(req, resp, chain);
             
             verify(chain).doFilter(req, resp);
