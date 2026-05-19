@@ -369,7 +369,6 @@ public class FairDataPointCatalogSyncService {
     private Model prepareDatasetModel(Model source,
                                       Resource originalDataset,
                                       String fileName,
-                                      int datasetIndex,
                                       URI parentCatalogUri) {
         Model result = ModelFactory.createDefaultModel();
         result.setNsPrefixes(source.getNsPrefixMap());
