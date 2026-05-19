@@ -155,11 +155,12 @@ public class FairDataPointCatalogSyncService {
         }
 
         Map<String, URI> createdCatalogBySource = new LinkedHashMap<>();
+        int catalogIndex = 1;
         for (Resource catalog : catalogs) {
             URI createdCatalog = createMetadataResource(
                     "catalog",
                     bearerToken,
-                    toTurtle(prepareCatalogModel(model, catalog, fileName))
+                    toTurtle(prepareCatalogModel(model, catalog, fileName, catalogIndex++))
             );
             publishMetadataResource(bearerToken, createdCatalog);
             createdCatalogBySource.put(resourceKey(catalog), createdCatalog);
@@ -169,6 +170,7 @@ public class FairDataPointCatalogSyncService {
         }
 
         Map<String, URI> createdDatasetBySource = new LinkedHashMap<>();
+        int datasetIndex = 1;
         for (Resource dataset : datasets) {
             URI parentCatalogUri = resolveParentResourceUri(
                     model,
@@ -186,13 +188,14 @@ public class FairDataPointCatalogSyncService {
             URI createdDataset = createMetadataResource(
                     "dataset",
                     bearerToken,
-                    toTurtle(prepareDatasetModel(model, dataset, fileName, parentCatalogUri))
+                    toTurtle(prepareDatasetModel(model, dataset, fileName, datasetIndex++, parentCatalogUri))
             );
             publishMetadataResource(bearerToken, createdDataset);
             createdDatasetBySource.put(resourceKey(dataset), createdDataset);
             createdDatasetUris.add(createdDataset.toString());
         }
 
+        int distributionIndex = 1;
         for (Resource distribution : distributions) {
             URI parentDatasetUri = resolveParentResourceUri(
                     model,
@@ -210,7 +213,7 @@ public class FairDataPointCatalogSyncService {
             URI createdDistribution = createMetadataResource(
                     "distribution",
                     bearerToken,
-                    toTurtle(prepareDistributionModel(model, distribution, fileName, parentDatasetUri))
+                    toTurtle(prepareDistributionModel(model, distribution, fileName, distributionIndex++, parentDatasetUri))
             );
             publishMetadataResource(bearerToken, createdDistribution);
             createdDistributionUris.add(createdDistribution.toString());
