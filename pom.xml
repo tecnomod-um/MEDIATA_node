@@ -125,8 +125,7 @@
 
         <dependency>
             <groupId>org.mongodb</groupId>
-            <artifactId>mongodb-driver-core</artifactId>
-            <version>4.7.1</version>
+            <artifactId>bson</artifactId>
         </dependency>
 
         <dependency>
