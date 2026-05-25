@@ -9,6 +9,7 @@ import java.util.Map;
 @Getter
 public class FileFilters {
     private String fileName;
+    private String nodeId;
     private Map<String, Object> filters;
 
 }

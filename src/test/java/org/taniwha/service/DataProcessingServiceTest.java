@@ -392,4 +392,122 @@ class DataProcessingServiceTest {
         var out = service.extractFilteredDataFromPath(csv, filters);
         assertThat(out).isEmpty();
     }
+
+    @Test
+    @DisplayName("extractFilteredDataFromPath – feature names with file suffix (frontend structure)")
+    void extractFilteredDataFromPath_csv_featureWithFileSuffix_stripsCorrectly() throws Exception {
+        Path csv = Files.createTempFile("dps_suffix", ".csv");
+        Files.writeString(csv, "age,name\n25,Alice\n30,Bob\n15,Charlie\n");
+        doNothing().when(fileFilter).validate(csv);
+        
+        // This is the exact structure the frontend sends with file suffix in feature names
+        Map<String, Object> filters = Map.of(
+                "operator", "AND",
+                "conditions", Map.of(
+                        "age (dps_suffix.csv)", Map.of(
+                                "conditions", List.of(
+                                        Map.of("type", "greater", "filterType", "continuous", "value", "18")
+                                ),
+                                "operators", List.of()
+                        )
+                )
+        );
+
+        var out = service.extractFilteredDataFromPath(csv, filters);
+        
+        // Should match age > 18, which is Alice and Bob
+        assertThat(out).hasSize(2)
+                .extracting(m -> m.get("name"))
+                .containsExactlyInAnyOrder("Alice", "Bob");
+    }
+
+    @Test
+    @DisplayName("extractFilteredDataFromPath – multiple features with file suffixes and operators")
+    void extractFilteredDataFromPath_csv_multipleFeaturesSuffixes_appliesCorrectly() throws Exception {
+        Path csv = Files.createTempFile("dps_multi", ".csv");
+        Files.writeString(csv, "age,salary,name\n25,50000,Alice\n30,60000,Bob\n35,40000,Charlie\n");
+        doNothing().when(fileFilter).validate(csv);
+        
+        // Multiple features with file suffixes and AND operator between features
+        Map<String, Object> filters = Map.of(
+                "operator", "AND",
+                "conditions", Map.of(
+                        "age (dps_multi.csv)", Map.of(
+                                "conditions", List.of(
+                                        Map.of("type", "greater", "filterType", "continuous", "value", "20")
+                                ),
+                                "operators", List.of()
+                        ),
+                        "salary (dps_multi.csv)", Map.of(
+                                "conditions", List.of(
+                                        Map.of("type", "greater", "filterType", "continuous", "value", "45000")
+                                ),
+                                "operators", List.of()
+                        )
+                )
+        );
+
+        var out = service.extractFilteredDataFromPath(csv, filters);
+        
+        // Should match age > 20 AND salary > 45000, which is Alice and Bob
+        assertThat(out).hasSize(2)
+                .extracting(m -> m.get("name"))
+                .containsExactlyInAnyOrder("Alice", "Bob");
+    }
+
+    @Test
+    @DisplayName("extractFilteredDataFromPath – categorical filter with file suffix")
+    void extractFilteredDataFromPath_csv_categoricalWithSuffix_filtersCorrectly() throws Exception {
+        Path csv = Files.createTempFile("dps_cat", ".csv");
+        Files.writeString(csv, "category,value\nA,10\nB,20\nA,30\n");
+        doNothing().when(fileFilter).validate(csv);
+        
+        // Categorical filter with multiple values (frontend sends one condition per category)
+        Map<String, Object> filters = Map.of(
+                "operator", "AND",
+                "conditions", Map.of(
+                        "category (dps_cat.csv)", Map.of(
+                                "conditions", List.of(
+                                        Map.of("type", "equal", "filterType", "categorical", "value", "A")
+                                ),
+                                "operators", List.of()
+                        )
+                )
+        );
+
+        var out = service.extractFilteredDataFromPath(csv, filters);
+        
+        // Should match category = A
+        assertThat(out).hasSize(2)
+                .allSatisfy(m -> assertThat(m.get("category")).isEqualTo("A"));
+    }
+
+    @Test
+    @DisplayName("extractFilteredDataFromPath – feature names with spaces in filename suffix")
+    void extractFilteredDataFromPath_csv_featureWithSpacesInFilename_stripsCorrectly() throws Exception {
+        Path csv = Files.createTempFile("data file", ".csv");
+        Files.writeString(csv, "age,name\n25,Alice\n30,Bob\n15,Charlie\n");
+        doNothing().when(fileFilter).validate(csv);
+        
+        String fileName = csv.getFileName().toString();
+        // Feature name with filename that contains spaces
+        Map<String, Object> filters = Map.of(
+                "operator", "AND",
+                "conditions", Map.of(
+                        "age (" + fileName + ")", Map.of(
+                                "conditions", List.of(
+                                        Map.of("type", "greater", "filterType", "continuous", "value", "18")
+                                ),
+                                "operators", List.of()
+                        )
+                )
+        );
+
+        var out = service.extractFilteredDataFromPath(csv, filters);
+        
+        // Should match age > 18
+        assertThat(out).hasSize(2)
+                .extracting(m -> m.get("name"))
+                .containsExactlyInAnyOrder("Alice", "Bob");
+    }
 }
