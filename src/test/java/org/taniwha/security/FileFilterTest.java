@@ -121,7 +121,6 @@ class FileFilterTest {
 
     @Test
     void isFileInvalid_multipartFile_withValidXlsxFile_shouldReturnFalse() {
-        // Create a minimal XLSX file header (PK zip signature)
         byte[] xlsxHeader = new byte[]{0x50, 0x4B, 0x03, 0x04};
         MultipartFile file = new MockMultipartFile(
                 "file",
@@ -166,4 +165,3 @@ class FileFilterTest {
         assertThat(fileFilter.isFileInvalid(file)).isTrue();
     }
 }
-

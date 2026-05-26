@@ -65,10 +65,9 @@ class JwtTokenUtilTest {
         JwtTokenUtil util = loadWith("myVerySecretKeyThatIsAtLeast32BytesLongForSecurityPurposes", "3600");
 
         String token1 = util.generateToken("alice");
-        Thread.sleep(1100); // Ensure different timestamps (must be > 1 second for iat claim)
+        Thread.sleep(1100); // iat claim resolution is one second.
         String token2 = util.generateToken("alice");
 
-        // Tokens should differ because issuedAt timestamp changes
         assertThat(token1).isNotEqualTo(token2);
     }
 

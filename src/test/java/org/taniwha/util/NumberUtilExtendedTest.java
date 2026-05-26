@@ -38,7 +38,6 @@ class NumberUtilExtendedTest {
 
     @Test
     void parseDouble_isThreadSafe() throws InterruptedException {
-        // Test that the synchronized COMMA_FORMAT doesn't cause issues
         Thread[] threads = new Thread[10];
         for (int i = 0; i < threads.length; i++) {
             threads[i] = new Thread(() -> {
@@ -46,7 +45,7 @@ class NumberUtilExtendedTest {
                     try {
                         NumberUtil.parseDouble("123,45");
                     } catch (ParseException e) {
-                        fail("Should not throw exception");
+                        fail("parseDouble raised an exception in concurrent parsing", e);
                     }
                 }
             });

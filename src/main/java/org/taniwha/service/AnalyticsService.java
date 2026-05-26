@@ -99,9 +99,7 @@ public class AnalyticsService {
         }
     }
 
-    // -------------------------------------------------------------------------
     // Huge detection + async discovery job entry points
-    // -------------------------------------------------------------------------
 
     /** Backend decides whether discovery should run in "progress mode". */
     public boolean isAnyHugeForDiscovery(List<String> fileNames) {
@@ -470,9 +468,7 @@ public class AnalyticsService {
         return CompletableFuture.completedFuture(response);
     }
 
-    // -------------------------------------------------------------------------
     // Existing logic below (unchanged)
-    // -------------------------------------------------------------------------
 
     private void filterCategoricalData(Map<String, Map<String, Integer>> categoricalData,
                                        List<OmittedFeatureStatistics> omittedFeatures,

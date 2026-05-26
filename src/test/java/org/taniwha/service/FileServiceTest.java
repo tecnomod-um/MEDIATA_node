@@ -367,9 +367,7 @@ class FileServiceTest {
                 .isEqualTo("Fallback title");
     }
 
-    // -----------------------------------------------------------------------
     // resolveXxxFilePath delegates
-    // -----------------------------------------------------------------------
 
     @Test
     void resolveDatasetFilePath_existingFile_returnsPath() throws IOException {
@@ -512,9 +510,7 @@ class FileServiceTest {
         assertThat(p.getFileName().toString()).isEqualTo("meta.ttl");
     }
 
-    // -----------------------------------------------------------------------
     // resolveExistingFilePath – error cases (dirFor coverage for all categories)
-    // -----------------------------------------------------------------------
 
     @Test
     void resolveExistingFilePath_fhirMappings_existingFile() throws IOException {
@@ -572,9 +568,7 @@ class FileServiceTest {
                 .isInstanceOf(IllegalArgumentException.class);
     }
 
-    // -----------------------------------------------------------------------
     // listFilesWithInfo
-    // -----------------------------------------------------------------------
 
     @Test
     void listFilesWithInfo_returnsFileMetadata() throws IOException {
@@ -619,9 +613,7 @@ class FileServiceTest {
         assertThat(infos).hasSize(1).extracting(FileInfoDto::getName).containsExactly("real.csv");
     }
 
-    // -----------------------------------------------------------------------
     // deleteFile
-    // -----------------------------------------------------------------------
 
     @Test
     void deleteFile_existingFile_deletesIt() throws IOException {
@@ -644,9 +636,7 @@ class FileServiceTest {
                 .doesNotThrowAnyException();
     }
 
-    // -----------------------------------------------------------------------
     // renameFile
-    // -----------------------------------------------------------------------
 
     @Test
     void renameFile_renamesSuccessfully() throws IOException {

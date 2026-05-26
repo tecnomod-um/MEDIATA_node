@@ -9,9 +9,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 class MappingDtoTest {
 
-    // -----------------------------------------------------------------------
     // DatasetBindingDTO
-    // -----------------------------------------------------------------------
 
     @Test
     void datasetBindingDTO_gettersAndSetters() {
@@ -27,9 +25,7 @@ class MappingDtoTest {
         assertThat(dto.getDatasets()).containsExactly("ds1", "ds2");
     }
 
-    // -----------------------------------------------------------------------
     // MappingCaseDTO
-    // -----------------------------------------------------------------------
 
     @Test
     void mappingCaseDTO_gettersAndSetters() {
@@ -52,9 +48,7 @@ class MappingDtoTest {
         assertThat(dto.getMetadata().getDescription()).isEqualTo("A case");
     }
 
-    // -----------------------------------------------------------------------
     // MappingDefinitionDTO
-    // -----------------------------------------------------------------------
 
     @Test
     void mappingDefinitionDTO_gettersAndSetters() {
@@ -93,9 +87,7 @@ class MappingDtoTest {
         assertThat(dto.isRemoveSourceColumns()).isTrue();
     }
 
-    // -----------------------------------------------------------------------
     // MappingInputDTO
-    // -----------------------------------------------------------------------
 
     @Test
     void mappingInputDTO_gettersAndSetters() {
@@ -107,9 +99,7 @@ class MappingDtoTest {
         assertThat(dto.getColumn()).isEqualTo("columnA");
     }
 
-    // -----------------------------------------------------------------------
     // MappingMatcherDTO
-    // -----------------------------------------------------------------------
 
     @Test
     void mappingMatcherDTO_gettersAndSetters() {
@@ -131,9 +121,7 @@ class MappingDtoTest {
         assertThat(dto.getMaxValue()).isEqualTo(100);
     }
 
-    // -----------------------------------------------------------------------
     // MappingMetadataDTO
-    // -----------------------------------------------------------------------
 
     @Test
     void mappingMetadataDTO_gettersAndSetters() {
@@ -145,9 +133,7 @@ class MappingDtoTest {
         assertThat(dto.getDescription()).isEqualTo("Test description");
     }
 
-    // -----------------------------------------------------------------------
     // MappingRuleDTO
-    // -----------------------------------------------------------------------
 
     @Test
     void mappingRuleDTO_gettersAndSetters() {
@@ -173,9 +159,7 @@ class MappingDtoTest {
         assertThat(dto.getMetadata().getTerminology()).isEqualTo("ICD");
     }
 
-    // -----------------------------------------------------------------------
     // MappingSourceDTO
-    // -----------------------------------------------------------------------
 
     @Test
     void mappingSourceDTO_gettersAndSetters() {
@@ -189,9 +173,7 @@ class MappingDtoTest {
         assertThat(dto.getFileName()).isEqualTo("dataset.csv");
     }
 
-    // -----------------------------------------------------------------------
     // MappingSpecDTO
-    // -----------------------------------------------------------------------
 
     @Test
     void mappingSpecDTO_gettersAndSetters() {
@@ -217,9 +199,7 @@ class MappingDtoTest {
         assertThat(dto.getMappings()).hasSize(1);
     }
 
-    // -----------------------------------------------------------------------
     // OneHotOutputDTO
-    // -----------------------------------------------------------------------
 
     @Test
     void oneHotOutputDTO_gettersAndSetters() {
@@ -240,9 +220,7 @@ class MappingDtoTest {
         assertThat(dto.getMetadata().getTerminology()).isEqualTo("LOCAL");
     }
 
-    // -----------------------------------------------------------------------
     // RuleResultDTO
-    // -----------------------------------------------------------------------
 
     @Test
     void ruleResultDTO_gettersAndSetters() {

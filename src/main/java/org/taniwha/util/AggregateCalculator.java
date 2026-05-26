@@ -119,7 +119,7 @@ public class AggregateCalculator {
         List<String> uniqueValues1 = new ArrayList<>(categories1.keySet());
         List<String> uniqueValues2 = new ArrayList<>(categories2.keySet());
 
-        // Ensure both categories have more than one unique value to avoid dimension mismatch
+        // Chi-square tables need at least two values in each dimension.
         if (uniqueValues1.size() < 2 || uniqueValues2.size() < 2)
             return new long[0][];
 

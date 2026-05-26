@@ -98,7 +98,7 @@ public class DataCleaningOptionsDTO {
     private List<String> normalizeColumns;
     private boolean standardizeData; // Z-score standardization
     private List<String> standardizeColumns;
-    private boolean binData; // Create bins/categories
+    private boolean binData;
     private String binColumn;
     private List<Double> binEdges;
     private List<String> binLabels;

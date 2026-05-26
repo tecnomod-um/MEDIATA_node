@@ -465,7 +465,6 @@ class DataCleaningServiceTest {
             .filter(v -> v.equalsIgnoreCase("boston"))
             .count();
         
-        // Should merge to just 1 Boston variant + Los Angeles = 2 total unique values
         assertThat(uniqueValues).hasSize(2);
         assertThat(bostonVariants).isEqualTo(1);
     }
@@ -480,11 +479,10 @@ class DataCleaningServiceTest {
         var input = new ArrayList<>(List.of(row1, row2, row3));
         var result = svc.mergeSimilarValues(input, Set.of("code"), "levenshtein", 0.65, false, false, "shortest");
         
-        // Should merge similar values, and "USA" should win as shortest
         Set<String> uniqueValues = result.stream()
             .map(r -> r.get("code"))
             .collect(Collectors.toSet());
-        assertThat(uniqueValues).hasSizeLessThanOrEqualTo(2); // Should have some merging
+        assertThat(uniqueValues).hasSizeLessThanOrEqualTo(2);
         // If merged to 1, it should be USA
         if (uniqueValues.size() == 1) {
             assertThat(uniqueValues.iterator().next()).isEqualTo("USA");
@@ -504,7 +502,7 @@ class DataCleaningServiceTest {
         Set<String> uniqueValues = result.stream()
             .map(r -> r.get("abbr"))
             .collect(Collectors.toSet());
-        assertThat(uniqueValues).hasSizeLessThanOrEqualTo(2); // Should have some merging
+        assertThat(uniqueValues).hasSizeLessThanOrEqualTo(2);
         // If merged to 1, longest should win
         if (uniqueValues.size() == 1) {
             assertThat(uniqueValues.iterator().next().length()).isGreaterThanOrEqualTo(3);
@@ -567,7 +565,6 @@ class DataCleaningServiceTest {
         var input = new ArrayList<>(List.of(row1, row2, row3, row4));
         var result = svc.mergeSimilarValues(input, Set.of("status"), "levenshtein", 0.85, false, false, "most_frequent");
         
-        // Should handle nulls/empties gracefully
         assertThat(result).hasSize(4);
         long activeCount = result.stream()
             .filter(r -> "Active".equals(r.get("status")))
@@ -866,7 +863,6 @@ class DataCleaningServiceTest {
         // URL normalization behavior - check that it processes the URL
         assertThat(result.get(0).get("url")).isNotNull();
         String normalized = result.get(0).get("url");
-        // Should at least contain the domain
         assertThat(normalized.toLowerCase()).contains("example.com");
     }
 

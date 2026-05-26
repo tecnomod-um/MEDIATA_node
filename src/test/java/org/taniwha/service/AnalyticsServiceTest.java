@@ -342,9 +342,7 @@ class AnalyticsServiceTest {
                 .anySatisfy(fs -> assertThat(fs.getFeatureName()).isEqualTo("num"));
     }
 
-    // -----------------------------------------------------------------------
     // isAnyHugeForDiscovery – covers isHugeFile, estimateCsvRows
-    // -----------------------------------------------------------------------
 
     @TempDir
     Path tempDir;
@@ -405,9 +403,7 @@ class AnalyticsServiceTest {
         assertThat(result).isFalse();
     }
 
-    // -----------------------------------------------------------------------
     // startDiscoveryJob – covers async processing path
-    // -----------------------------------------------------------------------
 
     @Test
     void startDiscoveryJob_singleSmallFile_completesJob() throws Exception {

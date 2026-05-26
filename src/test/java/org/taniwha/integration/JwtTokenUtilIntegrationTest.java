@@ -88,7 +88,6 @@ class JwtTokenUtilIntegrationTest {
 
     @Test
     void jwtTokenThreadSafety() throws InterruptedException {
-        // Test concurrent token generation
         Thread[] threads = new Thread[10];
         String[] tokens = new String[10];
         

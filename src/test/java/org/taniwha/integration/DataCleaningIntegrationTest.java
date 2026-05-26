@@ -66,14 +66,12 @@ class DataCleaningIntegrationTest {
 
     @BeforeEach
     void setUp() throws IOException {
-        // Create datasets directory structure in the configured app.path
         Path appPath = Path.of("/tmp/taniwha-integration-test");
         Files.createDirectories(appPath);
         
         datasetsDir = appPath.resolve("datasets");
         Files.createDirectories(datasetsDir);
         
-        // Clean up any existing files
         if (Files.exists(datasetsDir)) {
             try (var stream = Files.list(datasetsDir)) {
                 stream.forEach(file -> {

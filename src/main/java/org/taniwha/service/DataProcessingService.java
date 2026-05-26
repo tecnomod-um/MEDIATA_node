@@ -213,7 +213,7 @@ public class DataProcessingService {
                     .withQuote('"')
                     .withIgnoreEmptyLines(true);
 
-            // After detecting, re-open the stream
+            // Re-open the stream because charset detection consumes the first reader.
             try (BufferedReader secondReader = new BufferedReader(new InputStreamReader(file.getInputStream()));
                  CSVParser csvParser = new CSVParser(secondReader, csvFormat)) {
 
@@ -355,9 +355,7 @@ public class DataProcessingService {
         return true;
     }
 
-    // -------------------------------------------------------------------------
     // Filtering logic
-    // -------------------------------------------------------------------------
 
     private boolean applyFilters(Map<String, String> rowData, Map<String, Object> filters) {
         // If there's no operator or no conditions, just accept everything

@@ -101,7 +101,6 @@ class ApplicationContextIntegrationTest {
         JwtTokenUtil jwtUtil = applicationContext.getBean(JwtTokenUtil.class);
         assertThat(jwtUtil).isNotNull();
         
-        // Test that JWT utility can generate tokens
         String token = jwtUtil.generateToken("test-subject");
         assertThat(token).isNotBlank();
     }

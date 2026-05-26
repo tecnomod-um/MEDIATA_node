@@ -181,9 +181,7 @@ class AnalyticsProcessingJobsTest {
 
     }
 
-    // -----------------------------------------------------------------------
     // cancel / attachFuture / isCanceled
-    // -----------------------------------------------------------------------
 
     @Test
     void cancel_withRunningJob_setsCanceledState() {

@@ -168,13 +168,11 @@ class JwtRequestFilterTest {
         request.setRequestURI("/taniwha/node/status");
         request.setContextPath("/taniwha");
         
-        // Access the filter to test - this would normally be tested via doFilterInternal
-        // but we can verify behavior through the main method
         try {
             jwtRequestFilter.doFilterInternal(request, response, filterChain);
             verify(filterChain).doFilter(request, response);
         } catch (Exception e) {
-            fail("Should not throw exception");
+            fail("exempted status path raised an exception", e);
         }
     }
 

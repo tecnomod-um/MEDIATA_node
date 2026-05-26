@@ -415,7 +415,6 @@ class DataProcessingServiceTest {
 
         var out = service.extractFilteredDataFromPath(csv, filters);
         
-        // Should match age > 18, which is Alice and Bob
         assertThat(out).hasSize(2)
                 .extracting(m -> m.get("name"))
                 .containsExactlyInAnyOrder("Alice", "Bob");
@@ -449,7 +448,6 @@ class DataProcessingServiceTest {
 
         var out = service.extractFilteredDataFromPath(csv, filters);
         
-        // Should match age > 20 AND salary > 45000, which is Alice and Bob
         assertThat(out).hasSize(2)
                 .extracting(m -> m.get("name"))
                 .containsExactlyInAnyOrder("Alice", "Bob");
@@ -477,7 +475,6 @@ class DataProcessingServiceTest {
 
         var out = service.extractFilteredDataFromPath(csv, filters);
         
-        // Should match category = A
         assertThat(out).hasSize(2)
                 .allSatisfy(m -> assertThat(m.get("category")).isEqualTo("A"));
     }
@@ -505,7 +502,6 @@ class DataProcessingServiceTest {
 
         var out = service.extractFilteredDataFromPath(csv, filters);
         
-        // Should match age > 18
         assertThat(out).hasSize(2)
                 .extracting(m -> m.get("name"))
                 .containsExactlyInAnyOrder("Alice", "Bob");

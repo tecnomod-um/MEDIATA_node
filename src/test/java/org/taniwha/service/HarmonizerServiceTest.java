@@ -444,9 +444,7 @@ class HarmonizerServiceTest {
         };
     }
 
-    // -----------------------------------------------------------------------
     // startParseJob – covers parseFilesWithProgress async path
-    // -----------------------------------------------------------------------
 
     @Test
     void startParseJob_emptySpec_completesJobSuccessfully() throws Exception {
