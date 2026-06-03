@@ -15,6 +15,7 @@ FDP_URL=${FDP_URL:-http://${FDP_HOST}:${FDP_PORT}}
 FDP_MONGO_DBPATH=${FDP_MONGO_DBPATH:-/taniwha/fairdatapoint/mongo}
 FDP_NATIVE_DIR=${FDP_NATIVE_DIR:-/taniwha/fairdatapoint/rdf-store}
 FDP_LOG_DIR=${FDP_LOG_DIR:-/var/log/taniwha}
+FDP_START_DELAY_S=${FDP_START_DELAY_S:-0}
 SPRING_DATA_MONGODB_URI=${SPRING_DATA_MONGODB_URI:-mongodb://127.0.0.1:${FDP_MONGO_PORT}/fdp}
 INSTANCE_CLIENTURL=${INSTANCE_CLIENTURL:-${FDP_URL}}
 INSTANCE_PERSISTENTURL=${INSTANCE_PERSISTENTURL:-${INSTANCE_CLIENTURL}}
@@ -34,6 +35,7 @@ export FDP_URL
 export FDP_MONGO_DBPATH
 export FDP_NATIVE_DIR
 export FDP_LOG_DIR
+export FDP_START_DELAY_S
 export SPRING_DATA_MONGODB_URI
 export INSTANCE_CLIENTURL
 export INSTANCE_PERSISTENTURL
@@ -41,7 +43,8 @@ export FAIRDATAPOINT_BASE_URL
 export FAIRDATAPOINT_PERSISTENT_URL
 
 NODE_PID=""
-FDP_PID=""
+FDP_LAUNCH_PID=""
+FDP_JAVA_PID_FILE="/tmp/taniwha-fdp-java.pid"
 
 echo "================================================"
 echo "MEDIATA Node - Unified Startup Script"
@@ -82,9 +85,18 @@ shutdown_all() {
     wait "${NODE_PID}" 2>/dev/null || true
   fi
 
-  if [ -n "${FDP_PID}" ] && kill -0 "${FDP_PID}" 2>/dev/null; then
-    kill "${FDP_PID}" 2>/dev/null || true
-    wait "${FDP_PID}" 2>/dev/null || true
+  if [ -n "${FDP_LAUNCH_PID}" ] && kill -0 "${FDP_LAUNCH_PID}" 2>/dev/null; then
+    kill "${FDP_LAUNCH_PID}" 2>/dev/null || true
+    wait "${FDP_LAUNCH_PID}" 2>/dev/null || true
+  fi
+
+  if [ -f "${FDP_JAVA_PID_FILE}" ]; then
+    local fdp_java_pid
+    fdp_java_pid="$(cat "${FDP_JAVA_PID_FILE}" 2>/dev/null || true)"
+    if [ -n "${fdp_java_pid}" ] && kill -0 "${fdp_java_pid}" 2>/dev/null; then
+      kill "${fdp_java_pid}" 2>/dev/null || true
+      wait "${fdp_java_pid}" 2>/dev/null || true
+    fi
   fi
 
   if command -v mongod >/dev/null 2>&1 && [ -f /tmp/taniwha-mongod.pid ]; then
@@ -270,6 +282,22 @@ fdp_bootstrap() {
   echo "[fdp-bootstrap] FDP bootstrap completed successfully"
 }
 
+fdp_bootstrap_background() {
+  if ! wait_for_mongo 60 1; then
+    echo "[fdp-bootstrap] Local MongoDB did not become ready in time" >&2
+    return 1
+  fi
+
+  fdp_preflight
+
+  if ! fdp_bootstrap; then
+    echo "[fdp-bootstrap] FDP bootstrap failed; node will continue running and can be synced later" >&2
+    return 1
+  fi
+
+  echo "[fdp-bootstrap] Background FDP bootstrap finished"
+}
+
 write_fdp_config() {
   cat > /tmp/taniwha-fdp-application.yml <<EOF
 instance:
@@ -298,27 +326,32 @@ start_fair_stack() {
   echo "FDP URL:        ${FDP_URL}"
   echo "FDP Mongo URI:  ${SPRING_DATA_MONGODB_URI}"
 
-  rm -f /tmp/taniwha-mongod.pid
-
-  mongod \
-    --bind_ip 127.0.0.1 \
-    --port "${FDP_MONGO_PORT}" \
-    --dbpath "${FDP_MONGO_DBPATH}" \
-    --pidfilepath /tmp/taniwha-mongod.pid \
-    --logpath "${FDP_LOG_DIR}/mongod.log" \
-    --fork
-
-  wait_for_mongo 60 1
-  fdp_preflight
   write_fdp_config
+  rm -f /tmp/taniwha-mongod.pid "${FDP_JAVA_PID_FILE}"
 
-  java -jar /opt/fdp/app.jar \
-    --spring.profiles.active=production \
-    --spring.config.location=classpath:/application.yml,classpath:/application-production.yml,file:/tmp/taniwha-fdp-application.yml \
-    > "${FDP_LOG_DIR}/fdp.log" 2>&1 &
-  FDP_PID=$!
+  (
+    if [[ "${FDP_START_DELAY_S}" =~ ^[0-9]+$ ]] && (( FDP_START_DELAY_S > 0 )); then
+      echo "Delaying bundled FAIR Data Point startup by ${FDP_START_DELAY_S}s"
+      sleep "${FDP_START_DELAY_S}"
+    fi
 
-  fdp_bootstrap
+    mongod \
+      --bind_ip 127.0.0.1 \
+      --port "${FDP_MONGO_PORT}" \
+      --dbpath "${FDP_MONGO_DBPATH}" \
+      --pidfilepath /tmp/taniwha-mongod.pid \
+      --logpath "${FDP_LOG_DIR}/mongod.log" \
+      --fork
+
+    java -jar /opt/fdp/app.jar \
+      --spring.profiles.active=production \
+      --spring.config.location=classpath:/application.yml,classpath:/application-production.yml,file:/tmp/taniwha-fdp-application.yml \
+      > "${FDP_LOG_DIR}/fdp.log" 2>&1 &
+    echo "$!" > "${FDP_JAVA_PID_FILE}"
+
+    fdp_bootstrap_background || true
+  ) &
+  FDP_LAUNCH_PID=$!
 }
 
 if [[ "${FAIRDATAPOINT_ENABLED}" == "true" ]]; then

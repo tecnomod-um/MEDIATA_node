@@ -2,9 +2,13 @@ package org.taniwha.service;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.taniwha.config.FairDataPointStartupListener;
 import org.taniwha.config.FairDataPointBrandingConfig;
+import org.taniwha.config.FairDataPointStartupListener;
+import org.taniwha.config.RestTemplateHolder;
 import org.taniwha.model.FairDataPointSyncResult;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.client.RestTemplate;
 
 import static org.mockito.Mockito.*;
 
@@ -12,18 +16,24 @@ class FairDataPointStartupListenerTest {
 
     private FairDataPointBrandingConfig brandingService;
     private FairDataPointCatalogSyncService syncService;
+    private RestTemplateHolder restTemplateHolder;
+    private RestTemplate restTemplate;
     private FairDataPointStartupListener listener;
 
     @BeforeEach
     void setUp() {
         brandingService = mock(FairDataPointBrandingConfig.class);
         syncService = mock(FairDataPointCatalogSyncService.class);
-        listener = new FairDataPointStartupListener(true, true, brandingService, syncService);
+        restTemplateHolder = mock(RestTemplateHolder.class);
+        restTemplate = mock(RestTemplate.class);
+        when(restTemplateHolder.get()).thenReturn(restTemplate);
+        markFdpReady();
+        listener = new FairDataPointStartupListener(true, true, "http://127.0.0.1:18080", restTemplateHolder, brandingService, syncService);
     }
 
     @Test
     void syncCatalogsOnStartup_skipsWhenIntegrationDisabled() {
-        listener = new FairDataPointStartupListener(false, true, brandingService, syncService);
+        listener = new FairDataPointStartupListener(false, true, "http://127.0.0.1:18080", restTemplateHolder, brandingService, syncService);
 
         listener.syncCatalogsOnStartup();
 
@@ -32,12 +42,22 @@ class FairDataPointStartupListenerTest {
 
     @Test
     void syncCatalogsOnStartup_skipsWhenStartupPublishingDisabled() {
-        listener = new FairDataPointStartupListener(true, false, brandingService, syncService);
+        listener = new FairDataPointStartupListener(true, false, "http://127.0.0.1:18080", restTemplateHolder, brandingService, syncService);
 
         listener.syncCatalogsOnStartup();
 
         verify(brandingService).applyBranding();
         verifyNoInteractions(syncService);
+    }
+
+    @Test
+    void syncCatalogsOnStartup_skipsQuietlyWhenFdpIsNotReady() {
+        when(restTemplate.getForEntity("http://127.0.0.1:18080/v3/api-docs", String.class))
+                .thenThrow(new RuntimeException("Connection refused"));
+
+        listener.syncCatalogsOnStartup();
+
+        verifyNoInteractions(brandingService, syncService);
     }
 
     @Test
@@ -73,5 +93,10 @@ class FairDataPointStartupListenerTest {
 
         verify(brandingService).applyBranding();
         verify(syncService).publishCatalogs();
+    }
+
+    private void markFdpReady() {
+        when(restTemplate.getForEntity("http://127.0.0.1:18080/v3/api-docs", String.class))
+                .thenReturn(new ResponseEntity<>("{}", HttpStatus.OK));
     }
 }
