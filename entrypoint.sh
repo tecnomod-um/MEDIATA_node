@@ -316,6 +316,13 @@ spring:
 
 server:
   port: ${FDP_PORT}
+
+logging:
+  level:
+    nl.dtls.fairdatapoint.api.filter.LoggingFilter: WARN
+    nl.dtls.fairdatapoint.service.ping.PingService: ERROR
+    org.eclipse.rdf4j.sail.shacl.ShaclSail: OFF
+    org.eclipse.rdf4j.sail.shacl.ast.ShaclProperties: ERROR
 EOF
 }
 
