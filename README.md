@@ -56,6 +56,7 @@ sudo docker build -t taniwha-backend-node .
 ```bash
 sudo docker run -d \
   --network host \
+  --restart unless-stopped \
   --env-file ./node-secrets.env \
   -v ./taniwha:/taniwha \
   -e PORT=8080 \
@@ -64,6 +65,15 @@ sudo docker run -d \
   -e COLOR=#008000 \
   -e NODE_IP=https://yournode.mediata.dev \
   taniwha-backend-node
+```
+
+The `--restart unless-stopped` policy keeps the node available after a host reboot or Docker daemon restart. The node still deregisters during shutdown, so the central orchestrator does not keep advertising it while the machine is down. When Docker starts again, the container boots and registers itself with the orchestrator.
+
+For an already-created node container, apply the same policy without rebuilding:
+
+```bash
+sudo docker update --restart unless-stopped <container-name>
+sudo docker start <container-name>
 ```
 
 ---
