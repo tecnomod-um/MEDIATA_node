@@ -9,6 +9,10 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.taniwha.dto.DataCleaningOptionsDTO;
+import org.taniwha.dto.CleaningValidationResponseDTO;
+import org.taniwha.dto.NormalizationBoundsDTO;
+import org.taniwha.dto.NormalizationColumnStatsDTO;
+import org.taniwha.dto.NormalizationStatsResponseDTO;
 import org.taniwha.model.FileCategory;
 import org.taniwha.util.DateUtil;
 import org.taniwha.util.NumberUtil;
@@ -94,7 +98,7 @@ public class DataCleaningService {
 
         cleaningJobs.update(jobId, 85, fileName, "Writing cleaned file: " + fileName);
 
-        writeCleanedData(file, lower, cleaned);
+        writeCleanedData(file, lower, cleaned, opts);
 
         cleaningJobs.update(jobId, 100, fileName, "Finished cleaning: " + fileName);
     }
@@ -122,18 +126,112 @@ public class DataCleaningService {
 
         List<Map<String, String>> cleaned = applyAllCleaningOperations(records, opts);
 
-        writeCleanedData(file, lower, cleaned);
+        writeCleanedData(file, lower, cleaned, opts);
+    }
+
+    public CleaningValidationResponseDTO validateCleaning(FileCategory category,
+                                                           String name,
+                                                           DataCleaningOptionsDTO opts) {
+        Objects.requireNonNull(category, "category is required");
+        String fileName = Objects.toString(name, "").trim();
+        if (fileName.isEmpty()) throw new IllegalArgumentException("name is required");
+        if (opts == null || !anyEnabled(opts)) {
+            throw new IllegalArgumentException("At least one cleaning option is required.");
+        }
+
+        Path file = fileService.resolveExistingFilePath(category, fileName);
+        String lowerFileName = file.getFileName().toString().toLowerCase(Locale.ROOT);
+        if (!lowerFileName.endsWith(".csv") && !lowerFileName.endsWith(".xlsx") && !lowerFileName.endsWith(".xls")) {
+            throw new IllegalArgumentException("Unsupported file type for cleaning: " + file.getFileName());
+        }
+
+        final List<Map<String, String>> records;
+        try {
+            records = dataProcessingService.extractDataFromPath(file);
+        } catch (IOException e) {
+            throw new UncheckedIOException("Failed to read file for cleaning validation", e);
+        }
+
+        int inputRows = records.size();
+        List<Map<String, String>> cleaned = applyAllCleaningOperations(records, opts);
+        resolveOutputDelimiter(opts);
+        resolveOutputDecimalSeparator(opts);
+        int outputColumns = cleaned.isEmpty() ? 0 : cleaned.get(0).size();
+        return new CleaningValidationResponseDTO(true, inputRows, cleaned.size(), outputColumns);
+    }
+
+    public NormalizationStatsResponseDTO getNormalizationStats(FileCategory category,
+                                                                String name,
+                                                                List<String> requestedColumns,
+                                                                DataCleaningOptionsDTO cleaningOptions) {
+        Objects.requireNonNull(category, "category is required");
+        String fileName = Objects.toString(name, "").trim();
+        if (fileName.isEmpty()) throw new IllegalArgumentException("name is required");
+
+        Path file = fileService.resolveExistingFilePath(category, fileName);
+        final List<Map<String, String>> records;
+        try {
+            records = dataProcessingService.extractDataFromPath(file);
+        } catch (IOException e) {
+            throw new UncheckedIOException("Failed to read file for normalization statistics", e);
+        }
+
+        List<Map<String, String>> preparedRecords = cleaningOptions == null
+                ? records
+                : applyOperationsBeforeStatistics(records, cleaningOptions);
+
+        Set<String> columns = extractColumnList(requestedColumns);
+        boolean allNumeric = cleaningOptions != null
+                && "all_numeric".equalsIgnoreCase(cleaningOptions.getNormalizationColumnMode());
+        if (columns.isEmpty() && allNumeric) {
+            columns = preparedRecords.stream()
+                    .flatMap(row -> row.keySet().stream())
+                    .collect(Collectors.toCollection(LinkedHashSet::new));
+        }
+        if (columns.isEmpty()) {
+            throw new IllegalArgumentException("At least one normalization column is required.");
+        }
+
+        Map<String, NormalizationColumnStatsDTO> stats = new LinkedHashMap<>();
+        for (String column : columns) {
+            boolean present = preparedRecords.stream().anyMatch(row -> row.containsKey(column));
+            Double min = null;
+            Double max = null;
+            long validCount = 0;
+            long invalidCount = 0;
+
+            for (Map<String, String> row : preparedRecords) {
+                String raw = row.get(column);
+                if (isNullOrEmpty(raw)) continue;
+                try {
+                    double value = parseFiniteNumber(raw, column);
+                    min = min == null ? value : Math.min(min, value);
+                    max = max == null ? value : Math.max(max, value);
+                    validCount++;
+                } catch (IllegalArgumentException e) {
+                    invalidCount++;
+                }
+            }
+
+            stats.put(column, new NormalizationColumnStatsDTO(
+                    present, min, max, validCount, invalidCount
+            ));
+        }
+        return new NormalizationStatsResponseDTO(stats);
+    }
+
+    private List<Map<String, String>> applyOperationsBeforeStatistics(List<Map<String, String>> records,
+                                                                      DataCleaningOptionsDTO opts) {
+        List<Map<String, String>> prepared = applyRowLevelOperations(records, opts);
+        prepared = applyStringManipulation(prepared, opts);
+        prepared = applyTextOperations(prepared, opts);
+        prepared = applyDateAndNumericOperations(prepared, opts);
+        prepared = applyEmailUrlPhoneOperations(prepared, opts);
+        return applyColumnAndTypeOperations(prepared, opts);
     }
 
     private List<Map<String, String>> applyAllCleaningOperations(List<Map<String, String>> records, DataCleaningOptionsDTO opts) {
-        List<Map<String, String>> cleaned = records;
-
-        cleaned = applyRowLevelOperations(cleaned, opts);
-        cleaned = applyStringManipulation(cleaned, opts);
-        cleaned = applyTextOperations(cleaned, opts);
-        cleaned = applyDateAndNumericOperations(cleaned, opts);
-        cleaned = applyEmailUrlPhoneOperations(cleaned, opts);
-        cleaned = applyColumnAndTypeOperations(cleaned, opts);
+        List<Map<String, String>> cleaned = applyOperationsBeforeStatistics(records, opts);
         cleaned = applyStatisticalOperations(cleaned, opts);
         cleaned = applyFuzzyMatching(cleaned, opts);
         
@@ -287,8 +385,20 @@ public class DataCleaningService {
     private List<Map<String, String>> applyStatisticalOperations(List<Map<String, String>> records, DataCleaningOptionsDTO opts) {
         List<Map<String, String>> result = records;
         
-        if (opts.isNormalizeData() && opts.getNormalizeColumns() != null) {
-            result = normalizeData(result, extractColumnList(opts.getNormalizeColumns()));
+        if (opts.isNormalizeData()) {
+            Set<String> normalizationColumns = "all_numeric".equalsIgnoreCase(opts.getNormalizationColumnMode())
+                    ? findFullyNumericColumns(result)
+                    : extractColumnList(opts.getNormalizeColumns());
+            if (normalizationColumns.isEmpty()) {
+                throw new IllegalArgumentException("No fully numeric columns were found to normalize.");
+            }
+            result = normalizeData(
+                    result,
+                    normalizationColumns,
+                    opts.getNormalizationBounds(),
+                    opts.getNormalizationScope(),
+                    opts.getNormalizationInvalidValuePolicy()
+            );
         }
         if (opts.isStandardizeData() && opts.getStandardizeColumns() != null) {
             result = standardizeDataZScore(result, extractColumnList(opts.getStandardizeColumns()));
@@ -298,6 +408,29 @@ public class DataCleaningService {
         }
         
         return result;
+    }
+
+    private Set<String> findFullyNumericColumns(List<Map<String, String>> records) {
+        Set<String> candidates = records.stream()
+                .flatMap(row -> row.keySet().stream())
+                .collect(Collectors.toCollection(LinkedHashSet::new));
+
+        return candidates.stream()
+                .filter(column -> {
+                    long populated = 0;
+                    for (Map<String, String> row : records) {
+                        String raw = row.get(column);
+                        if (isNullOrEmpty(raw)) continue;
+                        populated++;
+                        try {
+                            parseFiniteNumber(raw, column);
+                        } catch (IllegalArgumentException e) {
+                            return false;
+                        }
+                    }
+                    return populated > 0;
+                })
+                .collect(Collectors.toCollection(LinkedHashSet::new));
     }
 
     private List<Map<String, String>> applyFuzzyMatching(List<Map<String, String>> records, DataCleaningOptionsDTO opts) {
@@ -317,15 +450,15 @@ public class DataCleaningService {
         return result;
     }
 
-    private void writeCleanedData(Path file, String lowerFileName, List<Map<String, String>> cleaned) {
+    private void writeCleanedData(Path file, String lowerFileName, List<Map<String, String>> cleaned, DataCleaningOptionsDTO opts) {
         if (lowerFileName.endsWith(".csv")) {
-            writeCsvAtomically(file, cleaned);
+            writeCsvAtomically(file, cleaned, opts);
             return;
         }
 
         if (lowerFileName.endsWith(".xlsx") || lowerFileName.endsWith(".xls")) {
             Path out = file.resolveSibling(stripExt(file.getFileName().toString()) + "_cleaned.csv");
-            writeCsvAtomically(out, cleaned);
+            writeCsvAtomically(out, cleaned, opts);
             return;
         }
 
@@ -344,7 +477,8 @@ public class DataCleaningService {
                 || o.isRemoveNonPrintableChars() || o.isNormalizeUnicode() || o.isSplitColumn()
                 || o.isMergeColumns() || o.isRemoveRowsWithPattern() || o.isKeepOnlyNumericRows()
                 || o.isNormalizeData() || o.isStandardizeData() || o.isBinData()
-                || o.isExtractDateComponents() || o.isRoundDecimals() || o.isMergeSimilarValues();
+                || o.isExtractDateComponents() || o.isRoundDecimals() || o.isMergeSimilarValues()
+                || o.isStandardizeCsvFormat();
     }
 
     private Set<String> extractNumericColumns(DataCleaningOptionsDTO opts) {
@@ -376,7 +510,7 @@ public class DataCleaningService {
         return (i >= 0) ? name.substring(0, i) : name;
     }
 
-    private void writeCsvAtomically(Path target, List<Map<String, String>> rows) {
+    private void writeCsvAtomically(Path target, List<Map<String, String>> rows, DataCleaningOptionsDTO opts) {
         if (rows == null || rows.isEmpty()) {
             logger.debug("Cleaning produced 0 rows; leaving file unchanged: {}", target);
             return;
@@ -395,8 +529,12 @@ public class DataCleaningService {
                 ? Paths.get(target.getFileName().toString() + ".tmp")
                 : dir.resolve(target.getFileName().toString() + ".tmp");
 
-        CSVFormat fmt = CSVFormat.newFormat(';')
+        char outputDelimiter = resolveOutputDelimiter(opts);
+        char outputDecimalSeparator = resolveOutputDecimalSeparator(opts);
+
+        CSVFormat fmt = CSVFormat.newFormat(outputDelimiter)
                 .withHeader(headers.toArray(new String[0]))
+                .withQuote('"')
                 .withRecordSeparator(System.lineSeparator());
 
         try (BufferedWriter w = Files.newBufferedWriter(tmp, StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING);
@@ -404,7 +542,7 @@ public class DataCleaningService {
 
             for (Map<String, String> row : rows) {
                 List<String> rec = headers.stream()
-                        .map(h -> Objects.toString(row.get(h), ""))
+                        .map(h -> formatOutputValue(row.get(h), outputDecimalSeparator))
                         .toList();
                 p.printRecord(rec);
             }
@@ -437,6 +575,68 @@ public class DataCleaningService {
             logger.debug("Atomic move not supported, falling back: {}", e.getMessage());
             Files.move(src, dst, StandardCopyOption.REPLACE_EXISTING);
         }
+    }
+
+    private char resolveOutputDelimiter(DataCleaningOptionsDTO opts) {
+        if (opts == null || !opts.isStandardizeCsvFormat()) return ';';
+
+        String raw = Objects.toString(opts.getCsvDelimiter(), "").trim();
+        if (raw.isEmpty()) return ';';
+        if ("\\t".equals(raw) || "TAB".equalsIgnoreCase(raw)) return '\t';
+        if (raw.length() != 1) {
+            throw new IllegalArgumentException("CSV delimiter must be a single character or TAB.");
+        }
+        return raw.charAt(0);
+    }
+
+    private char resolveOutputDecimalSeparator(DataCleaningOptionsDTO opts) {
+        if (opts == null || !opts.isStandardizeCsvFormat()) return '.';
+
+        String raw = Objects.toString(opts.getDecimalSeparator(), ".").trim();
+        if (raw.length() != 1 || (raw.charAt(0) != '.' && raw.charAt(0) != ',')) {
+            throw new IllegalArgumentException("Decimal separator must be '.' or ','.");
+        }
+        return raw.charAt(0);
+    }
+
+    private String formatOutputValue(String value, char outputDecimalSeparator) {
+        String safeValue = Objects.toString(value, "");
+        if (outputDecimalSeparator == '.') return normalizeDecimalSeparator(safeValue, '.');
+        return normalizeDecimalSeparator(safeValue, ',');
+    }
+
+    private String normalizeDecimalSeparator(String rawValue, char outputDecimalSeparator) {
+        if (rawValue == null || rawValue.isBlank()) return rawValue;
+
+        String trimmed = rawValue.trim();
+        int lastDot = trimmed.lastIndexOf('.');
+        int lastComma = trimmed.lastIndexOf(',');
+        int decimalIndex = Math.max(lastDot, lastComma);
+        if (decimalIndex <= 0 || decimalIndex >= trimmed.length() - 1) return rawValue;
+
+        String left = trimmed.substring(0, decimalIndex);
+        String right = trimmed.substring(decimalIndex + 1);
+        if (!right.chars().allMatch(Character::isDigit)) return rawValue;
+
+        String sign = "";
+        if (left.startsWith("+") || left.startsWith("-")) {
+            sign = left.substring(0, 1);
+            left = left.substring(1);
+        }
+
+        String normalizedLeft = left
+                .replace(" ", "")
+                .replace("_", "")
+                .replace("'", "")
+                .replace("’", "")
+                .replace(".", "")
+                .replace(",", "");
+
+        if (normalizedLeft.isEmpty() || !normalizedLeft.chars().allMatch(Character::isDigit)) {
+            return rawValue;
+        }
+
+        return sign + normalizedLeft + outputDecimalSeparator + right;
     }
 
     public List<Map<String, String>> removeDuplicates(List<Map<String, String>> records) {
@@ -1258,43 +1458,100 @@ public class DataCleaningService {
 
 
     public List<Map<String, String>> normalizeData(List<Map<String, String>> records, Set<String> columns) {
+        return normalizeData(records, columns, Collections.emptyMap(), "per_file", "fail");
+    }
+
+    public List<Map<String, String>> normalizeData(List<Map<String, String>> records,
+                                                   Set<String> columns,
+                                                   Map<String, NormalizationBoundsDTO> sharedBounds,
+                                                   String scope,
+                                                   String invalidValuePolicy) {
         logger.debug("Normalizing data for columns {} in {} records", columns, records.size());
-        
+
+        String resolvedScope = Objects.toString(scope, "per_file").trim().toLowerCase(Locale.ROOT);
+        String resolvedInvalidPolicy = Objects.toString(invalidValuePolicy, "fail").trim().toLowerCase(Locale.ROOT);
+        if (!Set.of("per_file", "selection").contains(resolvedScope)) {
+            throw new IllegalArgumentException("Normalization scope must be 'selection' or 'per_file'.");
+        }
+        if (!Set.of("fail", "keep").contains(resolvedInvalidPolicy)) {
+            throw new IllegalArgumentException("Normalization invalid-value policy must be 'fail' or 'keep'.");
+        }
+
+        Map<String, NormalizationBoundsDTO> bounds = sharedBounds == null
+                ? Collections.emptyMap()
+                : sharedBounds;
+
         for (String column : columns) {
             List<Double> values = new ArrayList<>();
+            long invalidCount = 0;
+            boolean present = records.stream().anyMatch(row -> row.containsKey(column));
+            if (!present && !records.isEmpty()) {
+                throw new IllegalArgumentException("Normalization column not found: " + column);
+            }
+
             for (Map<String, String> row : records) {
                 String val = row.get(column);
                 if (!isNullOrEmpty(val)) {
                     try {
-                        values.add(NumberUtil.parseDouble(val));
-                    } catch (Exception e) {
-                        logger.debug("Skipping non-numeric value in column {} for normalization: {}", column, e.getMessage());
+                        values.add(parseFiniteNumber(val, column));
+                    } catch (IllegalArgumentException e) {
+                        invalidCount++;
                     }
                 }
             }
-            
-            if (values.isEmpty()) continue;
-            
-            double min = values.stream().mapToDouble(Double::doubleValue).min().orElse(0.0);
-            double max = values.stream().mapToDouble(Double::doubleValue).max().orElse(1.0);
+
+            if (invalidCount > 0 && "fail".equals(resolvedInvalidPolicy)) {
+                throw new IllegalArgumentException(
+                        "Column '" + column + "' contains " + invalidCount + " non-numeric value(s). " +
+                        "Clean or convert them before normalization, or choose to keep invalid values."
+                );
+            }
+            if (values.isEmpty()) {
+                throw new IllegalArgumentException("Column '" + column + "' contains no numeric values to normalize.");
+            }
+
+            NormalizationBoundsDTO configuredBounds = bounds.get(column);
+            if ("selection".equals(resolvedScope) && configuredBounds == null) {
+                throw new IllegalArgumentException("Shared normalization bounds are missing for column: " + column);
+            }
+
+            double min = configuredBounds == null
+                    ? values.stream().mapToDouble(Double::doubleValue).min().orElseThrow()
+                    : configuredBounds.getMin();
+            double max = configuredBounds == null
+                    ? values.stream().mapToDouble(Double::doubleValue).max().orElseThrow()
+                    : configuredBounds.getMax();
+            if (!Double.isFinite(min) || !Double.isFinite(max) || max < min) {
+                throw new IllegalArgumentException("Invalid normalization bounds for column: " + column);
+            }
             double range = max - min;
-            
-            if (range == 0) continue;
-            
+
             for (Map<String, String> row : records) {
                 String val = row.get(column);
                 if (!isNullOrEmpty(val)) {
                     try {
-                        double num = NumberUtil.parseDouble(val);
-                        double normalized = (num - min) / range;
+                        double num = parseFiniteNumber(val, column);
+                        double normalized = range == 0 ? 0.0 : (num - min) / range;
                         row.put(column, String.valueOf(normalized));
-                    } catch (Exception e) {
-                        logger.debug("Cannot normalize value in column {}: {}", column, e.getMessage());
+                    } catch (IllegalArgumentException e) {
+                        if (!"keep".equals(resolvedInvalidPolicy)) throw e;
                     }
                 }
             }
         }
         return records;
+    }
+
+    private double parseFiniteNumber(String raw, String column) {
+        try {
+            double value = NumberUtil.parseDouble(raw);
+            if (!Double.isFinite(value)) {
+                throw new IllegalArgumentException("Non-finite numeric value in column: " + column);
+            }
+            return value;
+        } catch (Exception e) {
+            throw new IllegalArgumentException("Invalid numeric value '" + raw + "' in column: " + column, e);
+        }
     }
 
     public List<Map<String, String>> standardizeDataZScore(List<Map<String, String>> records, Set<String> columns) {

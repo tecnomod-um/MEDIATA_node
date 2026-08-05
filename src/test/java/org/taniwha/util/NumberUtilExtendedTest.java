@@ -22,6 +22,14 @@ class NumberUtilExtendedTest {
         // and dot is thousand separator (e.g., 1.234,56 = 1234.56)
         assertThat(NumberUtil.parseDouble("123,45")).isCloseTo(123.45, within(0.001));
         assertThat(NumberUtil.parseDouble("1.234,56")).isCloseTo(1234.56, within(0.001));
+        assertThat(NumberUtil.parseDouble("1,234.56")).isCloseTo(1234.56, within(0.001));
+    }
+
+    @Test
+    void parseDouble_rejectsPartiallyNumericAndNonFiniteValues() {
+        assertThatThrownBy(() -> NumberUtil.parseDouble("12abc")).isInstanceOf(ParseException.class);
+        assertThatThrownBy(() -> NumberUtil.parseDouble("NaN")).isInstanceOf(ParseException.class);
+        assertThatThrownBy(() -> NumberUtil.parseDouble("Infinity")).isInstanceOf(ParseException.class);
     }
 
     @Test

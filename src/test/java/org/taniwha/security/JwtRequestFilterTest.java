@@ -11,7 +11,9 @@ import org.mockito.Mock;
 import org.mockito.MockitoAnnotations;
 import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.mock.web.MockHttpServletResponse;
+import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.context.SecurityContextHolder;
+import org.taniwha.service.TrustedProxySecurityService;
 import org.taniwha.util.JwtTokenUtil;
 
 import java.io.IOException;
@@ -64,6 +66,24 @@ class JwtRequestFilterTest {
         verify(jwtTokenUtil).validateToken("validToken123");
         verify(filterChain).doFilter(request, response);
         assertThat(SecurityContextHolder.getContext().getAuthentication()).isNotNull();
+    }
+
+    @Test
+    void doFilterInternal_verifiedTrustedProxyRequest_shouldBypassJwt() throws ServletException, IOException {
+        request.setRequestURI("/taniwha/api/semantic-cde/datasets/blood_pressure.csv/registry-matches");
+        request.setContextPath("/taniwha");
+        request.setAttribute(
+                TrustedProxySecurityService.SIGNED_PROXY_CONTEXT_ATTRIBUTE,
+                new TrustedProxySecurityService.SignedRequestContext("GET", request.getRequestURI(), "nonce")
+        );
+        SecurityContextHolder.getContext().setAuthentication(
+                new UsernamePasswordAuthenticationToken("trusted-proxy", null, null)
+        );
+
+        jwtRequestFilter.doFilterInternal(request, response, filterChain);
+
+        verify(filterChain).doFilter(request, response);
+        verifyNoInteractions(jwtTokenUtil);
     }
 
     @Test

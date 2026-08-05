@@ -19,6 +19,7 @@ import org.taniwha.util.KeyPairUtil;
 
 import javax.net.ssl.SSLHandshakeException;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.Mockito.any;
 import static org.mockito.Mockito.anyString;
@@ -81,12 +82,15 @@ class NodeSyncServiceTest {
         stubToken();
         RegisterResponseDTO response = new RegisterResponseDTO();
         response.setKeytab("KEY");
+        response.setNodeId("canonical-node-id");
         when(restTemplate.postForObject(eq("http://central/nodes/register"), any(HttpEntity.class), eq(RegisterResponseDTO.class)))
                 .thenReturn(response);
         stubRetryTemplate(0);
 
         service.registerWithCentralBackend();
 
+        assertThat(org.springframework.test.util.ReflectionTestUtils.getField(service, "objectId"))
+                .isEqualTo("canonical-node-id");
         verify(principalService).setKeytab("KEY");
     }
 

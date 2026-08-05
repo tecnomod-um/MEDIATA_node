@@ -92,8 +92,11 @@ public class NodeSyncService {
                     throw e;
                 }
             });
+            if (response.getNodeId() != null && !response.getNodeId().isBlank()) {
+                objectId = response.getNodeId();
+            }
             principalService.setKeytab(response.getKeytab());
-            logger.info("Node registered successfully with central backend: {}", nodeName);
+            logger.info("Node registered successfully with central backend: {} ({})", nodeName, objectId);
         } catch (HttpClientErrorException e) {
             if (e.getStatusCode() == HttpStatus.CONFLICT) {
                 logger.error("Node registration conflict: Node with IP {} is already registered", nodeIp);

@@ -12,6 +12,7 @@ class RegisterResponseDTOTest {
         
         assertThat(dto.getMessage()).isNull();
         assertThat(dto.getKeytab()).isNull();
+        assertThat(dto.getNodeId()).isNull();
     }
 
     @Test
@@ -20,9 +21,11 @@ class RegisterResponseDTOTest {
         
         dto.setMessage("Registration successful");
         dto.setKeytab("base64EncodedKeytabData");
+        dto.setNodeId("node-123");
         
         assertThat(dto.getMessage()).isEqualTo("Registration successful");
         assertThat(dto.getKeytab()).isEqualTo("base64EncodedKeytabData");
+        assertThat(dto.getNodeId()).isEqualTo("node-123");
     }
 
     @Test
@@ -39,10 +42,13 @@ class RegisterResponseDTOTest {
     void setKeytab_withNull_shouldAllowNull() {
         RegisterResponseDTO dto = new RegisterResponseDTO();
         dto.setKeytab("data");
+        dto.setNodeId("node-123");
         
         dto.setKeytab(null);
+        dto.setNodeId(null);
         
         assertThat(dto.getKeytab()).isNull();
+        assertThat(dto.getNodeId()).isNull();
     }
 
     @Test
@@ -72,8 +78,11 @@ class RegisterResponseDTOTest {
         dto.setMessage("Second message");
         dto.setKeytab("First keytab");
         dto.setKeytab("Second keytab");
+        dto.setNodeId("First node");
+        dto.setNodeId("Second node");
         
         assertThat(dto.getMessage()).isEqualTo("Second message");
         assertThat(dto.getKeytab()).isEqualTo("Second keytab");
+        assertThat(dto.getNodeId()).isEqualTo("Second node");
     }
 }

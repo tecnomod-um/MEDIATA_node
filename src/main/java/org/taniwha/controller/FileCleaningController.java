@@ -6,6 +6,9 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import org.taniwha.dto.DataCleaningOptionsDTO;
+import org.taniwha.dto.CleaningValidationResponseDTO;
+import org.taniwha.dto.NormalizationStatsRequestDTO;
+import org.taniwha.dto.NormalizationStatsResponseDTO;
 import org.taniwha.model.FileCategory;
 import org.taniwha.service.DataCleaningService;
 import org.taniwha.service.jobs.CleaningProcessingJobs;
@@ -52,6 +55,32 @@ public class FileCleaningController {
         return ResponseEntity.status(HttpStatus.ACCEPTED).body(Map.of(
                 "jobId", jobId,
                 "accepted", true
+        ));
+    }
+
+    @PostMapping("/clean/validate")
+    public ResponseEntity<CleaningValidationResponseDTO> validateCleanFile(
+            @RequestParam FileCategory category,
+            @RequestParam String name,
+            @RequestBody(required = false) DataCleaningOptionsDTO options
+    ) {
+        return ResponseEntity.ok(dataCleaningService.validateCleaning(category, name, options));
+    }
+
+    @PostMapping("/clean/normalization-stats")
+    public ResponseEntity<NormalizationStatsResponseDTO> getNormalizationStats(
+            @RequestParam FileCategory category,
+            @RequestParam String name,
+            @RequestBody NormalizationStatsRequestDTO request
+    ) {
+        boolean allNumeric = request != null
+                && request.getCleaningOptions() != null
+                && "all_numeric".equalsIgnoreCase(request.getCleaningOptions().getNormalizationColumnMode());
+        if (request == null || ((request.getColumns() == null || request.getColumns().isEmpty()) && !allNumeric)) {
+            throw new IllegalArgumentException("At least one normalization column is required.");
+        }
+        return ResponseEntity.ok(dataCleaningService.getNormalizationStats(
+                category, name, request.getColumns(), request.getCleaningOptions()
         ));
     }
 

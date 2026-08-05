@@ -53,6 +53,7 @@ WORKDIRS="
 /taniwha/fhir_mappings
 /taniwha/dataset_elements
 /taniwha/dataset_metadata
+/taniwha/semantic-cde
 /taniwha/fairdatapoint
 ${FDP_MONGO_DBPATH}
 ${FDP_NATIVE_DIR}
@@ -73,7 +74,8 @@ chmod 777 \
   /taniwha/mapped_datasets \
   /taniwha/fhir_mappings \
   /taniwha/dataset_elements \
-  /taniwha/dataset_metadata || true
+  /taniwha/dataset_metadata \
+  /taniwha/semantic-cde || true
 
 shutdown_all() {
   set +e

@@ -26,6 +26,9 @@ public class DataCleaningOptionsDTO {
     private boolean removeLeadingZeros;
     private boolean roundDecimals;
     private int decimalPlaces;
+    private boolean standardizeCsvFormat;
+    private String csvDelimiter;
+    private String decimalSeparator;
     
     // Text operations
     private boolean standardizeCase;
@@ -96,6 +99,10 @@ public class DataCleaningOptionsDTO {
     // Statistical transformations
     private boolean normalizeData; // Min-max normalization
     private List<String> normalizeColumns;
+    private String normalizationColumnMode;
+    private String normalizationScope;
+    private String normalizationInvalidValuePolicy;
+    private Map<String, NormalizationBoundsDTO> normalizationBounds;
     private boolean standardizeData; // Z-score standardization
     private List<String> standardizeColumns;
     private boolean binData;

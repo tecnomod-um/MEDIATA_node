@@ -281,6 +281,30 @@ class DataCleaningIntegrationTest {
     }
 
     @Test
+    void csvFormattingWorkflow_appliesConfiguredSeparators() throws Exception {
+        String numericData = """
+            ID;VALUE;ALT
+            1;10.5;1,25
+            2;20.00;2.50
+        """;
+
+        Path testFile = datasetsDir.resolve("formatting.csv");
+        Files.writeString(testFile, numericData);
+
+        DataCleaningOptionsDTO opts = new DataCleaningOptionsDTO();
+        opts.setStandardizeCsvFormat(true);
+        opts.setCsvDelimiter(",");
+        opts.setDecimalSeparator(",");
+
+        dataCleaningService.cleanInPlace(FileCategory.DATASETS, "formatting.csv", opts);
+
+        List<String> lines = Files.readAllLines(testFile);
+        assertThat(lines.get(0)).isEqualTo("ID,VALUE,ALT");
+        assertThat(lines.get(1)).isEqualTo("1,\"10,5\",\"1,25\"");
+        assertThat(lines.get(2)).isEqualTo("2,\"20,00\",\"2,50\"");
+    }
+
+    @Test
     void multipleOperationsCombinedWorkflow() throws Exception {
         // Step 1: Create realistic messy dataset
         String messyDataset = """

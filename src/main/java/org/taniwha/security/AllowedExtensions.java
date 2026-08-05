@@ -5,7 +5,7 @@ import lombok.Getter;
 // Validates the file extensions
 @Getter
 public enum AllowedExtensions {
-    CSV("csv"), TSV("tsv"), XLSX("xlsx"), TTL("ttl");
+    CSV("csv"), TSV("tsv"), XLSX("xlsx"), TTL("ttl"), JSON("json");
 
     private final String extension;
 

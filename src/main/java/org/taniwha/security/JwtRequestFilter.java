@@ -15,6 +15,7 @@ import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.web.authentication.WebAuthenticationDetailsSource;
 import org.springframework.stereotype.Component;
 import org.springframework.web.filter.OncePerRequestFilter;
+import org.taniwha.service.TrustedProxySecurityService;
 import org.taniwha.util.JwtTokenUtil;
 
 import java.io.IOException;
@@ -34,6 +35,11 @@ public class JwtRequestFilter extends OncePerRequestFilter {
             throws ServletException, IOException {
         // Allow requests to specific endpoints to bypass the filter
         if (isExemptedEndpoint(request)) {
+            chain.doFilter(request, response);
+            return;
+        }
+        if (request.getAttribute(TrustedProxySecurityService.SIGNED_PROXY_CONTEXT_ATTRIBUTE) != null
+                && SecurityContextHolder.getContext().getAuthentication() != null) {
             chain.doFilter(request, response);
             return;
         }

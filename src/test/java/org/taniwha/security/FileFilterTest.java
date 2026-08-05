@@ -141,6 +141,26 @@ class FileFilterTest {
     }
 
     @Test
+    void isFileInvalid_path_withValidJsonFile_shouldReturnFalse() throws IOException {
+        Path jsonFile = tempDir.resolve("composition.json");
+        Files.writeString(jsonFile, "{\"ctx/template_id\":\"Example\"}", StandardCharsets.UTF_8);
+
+        assertThat(fileFilter.isFileInvalid(jsonFile)).isFalse();
+    }
+
+    @Test
+    void isFileInvalid_multipartFile_withDangerousJsonContent_shouldReturnTrue() {
+        MultipartFile file = new MockMultipartFile(
+                "file",
+                "composition.json",
+                "application/json",
+                "{\"payload\":\"<script>\"}".getBytes(StandardCharsets.UTF_8)
+        );
+
+        assertThat(fileFilter.isFileInvalid(file)).isTrue();
+    }
+
+    @Test
     void isFileInvalid_multipartFile_withNullFilename_shouldReturnTrue() {
         MultipartFile file = new MockMultipartFile(
                 "file",

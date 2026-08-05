@@ -9,6 +9,7 @@ import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 import org.taniwha.dto.*;
 import org.taniwha.service.jobs.AnalyticsProcessingJobs;
 import org.taniwha.service.AnalyticsService;
+import org.taniwha.service.DatasetElementExtractionService;
 
 import java.util.Collections;
 import java.util.List;
@@ -26,16 +27,38 @@ class AnalyticsControllerTest {
     private MockMvc mvc;
     private AnalyticsService analyticsService;
     private AnalyticsProcessingJobs jobs;
+    private DatasetElementExtractionService datasetElementExtractionService;
     private final ObjectMapper om = new ObjectMapper();
 
     @BeforeEach
     void setUp() {
         analyticsService = mock(AnalyticsService.class);
         jobs = mock(AnalyticsProcessingJobs.class);
+        datasetElementExtractionService = mock(DatasetElementExtractionService.class);
 
         mvc = MockMvcBuilders
-                .standaloneSetup(new AnalyticsController(analyticsService, jobs))
+                .standaloneSetup(new AnalyticsController(analyticsService, jobs, datasetElementExtractionService))
                 .build();
+    }
+
+    @Test
+    void extractElements_success_returns200AndElements() throws Exception {
+        FileNamesDTO reqDto = new FileNamesDTO();
+        reqDto.setFileNames(List.of("file1.csv"));
+
+        when(datasetElementExtractionService.extractDatasetElements(reqDto.getFileNames()))
+                .thenReturn(List.of(new DatasetElementsDTO(
+                        "file1.csv",
+                        List.of(new DatasetElementDTO("age", List.of("integer", "min:1", "max:90")))
+                )));
+
+        mvc.perform(post("/api/data/extractElements")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(om.writeValueAsString(reqDto)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[0].fileName").value("file1.csv"))
+                .andExpect(jsonPath("$[0].elements[0].column").value("age"))
+                .andExpect(jsonPath("$[0].elements[0].values[0]").value("integer"));
     }
 
     @Test

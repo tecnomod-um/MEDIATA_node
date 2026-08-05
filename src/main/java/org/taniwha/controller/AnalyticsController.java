@@ -8,6 +8,7 @@ import org.springframework.web.bind.annotation.*;
 import org.taniwha.dto.*;
 import org.taniwha.service.jobs.AnalyticsProcessingJobs;
 import org.taniwha.service.AnalyticsService;
+import org.taniwha.service.DatasetElementExtractionService;
 
 import java.util.Collections;
 import java.util.List;
@@ -21,10 +22,16 @@ public class AnalyticsController {
 
     private final AnalyticsService analyticsService;
     private final AnalyticsProcessingJobs jobs;
+    private final DatasetElementExtractionService datasetElementExtractionService;
 
-    public AnalyticsController(AnalyticsService analyticsService, AnalyticsProcessingJobs jobs) {
+    public AnalyticsController(
+            AnalyticsService analyticsService,
+            AnalyticsProcessingJobs jobs,
+            DatasetElementExtractionService datasetElementExtractionService
+    ) {
         this.analyticsService = analyticsService;
         this.jobs = jobs;
+        this.datasetElementExtractionService = datasetElementExtractionService;
     }
 
     @PostMapping("/processList")
@@ -46,6 +53,17 @@ public class AnalyticsController {
             logger.error("Error processing file list", e);
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
                     .body(List.of(new AnalyticsResponseDTO("Error processing files: " + e.getMessage())));
+        }
+    }
+
+    @PostMapping("/extractElements")
+    public ResponseEntity<List<DatasetElementsDTO>> extractElements(@RequestBody FileNamesDTO dto) {
+        try {
+            List<String> fileNames = dto == null || dto.getFileNames() == null ? List.of() : dto.getFileNames();
+            return ResponseEntity.ok(datasetElementExtractionService.extractDatasetElements(fileNames));
+        } catch (Exception e) {
+            logger.error("Error extracting dataset elements", e);
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(List.of());
         }
     }
 

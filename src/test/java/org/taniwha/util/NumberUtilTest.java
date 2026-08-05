@@ -29,7 +29,8 @@ class NumberUtilTest {
     }
 
     @Test
-    void parseDouble_malformedButPartialParse() throws Exception {
-        assertThat(NumberUtil.parseDouble("1,2.3")).isEqualTo(1.2);
+    void parseDouble_malformedMixedSeparators_throwsParseException() {
+        assertThatThrownBy(() -> NumberUtil.parseDouble("1,2.3"))
+                .isInstanceOf(ParseException.class);
     }
 }
