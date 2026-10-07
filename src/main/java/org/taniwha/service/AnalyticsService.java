@@ -48,6 +48,11 @@ public class AnalyticsService {
     private static final String BIN_RANGES = "binRanges";
     private static final String NO_DATA_FOUND_MSG = "No data found in file: ";
     private static final int MIN_RECORDS_FOR_UNIQUE_FILTER = 10;
+    private static final int MIN_DISCLOSURE_COUNT = 5;
+    private static final String SMALL_FEATURE_SUPPRESSION_REASON =
+            "Suppressed for privacy: 5 or fewer observations";
+    private static final String SMALL_CELL_SUPPRESSION_REASON =
+            "Suppressed for privacy: contains a value occurring 5 or fewer times";
 
     private static final long HUGE_BYTES_THRESHOLD = 1_000_000; // ~1MB
     private static final long HUGE_ROWS_THRESHOLD = 5_000;      // ~5k rows
@@ -322,18 +327,14 @@ public class AnalyticsService {
 
             updateJobProgressForFile(jobId, filename, doneRowsBeforeFile, rows.get(), totalEstRows);
 
-            long totalRows =
-                    continuousData.values().stream().mapToLong(List::size).sum()
-                            + categoricalData.values().stream()
-                            .mapToLong(m -> m.values().stream().mapToInt(Integer::intValue).sum()).sum()
-                            + dateData.values().stream().mapToLong(List::size).sum()
-                            + missingValueCounts.values().stream().mapToLong(Long::longValue).sum();
+            long totalRows = rows.get();
 
             if (totalRows == 0) {
                 response.setMessage(NO_DATA_FOUND_MSG + filename);
                 return response;
             }
 
+            suppressSmallFeatures(continuousData, categoricalData, dateData, omittedFeatures);
             filterCategoricalData(categoricalData, omittedFeatures, totalRows);
 
             response.setContinuousFeatures(processContinuousData(continuousData, missingValueCounts, totalRows));
@@ -377,29 +378,29 @@ public class AnalyticsService {
 
         try {
             Path path = Paths.get(fileService.getDatasetFilePath(filename));
-            dataProcessingService.streamRows(path, rowData -> processRecord(
-                    rowData,
-                    continuousData,
-                    categoricalData,
-                    dateData,
-                    missingValueCounts,
-                    Optional.empty(),
-                    Optional.empty(),
-                    comboCounts,
-                    forcedMapping
-            ));
+            AtomicLong rows = new AtomicLong(0L);
+            dataProcessingService.streamRows(path, rowData -> {
+                rows.incrementAndGet();
+                processRecord(
+                        rowData,
+                        continuousData,
+                        categoricalData,
+                        dateData,
+                        missingValueCounts,
+                        Optional.empty(),
+                        Optional.empty(),
+                        comboCounts,
+                        forcedMapping
+                );
+            });
 
-            long totalRows =
-                    continuousData.values().stream().mapToLong(List::size).sum()
-                            + categoricalData.values().stream()
-                            .mapToLong(m -> m.values().stream().mapToInt(i -> i).sum()).sum()
-                            + dateData.values().stream().mapToLong(List::size).sum()
-                            + missingValueCounts.values().stream().mapToLong(Long::longValue).sum();
+            long totalRows = rows.get();
             if (totalRows == 0) {
                 response.setMessage(NO_DATA_FOUND_MSG + filename);
                 return CompletableFuture.completedFuture(response);
             }
 
+            suppressSmallFeatures(continuousData, categoricalData, dateData, omittedFeatures);
             filterCategoricalData(categoricalData, omittedFeatures, totalRows);
 
             response.setContinuousFeatures(processContinuousData(continuousData, missingValueCounts, totalRows));
@@ -506,6 +507,52 @@ public class AnalyticsService {
         });
     }
 
+    private void suppressSmallFeatures(Map<String, List<Double>> continuousData,
+                                       Map<String, Map<String, Integer>> categoricalData,
+                                       Map<String, List<String>> dateData,
+                                       List<OmittedFeatureStatistics> omittedFeatures) {
+        continuousData.entrySet().removeIf(entry -> suppressFeatureIfNeeded(
+                entry.getKey(), entry.getValue().size(), false,
+                omittedFeatures));
+
+        categoricalData.entrySet().removeIf(entry -> {
+            long count = entry.getValue().values().stream().mapToLong(Integer::longValue).sum();
+            boolean containsSmallCell = entry.getValue().values().stream()
+                    .anyMatch(cellCount -> cellCount <= MIN_DISCLOSURE_COUNT);
+            return suppressFeatureIfNeeded(entry.getKey(), count, containsSmallCell,
+                    omittedFeatures);
+        });
+
+        dateData.entrySet().removeIf(entry -> {
+            Map<String, Long> dateCounts = entry.getValue().stream()
+                    .collect(Collectors.groupingBy(Function.identity(), Collectors.counting()));
+            boolean containsSmallCell = dateCounts.values().stream()
+                    .anyMatch(cellCount -> cellCount <= MIN_DISCLOSURE_COUNT);
+            return suppressFeatureIfNeeded(entry.getKey(), entry.getValue().size(), containsSmallCell,
+                    omittedFeatures);
+        });
+    }
+
+    private boolean suppressFeatureIfNeeded(String featureName,
+                                            long nonMissingCount,
+                                            boolean containsSmallCell,
+                                            List<OmittedFeatureStatistics> omittedFeatures) {
+        String reason = null;
+        if (nonMissingCount <= MIN_DISCLOSURE_COUNT) {
+            reason = SMALL_FEATURE_SUPPRESSION_REASON;
+        } else if (containsSmallCell) {
+            reason = SMALL_CELL_SUPPRESSION_REASON;
+        }
+
+        if (reason == null) return false;
+
+        // Do not expose exact counts or missingness for privacy-suppressed features.
+        omittedFeatures.add(new OmittedFeatureStatistics(
+                featureName, 0L, 0.0, 0L, reason));
+        logger.debug("Omitting feature {}: {}", featureName, reason);
+        return true;
+    }
+
     private String determineFeatureType(Optional<String> overrideFeatureName,
                                         Optional<String> overrideFeatureType,
                                         String column,
@@ -568,7 +615,7 @@ public class AnalyticsService {
                                                           long totalRecords) {
         List<FeatureStatistics> statisticsList = new ArrayList<>();
         continuousData.forEach((key, valueList) -> {
-            List<Double> outliers = identifyOutliers(valueList);
+            List<Double> outliers = suppressSmallResultSet(identifyOutliers(valueList));
             double mean = valueList.stream().mapToDouble(Double::doubleValue).average().orElse(Double.NaN);
             double stddev = Math.sqrt(valueList.stream().mapToDouble(v -> Math.pow(v - mean, 2)).sum() / valueList.size());
             long missingValues = missingValueCounts.getOrDefault(key, 0L);
@@ -622,9 +669,9 @@ public class AnalyticsService {
 
             double stdDevEpoch = Math.sqrt(dateValues.stream().mapToDouble(v -> Math.pow(v - meanEpoch, 2)).sum() / dateValues.size());
 
-            List<String> outlierDates = outliers.stream()
+            List<String> outlierDates = suppressSmallResultSet(outliers.stream()
                     .map(outlier -> LocalDate.ofEpochDay(outlier.longValue()).format(DateTimeFormatter.ISO_LOCAL_DATE))
-                    .toList();
+                    .toList());
 
             DateTimeFormatter formatter = DateTimeFormatter.ISO_LOCAL_DATE;
 
@@ -716,6 +763,10 @@ public class AnalyticsService {
         return data.stream().filter(x -> x < lowerBound || x > upperBound).toList();
     }
 
+    private <T> List<T> suppressSmallResultSet(List<T> values) {
+        return values.size() <= MIN_DISCLOSURE_COUNT ? Collections.emptyList() : values;
+    }
+
     public List<AnalyticsResponseDTO> filterMultipleFilesByName(List<FileFilters> fileFiltersList) {
         List<CompletableFuture<AnalyticsResponseDTO>> futures = new ArrayList<>();
 
@@ -791,9 +842,10 @@ public class AnalyticsService {
                         overrideFeatureName, overrideFeatureType, categoryCombinationCounts, forcedMapping)
         );
 
+        long totalRecords = records.size();
+        suppressSmallFeatures(continuousData, categoricalData, dateData, omittedFeatures);
         filterCategoricalData(categoricalData, omittedFeatures, records.size());
 
-        long totalRecords = records.size();
         if (overrideFeatureName.isPresent() && overrideFeatureType.isPresent()) {
             String normalizedKey = getOriginalFeatureName(overrideFeatureName.get());
             String type = overrideFeatureType.get().toLowerCase();
@@ -804,12 +856,12 @@ public class AnalyticsService {
                     response.setDateFeatures(processDateData(
                             Collections.singletonMap(normalizedKey, dateData.get(normalizedKey)),
                             missingValueCounts, totalRecords));
-                } else {
+                } else if (continuousData.containsKey(normalizedKey)) {
                     response.setContinuousFeatures(processContinuousData(
                             Collections.singletonMap(normalizedKey, continuousData.get(normalizedKey)),
                             missingValueCounts, totalRecords));
                 }
-            } else if (type.equals(CATEGORICAL_TYPE)) {
+            } else if (type.equals(CATEGORICAL_TYPE) && categoricalData.containsKey(normalizedKey)) {
                 response.setCategoricalFeatures(processCategoricalData(
                         Collections.singletonMap(normalizedKey, categoricalData.get(normalizedKey)),
                         missingValueCounts, totalRecords));

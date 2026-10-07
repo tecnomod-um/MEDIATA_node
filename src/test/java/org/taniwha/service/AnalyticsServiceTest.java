@@ -107,7 +107,7 @@ class AnalyticsServiceTest {
     }
 
     @Test
-    void recalculateFeatureAsTypeFromDisk_oneRecord_continuous_success() throws Exception {
+    void recalculateFeatureAsTypeFromDisk_oneRecord_suppressesFeature() throws Exception {
         String filename = "f2";
         when(fileService.getDatasetFilePath(filename)).thenReturn("/tmp/" + filename);
         when(dataProcessingService.extractDataFromPath(any(Path.class)))
@@ -119,11 +119,11 @@ class AnalyticsServiceTest {
         assertThat(dto.getMessage()).isEqualTo("Data processed successfully");
         assertThat(dto.getFileName()).isEqualTo(filename);
 
-        assertThat(dto.getContinuousFeatures())
-                .hasSize(1)
-                .first()
-                .extracting("featureName", "count")
-                .containsExactly("col1", 1L);
+        assertThat(dto.getContinuousFeatures()).isEmpty();
+        assertThat(dto.getOmittedFeatures())
+                .singleElement()
+                .extracting("featureName", "count", "reason")
+                .containsExactly("col1", 0L, "Suppressed for privacy: 5 or fewer observations");
     }
 
     @Test
@@ -138,7 +138,7 @@ class AnalyticsServiceTest {
         );
         doAnswer(invocation -> {
             java.util.function.Consumer<Map<String, String>> consumer = invocation.getArgument(1);
-            consumer.accept(row);
+            for (int i = 0; i < 6; i++) consumer.accept(row);
             return null;
         }).when(dataProcessingService).streamRows(eq(Paths.get("/tmp/" + filename)), any());
 
@@ -232,7 +232,7 @@ class AnalyticsServiceTest {
         String filename = "cf.csv";
         when(fileService.getDatasetFilePath(filename)).thenReturn("/tmp/" + filename);
         when(dataProcessingService.extractDataFromPath(any()))
-                .thenReturn(List.of(Map.of("ccol", "foo")));
+                .thenReturn(Collections.nCopies(6, Map.of("ccol", "foo")));
 
         AnalyticsResponseDTO dto =
                 analyticsService.recalculateFeatureAsTypeFromDisk(filename, "ccol", "categorical").get();
@@ -277,8 +277,8 @@ class AnalyticsServiceTest {
     }
 
     @Test
-    @DisplayName("processSingleFileOnDisk omits categorical columns with too many unique values")
-    void processSingleFileOnDisk_omitsHighCardinality() throws Exception {
+    @DisplayName("processSingleFileOnDisk suppresses categorical columns containing small cells")
+    void processSingleFileOnDisk_suppressesSmallCategoricalCells() throws Exception {
         String filename = "highcard.csv";
         when(fileService.getDatasetFilePath(filename)).thenReturn("/tmp/" + filename);
         List<Map<String, String>> rows = new ArrayList<>();
@@ -296,7 +296,7 @@ class AnalyticsServiceTest {
         assertThat(dto.getOmittedFeatures())
                 .singleElement()
                 .extracting("featureName", "reason")
-                .containsExactly("u", "Too many unique values (100.0%)");
+                .containsExactly("u", "Suppressed for privacy: contains a value occurring 5 or fewer times");
     }
 
     @Test
@@ -305,7 +305,7 @@ class AnalyticsServiceTest {
         String filename = "force.csv";
         when(fileService.getDatasetFilePath(filename)).thenReturn("/tmp/" + filename);
         when(dataProcessingService.extractDataFromPath(any(Path.class)))
-                .thenReturn(List.of(Map.of("fcol", "foo")));
+                .thenReturn(Collections.nCopies(6, Map.of("fcol", "foo")));
 
         AnalyticsResponseDTO dto = analyticsService
                 .recalculateFeatureAsTypeFromDisk(filename, "fcol", "continuous")
@@ -315,7 +315,7 @@ class AnalyticsServiceTest {
                 .hasSize(1)
                 .first()
                 .extracting("featureName", "count")
-                .containsExactly("fcol", 1L);
+                .containsExactly("fcol", 6L);
     }
 
     @Test
@@ -324,10 +324,10 @@ class AnalyticsServiceTest {
         String filename = "filter.csv";
         when(fileService.getDatasetFilePath(filename)).thenReturn("/tmp/" + filename);
 
-        List<Map<String, String>> recs = List.of(
-                Map.of("cat", "A", "num", "1"),
-                Map.of("cat", "A", "num", "2")
-        );
+        List<Map<String, String>> recs = new ArrayList<>();
+        for (int i = 1; i <= 6; i++) {
+            recs.add(Map.of("cat", "A", "num", Integer.toString(i)));
+        }
         when(dataProcessingService.extractFilteredDataFromPath(any(Path.class), anyMap()))
                 .thenReturn(recs);
 
@@ -340,6 +340,123 @@ class AnalyticsServiceTest {
                 .anySatisfy(fs -> assertThat(fs.getFeatureName()).isEqualTo("cat"));
         assertThat(dto.getContinuousFeatures())
                 .anySatisfy(fs -> assertThat(fs.getFeatureName()).isEqualTo("num"));
+    }
+
+    @Test
+    void processSingleFileOnDisk_fiveObservations_suppressesFeature() throws Exception {
+        AnalyticsResponseDTO dto = processNumericRows("five.csv", 5);
+
+        assertThat(dto.getContinuousFeatures()).isEmpty();
+        assertThat(dto.getOmittedFeatures())
+                .singleElement()
+                .extracting("featureName", "count", "reason")
+                .containsExactly("num", 0L, "Suppressed for privacy: 5 or fewer observations");
+    }
+
+    @Test
+    void processSingleFileOnDisk_sixObservations_returnsFeature() throws Exception {
+        AnalyticsResponseDTO dto = processNumericRows("six.csv", 6);
+
+        assertThat(dto.getContinuousFeatures())
+                .singleElement()
+                .extracting("featureName", "count")
+                .containsExactly("num", 6L);
+        assertThat(dto.getOmittedFeatures()).isEmpty();
+    }
+
+    @Test
+    void filterDataByName_fiveMatchingRecords_suppressesAllAnalytics() throws Exception {
+        String filename = "filtered-five.csv";
+        when(fileService.getDatasetFilePath(filename)).thenReturn("/tmp/" + filename);
+        when(dataProcessingService.extractFilteredDataFromPath(any(Path.class), anyMap()))
+                .thenReturn(List.of(
+                        Map.of("num", "1"), Map.of("num", "2"), Map.of("num", "3"),
+                        Map.of("num", "4"), Map.of("num", "5")));
+
+        AnalyticsResponseDTO dto = analyticsService
+                .filterDataByName(filename, Map.of("group", "small"))
+                .get();
+
+        assertThat(dto.getContinuousFeatures()).isEmpty();
+        assertThat(dto.getCategoricalFeatures()).isEmpty();
+        assertThat(dto.getDateFeatures()).isEmpty();
+        assertThat(dto.getCovariances()).isEmpty();
+        assertThat(dto.getPearsonCorrelations()).isEmpty();
+        assertThat(dto.getSpearmanCorrelations()).isEmpty();
+        assertThat(dto.getChiSquareTest()).isEmpty();
+        assertThat(dto.getOmittedFeatures())
+                .singleElement()
+                .extracting("featureName", "count", "reason")
+                .containsExactly("num", 0L, "Suppressed for privacy: 5 or fewer observations");
+    }
+
+    @Test
+    void processSingleFileOnDisk_rareCategory_suppressesEntireFeature() throws Exception {
+        String filename = "rare-category.csv";
+        List<Map<String, String>> rows = new ArrayList<>();
+        for (int i = 0; i < 6; i++) rows.add(Map.of("group", "common"));
+        for (int i = 0; i < 5; i++) rows.add(Map.of("group", "rare"));
+        stubStreamRows(filename, rows);
+
+        AnalyticsResponseDTO dto = analyticsService.processSingleFileOnDisk(filename).get();
+
+        assertThat(dto.getCategoricalFeatures()).isEmpty();
+        assertThat(dto.getOmittedFeatures())
+                .singleElement()
+                .extracting("featureName", "count", "reason")
+                .containsExactly("group", 0L,
+                        "Suppressed for privacy: contains a value occurring 5 or fewer times");
+    }
+
+    @Test
+    void processSingleFileOnDisk_rareDate_suppressesEntireFeature() throws Exception {
+        String filename = "rare-date.csv";
+        List<Map<String, String>> rows = new ArrayList<>();
+        for (int i = 0; i < 6; i++) rows.add(Map.of("visitDate", "2020-01-01"));
+        for (int i = 0; i < 5; i++) rows.add(Map.of("visitDate", "2020-02-01"));
+        stubStreamRows(filename, rows);
+
+        AnalyticsResponseDTO dto = analyticsService.processSingleFileOnDisk(filename).get();
+
+        assertThat(dto.getDateFeatures()).isEmpty();
+        assertThat(dto.getOmittedFeatures())
+                .singleElement()
+                .extracting("featureName", "count", "reason")
+                .containsExactly("visitDate", 0L,
+                        "Suppressed for privacy: contains a value occurring 5 or fewer times");
+    }
+
+    @Test
+    void processSingleFileOnDisk_smallOutlierSet_doesNotReturnExactValues() throws Exception {
+        String filename = "outliers.csv";
+        List<Map<String, String>> rows = new ArrayList<>();
+        for (int i = 0; i < 6; i++) rows.add(Map.of("num", "0"));
+        rows.add(Map.of("num", "100"));
+        stubStreamRows(filename, rows);
+
+        AnalyticsResponseDTO dto = analyticsService.processSingleFileOnDisk(filename).get();
+
+        assertThat(dto.getContinuousFeatures())
+                .singleElement()
+                .extracting("outliers")
+                .asList()
+                .isEmpty();
+    }
+
+    private AnalyticsResponseDTO processNumericRows(String filename, int count) throws Exception {
+        List<Map<String, String>> rows = new ArrayList<>();
+        for (int i = 1; i <= count; i++) rows.add(Map.of("num", Integer.toString(i)));
+        stubStreamRows(filename, rows);
+        return analyticsService.processSingleFileOnDisk(filename).get();
+    }
+
+    private void stubStreamRows(String filename, List<Map<String, String>> rows) throws Exception {
+        when(fileService.getDatasetFilePath(filename)).thenReturn("/tmp/" + filename);
+        doAnswer(invocation -> {
+            java.util.function.Consumer<Map<String, String>> consumer = invocation.getArgument(1);
+            rows.forEach(consumer);
+            return null;
+        }).when(dataProcessingService).streamRows(eq(Paths.get("/tmp/" + filename)), any());
     }
 
     // isAnyHugeForDiscovery – covers isHugeFile, estimateCsvRows
