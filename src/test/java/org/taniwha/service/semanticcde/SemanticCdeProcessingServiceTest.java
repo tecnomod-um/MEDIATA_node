@@ -26,7 +26,7 @@ class SemanticCdeProcessingServiceTest {
         Files.createDirectories(datasets);
         Files.writeString(datasets.resolve("clinical_table.data"),
                 "observation_id,patient_id,performer_id,device_id,observation_time,\"systolic_value\","
-                        + "diastolic_value,unit_source_value,body_site_label,body_site_system,body_site_code,body_site_display\n"
+                        + "diastolic_value,unit,body_site_label,body_site_system,body_site_code,body_site_display\n"
                         + "o1,p1,pr1,d1,2026-05-21T09:15:00Z,120,80,mm[Hg],Left arm,http://snomed.info/sct,368208006,Left arm\n");
 
         SemanticCdeProcessingService service = new SemanticCdeProcessingService(
@@ -56,7 +56,7 @@ class SemanticCdeProcessingServiceTest {
         assertThat(matches.get(0).datasetFileName()).isEqualTo("clinical_table.data");
         assertThat(matches.get(0).datasetFields())
                 .contains("systolic value", "diastolic value")
-                .doesNotContain("patient id", "body site label", "unit source value");
+                .doesNotContain("patient id", "body site label", "unit");
         assertThat(matches.get(0).semanticDescriptions())
                 .anyMatch(description -> description.contains("blood pressure"));
         assertThat(matches.get(0).lexicalScore()).isGreaterThan(0.0);
@@ -68,11 +68,11 @@ class SemanticCdeProcessingServiceTest {
         Path datasets = appPath.resolve("datasets");
         Files.createDirectories(datasets);
         Files.writeString(datasets.resolve("reordered.csv"),
-                "unit_source_value,diastolic_value,systolic_value,observation_time,device_id,performer_id,patient_id,observation_id,"
+                "unit,diastolic_value,systolic_value,observation_time,device_id,performer_id,patient_id,observation_id,"
                         + "body_site_display,body_site_code,body_site_system,body_site_label\n"
                         + "mm[Hg],80,120,2026-05-21T09:15:00Z,d1,pr1,p1,o1,Left arm,368208006,http://snomed.info/sct,Left arm\n");
         Files.writeString(datasets.resolve("missing-column.csv"),
-                "observation_id,patient_id,performer_id,device_id,observation_time,systolic_value,unit_source_value,"
+                "observation_id,patient_id,performer_id,device_id,observation_time,systolic_value,unit,"
                         + "body_site_label,body_site_system,body_site_code,body_site_display\n"
                         + "o1,p1,pr1,d1,2026-05-21T09:15:00Z,120,mm[Hg],Left arm,http://snomed.info/sct,368208006,Left arm\n");
 
@@ -96,7 +96,10 @@ class SemanticCdeProcessingServiceTest {
         Path datasets = appPath.resolve("datasets");
         Files.createDirectories(datasets);
         Files.writeString(datasets.resolve("blood_pressure_kpa.csv"),
-                "patient_id,systolic_value,diastolic_value,unit_source_value\np1,16.0,10.7,kPa\n");
+                "observation_id,patient_id,performer_id,device_id,observation_time,systolic_value,"
+                        + "diastolic_value,unit,body_site_label,body_site_system,body_site_code,body_site_display\n"
+                        + "o1,p1,pr1,d1,2026-05-21T09:15:00Z,16.0,10.7,kPa,Left arm,"
+                        + "http://snomed.info/sct,368208006,Left arm\n");
 
         SemanticCdeProcessingService service = new SemanticCdeProcessingService(
                 new FileService(mock(FileFilter.class), appPath.toString(), ""),
