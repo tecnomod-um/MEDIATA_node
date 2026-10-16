@@ -1,5 +1,7 @@
 package org.taniwha.controller;
 
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -20,6 +22,7 @@ import java.util.List;
 
 @RestController
 @RequestMapping("/api/semantic-cde")
+@Tag(name = "Semantic CDE", description = "Match datasets to registry definitions and generate semantic CDE artifacts.")
 public class SemanticCdeProcessingController {
 
     private static final Logger logger = LoggerFactory.getLogger(SemanticCdeProcessingController.class);
@@ -30,11 +33,13 @@ public class SemanticCdeProcessingController {
         this.processingService = processingService;
     }
 
+    @Operation(summary = "Find registry matches already associated with a dataset")
     @GetMapping("/datasets/{fileName:.+}/registry-matches")
     public ResponseEntity<List<SemanticCdeDatasetMatchDTO>> findRegistryMatches(@PathVariable String fileName) {
         return ResponseEntity.ok(processingService.findRegistryMatches(fileName));
     }
 
+    @Operation(summary = "Generate semantic CDE output for a dataset")
     @PostMapping("/process")
     public ResponseEntity<SemanticCdeProcessResponseDTO> process(@Valid @RequestBody SemanticCdeProcessRequestDTO request) {
         logger.info("Semantic-CDE processing requested for dataset={} semanticCde={} mappings={}",

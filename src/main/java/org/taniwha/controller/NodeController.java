@@ -1,5 +1,7 @@
 package org.taniwha.controller;
 
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.tags.Tag;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
@@ -16,6 +18,7 @@ import org.taniwha.util.JwtTokenUtil;
 // Sets up the node in the system with the required security
 @RestController
 @RequestMapping("/node")
+@Tag(name = "Node access", description = "Inspect node status and complete the Kerberos-backed authorization flow.")
 public class NodeController {
 
     private static final Logger logger = LoggerFactory.getLogger(NodeController.class);
@@ -27,11 +30,13 @@ public class NodeController {
         this.jwtTokenUtil = jwtTokenUtil;
     }
 
+    @Operation(summary = "Check node health")
     @GetMapping("/health")
     public String healthCheck() {
         return "OK";
     }
 
+    @Operation(summary = "Get node metadata")
     @GetMapping("/metadata")
     public ResponseEntity<Object> nodeMetadata() {
         NodeMetadata metadata = nodeAccessService.getMetadata();
@@ -43,6 +48,7 @@ public class NodeController {
         return ResponseEntity.ok(metadata);
     }
 
+    @Operation(summary = "Submit a Kerberos service ticket to the node")
     @PostMapping("/authorize")
     public ResponseEntity<NodeAuthResponseDTO> authorizeNode(@RequestBody NodeAuthRequestDTO request) {
         String sgtToken = request.getToken();
@@ -64,6 +70,7 @@ public class NodeController {
         return ResponseEntity.badRequest().body(new NodeAuthResponseDTO("Invalid token"));
     }
 
+    @Operation(summary = "Exchange validated user credentials for a node-access JWT")
     @PostMapping("/validate")
     public ResponseEntity<NodeValidationResponseDTO> validateRequest(@RequestHeader("Authorization") String jwtToken, @RequestBody NodeValidationRequestDTO request) {
         jwtToken = jwtToken.replace("Bearer ", "");

@@ -203,7 +203,11 @@ class JwtRequestFilterTest {
             "/taniwha/node/heartbeat",
             "/taniwha/node/status",
             "/taniwha/fdp",
-            "/taniwha/fdp/catalog/node-catalog"
+            "/taniwha/fdp/catalog/node-catalog",
+            "/taniwha/v3/api-docs",
+            "/taniwha/v3/api-docs.yaml",
+            "/taniwha/swagger-ui.html",
+            "/taniwha/swagger-ui/index.html"
         };
 
         for (String path : exemptedPaths) {

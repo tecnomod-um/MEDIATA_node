@@ -4,6 +4,7 @@ node-secrets.env
 nohup.out
 out/
 target/
+openapi.yaml
 taniwha.log
 *.log
 hs_err_pid*.log

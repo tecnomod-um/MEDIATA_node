@@ -1,6 +1,8 @@
 package org.taniwha.controller;
 
 import jakarta.servlet.http.HttpServletRequest;
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.tags.Tag;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
@@ -15,6 +17,7 @@ import org.taniwha.service.FairDataPointInstanceService;
 import org.taniwha.util.JwtTokenUtil;
 
 @RestController
+@Tag(name = "FAIR Data Point", description = "Read FAIR metadata and publish the node catalog to the bundled FAIR Data Point.")
 public class FairDataPointController {
 
     private final FairDataPointCatalogSyncService fairDataPointCatalogSyncService;
@@ -35,13 +38,14 @@ public class FairDataPointController {
         this.configuredNodeIp = configuredNodeIp == null ? "" : configuredNodeIp.trim();
     }
 
+    @Operation(summary = "Read FAIR Data Point metadata")
     @GetMapping({
             "/fdp", "/fdp/",
             "/fdp/catalog", "/fdp/catalog/",
             "/fdp/catalog/{catalogId}",
-            "/fdp/catalog/{catalogId}/dataset/",
+            "/fdp/catalog/{catalogId}/dataset", "/fdp/catalog/{catalogId}/dataset/",
             "/fdp/dataset/{datasetId}",
-            "/fdp/dataset/{datasetId}/distribution/",
+            "/fdp/dataset/{datasetId}/distribution", "/fdp/dataset/{datasetId}/distribution/",
             "/fdp/distribution/{distributionId}",
             "/fdp/profile/{profileId}",
             "/fdp/metadata-schemas/{schemaId}",
@@ -68,6 +72,7 @@ public class FairDataPointController {
         return result.response();
     }
 
+    @Operation(summary = "Get distribution access instructions")
     @GetMapping("/fdp/access/{distributionId}")
     public ResponseEntity<FairDataPointAccessResponseDTO> accessInformation(@PathVariable String distributionId,
                                                                             HttpServletRequest request) {
@@ -78,12 +83,14 @@ public class FairDataPointController {
         return response == null ? ResponseEntity.notFound().build() : ResponseEntity.ok(response);
     }
 
+    @Operation(summary = "Read a harmonization mapping specification")
     @GetMapping(value = "/fdp/mapping-spec/{mappingSpecId}", produces = MediaType.APPLICATION_JSON_VALUE)
     public ResponseEntity<String> mappingSpecification(@PathVariable String mappingSpecId) {
         String mappingSpec = fairDataPointInstanceService.readMappingSpecification(mappingSpecId);
         return mappingSpec == null ? ResponseEntity.notFound().build() : ResponseEntity.ok(mappingSpec);
     }
 
+    @Operation(summary = "Publish current node metadata to the FAIR Data Point")
     @PostMapping({"/api/fairdatapoint/sync", "/api/fairdatapoint/sync/catalogs"})
     public ResponseEntity<FairDataPointSyncResponseDTO> syncCatalogs(
             @RequestHeader(value = "Authorization", required = false) String authorizationHeader) {

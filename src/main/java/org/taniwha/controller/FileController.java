@@ -1,5 +1,7 @@
 package org.taniwha.controller;
 
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.tags.Tag;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.*;
@@ -20,6 +22,7 @@ import java.util.List;
 
 @RestController
 @RequestMapping("/api/files")
+@Tag(name = "Local files", description = "Manage local datasets, element files, and DCAT metadata.")
 public class FileController {
 
     private static final String ERROR_MSG = "Error listing files";
@@ -34,6 +37,7 @@ public class FileController {
         this.jwtTokenUtil = jwtTokenUtil;
     }
 
+    @Operation(summary = "List source dataset files")
     @GetMapping("/datasets")
     public ResponseEntity<List<String>> listDatasetFiles() {
         logger.debug("Request to list files in datasets folder");
@@ -48,6 +52,7 @@ public class FileController {
         }
     }
 
+    @Operation(summary = "Download a policy-approved dataset file")
     @GetMapping("/datasets/{fileName}")
     public ResponseEntity<byte[]> getDatasetFile(@PathVariable String fileName) {
         logger.debug("Request to fetch dataset file: {}", fileName);
@@ -83,6 +88,7 @@ public class FileController {
         }
     }
 
+    @Operation(summary = "Update dataset-family download policy")
     @PostMapping("/datasets/shareability")
     public ResponseEntity<DatasetShareabilityUpdateResponseDTO> updateDatasetShareability(
             @RequestHeader(value = "Authorization", required = false) String authorizationHeader,
@@ -112,6 +118,7 @@ public class FileController {
         ));
     }
 
+    @Operation(summary = "List harmonized dataset files")
     @GetMapping("/mapped_datasets")
     public ResponseEntity<List<String>> listMappedDatasetFiles() {
         logger.debug("Request to list files in mapped_datasets folder");
@@ -126,6 +133,7 @@ public class FileController {
         }
     }
 
+    @Operation(summary = "List FHIR mapping files")
     @GetMapping("/fhir_mappings")
     public ResponseEntity<List<String>> listFhirMappingFiles() {
         logger.debug("Request to list files in fhir_mappings folder");
@@ -140,6 +148,7 @@ public class FileController {
         }
     }
 
+    @Operation(summary = "List dataset element files")
     @GetMapping("/dataset_elements")
     public ResponseEntity<List<String>> listDatasetElements() {
         logger.debug("Request to list files in dataset_elements folder");
@@ -154,6 +163,7 @@ public class FileController {
         }
     }
 
+    @Operation(summary = "Save dataset element metadata")
     @PostMapping("/save_dataset_elements")
     public ResponseEntity<String> saveDatasetElements(
             @RequestParam("fileName") String fileName,
@@ -171,6 +181,7 @@ public class FileController {
         }
     }
 
+    @Operation(summary = "Read a dataset element file")
     @GetMapping("/dataset_elements/{fileName}")
     public ResponseEntity<String> getElementFile(@PathVariable String fileName) {
         logger.debug("Request to fetch element file: {}", fileName);
@@ -186,6 +197,7 @@ public class FileController {
         }
     }
 
+    @Operation(summary = "Read raw DCAT metadata")
     @GetMapping(value = "/metadata/dcat", produces = MediaType.TEXT_PLAIN_VALUE)
     public ResponseEntity<String> getRawDcatMetadata() {
         logger.debug("Request to fetch raw DCAT metadata");
@@ -212,6 +224,7 @@ public class FileController {
         return new ResponseEntity<>(raw, headers, HttpStatus.OK);
     }
 
+    @Operation(summary = "Read parsed DCAT metadata")
     @GetMapping(value = "/metadata/dcat/formatted", produces = MediaType.APPLICATION_JSON_VALUE)
     public ResponseEntity<NodeMetadata> getFormattedDcatMetadata() {
         logger.debug("Request to fetch formatted DCAT metadata");
@@ -225,12 +238,14 @@ public class FileController {
         return ResponseEntity.ok(metadata);
     }
 
+    @Operation(summary = "List files in a managed category")
     @GetMapping
     public ResponseEntity<List<FileInfoDto>> listFiles(@RequestParam FileCategory category) {
         logger.debug("List files for category={}", category);
         return ResponseEntity.ok(fileService.listFilesWithInfo(category));
     }
 
+    @Operation(summary = "Rename a managed file")
     @PostMapping("/rename")
     public ResponseEntity<Void> renameFile(
             @RequestParam FileCategory category,
@@ -244,6 +259,7 @@ public class FileController {
         return ResponseEntity.ok().build();
     }
 
+    @Operation(summary = "Delete a managed file")
     @DeleteMapping
     public ResponseEntity<Void> deleteFile(
             @RequestParam FileCategory category,

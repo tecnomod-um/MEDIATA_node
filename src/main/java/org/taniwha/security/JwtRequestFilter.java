@@ -58,7 +58,11 @@ public class JwtRequestFilter extends OncePerRequestFilter {
                 ? requestURI.substring(contextPath.length())
                 : requestURI;
 
-        return applicationPath.startsWith("/node") || applicationPath.startsWith("/fdp");
+        return applicationPath.startsWith("/node")
+                || applicationPath.startsWith("/fdp")
+                || applicationPath.startsWith("/v3/api-docs")
+                || applicationPath.equals("/swagger-ui.html")
+                || applicationPath.startsWith("/swagger-ui/");
     }
 
     private String extractJwtToken(HttpServletRequest request, HttpServletResponse response) throws IOException {

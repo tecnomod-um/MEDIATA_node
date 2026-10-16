@@ -1,5 +1,7 @@
 package org.taniwha.controller;
 
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.tags.Tag;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
@@ -17,6 +19,7 @@ import java.util.Map;
 
 @RestController
 @RequestMapping("/api/files")
+@Tag(name = "Data cleaning", description = "Validate, normalize, and clean files stored at the node.")
 public class FileCleaningController {
 
     private static final Logger logger = LoggerFactory.getLogger(FileCleaningController.class);
@@ -30,6 +33,7 @@ public class FileCleaningController {
         this.cleaningJobs = cleaningJobs;
     }
 
+    @Operation(summary = "Clean a file synchronously")
     @PostMapping("/clean")
     public ResponseEntity<Void> cleanFile(
             @RequestParam FileCategory category,
@@ -41,6 +45,7 @@ public class FileCleaningController {
         return ResponseEntity.ok().build();
     }
 
+    @Operation(summary = "Start an asynchronous cleaning job")
     @PostMapping("/clean/start")
     public ResponseEntity<Map<String, Object>> startCleanFile(
             @RequestParam FileCategory category,
@@ -58,6 +63,7 @@ public class FileCleaningController {
         ));
     }
 
+    @Operation(summary = "Validate cleaning options")
     @PostMapping("/clean/validate")
     public ResponseEntity<CleaningValidationResponseDTO> validateCleanFile(
             @RequestParam FileCategory category,
@@ -67,6 +73,7 @@ public class FileCleaningController {
         return ResponseEntity.ok(dataCleaningService.validateCleaning(category, name, options));
     }
 
+    @Operation(summary = "Calculate normalization bounds")
     @PostMapping("/clean/normalization-stats")
     public ResponseEntity<NormalizationStatsResponseDTO> getNormalizationStats(
             @RequestParam FileCategory category,
@@ -84,6 +91,7 @@ public class FileCleaningController {
         ));
     }
 
+    @Operation(summary = "Get cleaning job status")
     @GetMapping("/clean/status/{jobId}")
     public ResponseEntity<Map<String, Object>> getCleanStatus(@PathVariable String jobId) {
         CleaningProcessingJobs.JobState s = cleaningJobs.getJob(jobId);
@@ -100,6 +108,7 @@ public class FileCleaningController {
         ));
     }
 
+    @Operation(summary = "Get cleaning job results")
     @GetMapping("/clean/result/{jobId}")
     public ResponseEntity<Map<String, Object>> getCleanResult(@PathVariable String jobId) {
         CleaningProcessingJobs.JobState s = cleaningJobs.getJob(jobId);

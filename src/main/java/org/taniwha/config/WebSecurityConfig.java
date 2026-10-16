@@ -58,7 +58,11 @@ public class WebSecurityConfig {
                                 "/api/user/register",
                                 "/api/error",
                                 "/nodes/register",
-                                "/nodes/heartbeat"
+                                "/nodes/heartbeat",
+                                "/v3/api-docs/**",
+                                "/v3/api-docs.yaml",
+                                "/swagger-ui.html",
+                                "/swagger-ui/**"
                         ).permitAll()
                         .anyRequest().authenticated()
                 )

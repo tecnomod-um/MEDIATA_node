@@ -1,5 +1,7 @@
 package org.taniwha.controller;
 
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.tags.Tag;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
@@ -18,6 +20,7 @@ import java.util.Map;
 
 @RestController
 @RequestMapping("/api/harmonization")
+@Tag(name = "Harmonization", description = "Apply mapping specifications and monitor harmonization jobs.")
 public class HarmonizationController {
 
     private static final Logger logger = LoggerFactory.getLogger(HarmonizationController.class);
@@ -31,6 +34,7 @@ public class HarmonizationController {
         this.jobs = jobs;
     }
 
+    @Operation(summary = "Start harmonization from a mapping specification")
     @PostMapping("/parse")
     public ResponseEntity<HarmonizationStartDTO> parseAndClean(@RequestBody FileMappingsDTO dto) {
         try {
@@ -55,6 +59,7 @@ public class HarmonizationController {
         }
     }
 
+    @Operation(summary = "Get harmonization job status")
     @GetMapping("/parse/status/{jobId}")
     public ResponseEntity<HarmonizationStatusDTO> parseStatus(@PathVariable String jobId) {
         HarmonizationProcessingJobs.JobState s = jobs.getJob(jobId);
@@ -62,6 +67,7 @@ public class HarmonizationController {
         return ResponseEntity.ok(jobs.toDto(s, false));
     }
 
+    @Operation(summary = "Get harmonization job results")
     @GetMapping("/parse/result/{jobId}")
     public ResponseEntity<String> parseResult(@PathVariable String jobId) {
         HarmonizationProcessingJobs.JobState s = jobs.getJob(jobId);

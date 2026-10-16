@@ -1,5 +1,7 @@
 package org.taniwha.controller;
 
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.tags.Tag;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
@@ -16,6 +18,7 @@ import java.util.concurrent.ExecutionException;
 
 @RestController
 @RequestMapping("/api/data")
+@Tag(name = "Dataset analytics", description = "Profile datasets, inspect columns, and run filtered discovery jobs.")
 public class AnalyticsController {
 
     private static final Logger logger = LoggerFactory.getLogger(AnalyticsController.class);
@@ -34,6 +37,7 @@ public class AnalyticsController {
         this.datasetElementExtractionService = datasetElementExtractionService;
     }
 
+    @Operation(summary = "Start dataset profiling")
     @PostMapping("/processList")
     public ResponseEntity<Object> processList(@RequestBody FileNamesDTO dto) {
         try {
@@ -56,6 +60,7 @@ public class AnalyticsController {
         }
     }
 
+    @Operation(summary = "Extract dataset element metadata")
     @PostMapping("/extractElements")
     public ResponseEntity<List<DatasetElementsDTO>> extractElements(@RequestBody FileNamesDTO dto) {
         try {
@@ -67,6 +72,7 @@ public class AnalyticsController {
         }
     }
 
+    @Operation(summary = "Get profiling job status")
     @GetMapping("/processList/status/{jobId}")
     public ResponseEntity<ProcessingStatusDTO> processListStatus(
             @PathVariable String jobId
@@ -77,6 +83,7 @@ public class AnalyticsController {
         return ResponseEntity.ok(jobs.toDto(s, false));
     }
 
+    @Operation(summary = "Cancel a profiling job")
     @PostMapping("/processList/cancel/{jobId}")
     public ResponseEntity<ProcessingStatusDTO> cancelProcessList(@PathVariable String jobId) {
         AnalyticsProcessingJobs.JobState s = jobs.getJob(jobId);
@@ -92,6 +99,7 @@ public class AnalyticsController {
         return ResponseEntity.ok(jobs.toDto(jobs.getJob(jobId), false));
     }
 
+    @Operation(summary = "Get profiling job results")
     @GetMapping("/processList/result/{jobId}")
     public ResponseEntity<List<AnalyticsResponseDTO>> processListResult(@PathVariable String jobId) {
         AnalyticsProcessingJobs.JobState s = jobs.getJob(jobId);
@@ -111,6 +119,7 @@ public class AnalyticsController {
         return ResponseEntity.ok(out);
     }
 
+    @Operation(summary = "Reprocess a feature using an explicit data type")
     @PostMapping("/reprocessList")
     public ResponseEntity<AnalyticsResponseDTO> recalculateFeatureList(
             @RequestParam("fileName") String fileName,
@@ -138,6 +147,7 @@ public class AnalyticsController {
         }
     }
 
+    @Operation(summary = "Profile records matching a feature filter")
     @PostMapping("/filterByNameList")
     public ResponseEntity<List<AnalyticsResponseDTO>> filterByNameList(@RequestBody MultiFileFilterRequest payload) {
         logger.debug("Received multiple-file filter request with {} entries", payload.getMultipleFileFilters().size());
