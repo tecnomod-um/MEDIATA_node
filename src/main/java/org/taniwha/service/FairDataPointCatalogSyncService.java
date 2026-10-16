@@ -169,7 +169,7 @@ public class FairDataPointCatalogSyncService {
         }
 
         Map<String, URI> createdDatasetBySource = new LinkedHashMap<>();
-        for (Resource dataset : datasets) {
+        for (Resource dataset : orderDatasetsByDependencies(model, datasets)) {
             URI parentCatalogUri = resolveParentResourceUri(
                     model,
                     dataset,
@@ -186,7 +186,13 @@ public class FairDataPointCatalogSyncService {
             URI createdDataset = createMetadataResource(
                     "dataset",
                     bearerToken,
-                    toTurtle(prepareDatasetModel(model, dataset, fileName, parentCatalogUri))
+                    toTurtle(prepareDatasetModel(
+                            model,
+                            dataset,
+                            fileName,
+                            parentCatalogUri,
+                            createdDatasetBySource
+                    ))
             );
             publishMetadataResource(bearerToken, createdDataset);
             createdDatasetBySource.put(resourceKey(dataset), createdDataset);
@@ -366,16 +372,80 @@ public class FairDataPointCatalogSyncService {
     private Model prepareDatasetModel(Model source,
                                       Resource originalDataset,
                                       String fileName,
-                                      URI parentCatalogUri) {
+                                      URI parentCatalogUri,
+                                      Map<String, URI> createdDatasetBySource) {
         Model result = ModelFactory.createDefaultModel();
         result.setNsPrefixes(source.getNsPrefixMap());
 
         Resource targetDataset = createPostTargetResource(result);
         copyCatalogStatements(source, originalDataset, targetDataset, result, new HashSet<>());
+        rewritePublishedDatasetReferences(result, createdDatasetBySource);
         removeChildLinks(targetDataset, result, DCAT + "distribution");
         ensureDatasetMinimumFields(source, originalDataset, targetDataset, result, fileName, parentCatalogUri);
 
         return result;
+    }
+
+    private List<Resource> orderDatasetsByDependencies(Model model, List<Resource> datasets) {
+        Map<String, Resource> remaining = new LinkedHashMap<>();
+        for (Resource dataset : datasets) {
+            remaining.put(resourceKey(dataset), dataset);
+        }
+
+        List<Resource> ordered = new ArrayList<>();
+        Set<String> resolved = new HashSet<>();
+        Property wasDerivedFrom = model.createProperty("http://www.w3.org/ns/prov#wasDerivedFrom");
+
+        while (!remaining.isEmpty()) {
+            List<String> ready = remaining.entrySet().stream()
+                    .filter(entry -> model.listObjectsOfProperty(entry.getValue(), wasDerivedFrom)
+                            .filterKeep(RDFNode::isResource)
+                            .mapWith(node -> resourceKey(node.asResource()))
+                            .filterDrop(key -> !remaining.containsKey(key) && !resolved.contains(key))
+                            .toList()
+                            .stream()
+                            .allMatch(resolved::contains))
+                    .map(Map.Entry::getKey)
+                    .toList();
+
+            if (ready.isEmpty()) {
+                ordered.addAll(remaining.values());
+                break;
+            }
+
+            for (String key : ready) {
+                ordered.add(remaining.remove(key));
+                resolved.add(key);
+            }
+        }
+
+        return ordered;
+    }
+
+    private void rewritePublishedDatasetReferences(Model model, Map<String, URI> createdDatasetBySource) {
+        if (createdDatasetBySource.isEmpty()) {
+            return;
+        }
+
+        List<Statement> statements = model.listStatements().toList();
+        for (Statement statement : statements) {
+            RDFNode object = statement.getObject();
+            if (!object.isURIResource()) {
+                continue;
+            }
+
+            URI publishedUri = createdDatasetBySource.get(resourceKey(object.asResource()));
+            if (publishedUri == null) {
+                continue;
+            }
+
+            model.remove(statement);
+            model.add(
+                    statement.getSubject(),
+                    statement.getPredicate(),
+                    model.createResource(publishedUri.toString())
+            );
+        }
     }
 
     private Model prepareDistributionModel(Model source,

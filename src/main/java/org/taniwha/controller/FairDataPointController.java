@@ -2,6 +2,7 @@ package org.taniwha.controller;
 
 import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.web.bind.annotation.*;
@@ -75,6 +76,12 @@ public class FairDataPointController {
                 distributionId
         );
         return response == null ? ResponseEntity.notFound().build() : ResponseEntity.ok(response);
+    }
+
+    @GetMapping(value = "/fdp/mapping-spec/{mappingSpecId}", produces = MediaType.APPLICATION_JSON_VALUE)
+    public ResponseEntity<String> mappingSpecification(@PathVariable String mappingSpecId) {
+        String mappingSpec = fairDataPointInstanceService.readMappingSpecification(mappingSpecId);
+        return mappingSpec == null ? ResponseEntity.notFound().build() : ResponseEntity.ok(mappingSpec);
     }
 
     @PostMapping({"/api/fairdatapoint/sync", "/api/fairdatapoint/sync/catalogs"})

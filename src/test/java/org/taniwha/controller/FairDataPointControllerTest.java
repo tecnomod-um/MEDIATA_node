@@ -17,6 +17,8 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -105,5 +107,17 @@ class FairDataPointControllerTest {
         mvc.perform(post("/api/fairdatapoint/sync"))
                 .andExpect(status().isForbidden())
                 .andExpect(jsonPath("$.status").value("ERROR"));
+    }
+
+    @Test
+    void mappingSpecification_returnsStoredSpecification() throws Exception {
+        String mappingSpecId = "a".repeat(64);
+        when(fairDataPointInstanceService.readMappingSpecification(mappingSpecId))
+                .thenReturn("{\"specVersion\":\"2.0.0\"}");
+
+        mvc.perform(get("/fdp/mapping-spec/{mappingSpecId}", mappingSpecId))
+                .andExpect(status().isOk())
+                .andExpect(content().contentType("application/json"))
+                .andExpect(content().json("{\"specVersion\":\"2.0.0\"}"));
     }
 }

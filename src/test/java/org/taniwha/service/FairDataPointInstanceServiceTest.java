@@ -290,7 +290,7 @@ class FairDataPointInstanceServiceTest {
     }
 
     @Test
-    void buildAccessResponse_groupsParsedDistributionUnderLogicalDatasetId() throws Exception {
+    void buildAccessResponse_usesDerivedDatasetIdForHarmonizedDistribution() throws Exception {
         Files.createDirectories(tempBase.resolve("datasets"));
         Files.writeString(tempBase.resolve("datasets/parsed_fimbartheltodos.csv"), "score\n100\n");
         fileService = new FileService(fileFilter, tempBase.toString(), "fimbartheltodos");
@@ -306,7 +306,7 @@ class FairDataPointInstanceServiceTest {
 
         assertThat(response).isNotNull();
         assertThat(response.getDistributionId()).isEqualTo("parsed-fimbartheltodos");
-        assertThat(response.getDatasetId()).isEqualTo("fimbartheltodos");
+        assertThat(response.getDatasetId()).isEqualTo("parsed-fimbartheltodos");
         assertThat(response.getDatasetDownloadEndpoint()).isEqualTo("http://example.test/taniwha/api/files/datasets/parsed_fimbartheltodos.csv");
     }
 

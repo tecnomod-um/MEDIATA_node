@@ -51,6 +51,7 @@ class DCatUtilTest {
                   prov:wasGeneratedBy [
                     dct:title "Pipeline"
                   ] ;
+                  prov:wasDerivedFrom <http://example.org/source/1> ;
                   ex:extra "dataset-extra" .
 
                 <http://example.org/publisher/1>
@@ -91,6 +92,7 @@ class DCatUtilTest {
 
         assertThat(dataset.getWasGeneratedBy()).isInstanceOfSatisfying(Map.class, generatedBy ->
                 assertThat(generatedBy).containsEntry("dct:title", "Pipeline"));
+        assertThat(dataset.getWasDerivedFrom()).containsExactly("http://example.org/source/1");
 
         List<Distribution> distributions = dataset.getDistribution();
         assertThat(distributions).hasSize(1);

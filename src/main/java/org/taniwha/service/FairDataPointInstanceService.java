@@ -259,6 +259,10 @@ public class FairDataPointInstanceService {
                 .orElse(null);
     }
 
+    public String readMappingSpecification(String mappingSpecId) {
+        return fileService.readMappingSpecification(mappingSpecId);
+    }
+
     private List<DatasetEntry> listDatasetEntries() {
         List<String> datasetFiles = new ArrayList<>(fileService.listDatasetFiles());
         datasetFiles.sort(String.CASE_INSENSITIVE_ORDER);
@@ -274,15 +278,7 @@ public class FairDataPointInstanceService {
     }
 
     private String logicalDatasetStem(String stem) {
-        String normalized = stem == null ? "" : stem.trim();
-        String lower = normalized.toLowerCase(Locale.ROOT);
-        if (lower.startsWith("parsed_") && normalized.length() > 7) {
-            return normalized.substring(7);
-        }
-        if (lower.startsWith("parsed-") && normalized.length() > 7) {
-            return normalized.substring(7);
-        }
-        return normalized;
+        return stem == null ? "" : stem.trim();
     }
 
     private String normalizeBaseUrl(String value) {

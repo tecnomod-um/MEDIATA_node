@@ -9,9 +9,12 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.taniwha.dto.FileInfoDto;
+import org.taniwha.dto.mapping.MappingSpecDTO;
 import org.taniwha.model.DatasetDownloadPolicyManifest;
 import org.taniwha.model.FileCategory;
 import org.taniwha.model.FairDataPointPublishedManifest;
+import org.taniwha.model.HarmonizationProvenanceManifest;
+import org.taniwha.model.HarmonizationProvenanceRecord;
 import org.taniwha.model.MetadataDocument;
 import org.taniwha.model.NodeMetadata;
 import org.taniwha.model.SharedDatasetFile;
@@ -26,6 +29,7 @@ import java.nio.file.*;
 import java.nio.file.attribute.BasicFileAttributes;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.Collections;
@@ -41,6 +45,7 @@ public class FileService {
     private static final Logger logger = LoggerFactory.getLogger(FileService.class);
     private static final String FDP_MANIFEST_FILE_NAME = "published-manifest.json";
     private static final String DATASET_DOWNLOAD_POLICY_FILE_NAME = "dataset-download-policy.json";
+    private static final String HARMONIZATION_PROVENANCE_FILE_NAME = "harmonization-provenance.json";
     private static final Pattern NON_SLUG = Pattern.compile("[^a-z0-9]+");
 
     private final FileFilter fileFilter;
@@ -64,6 +69,8 @@ public class FileService {
     private final Path fairDataPointDir;
     private final Path fairDataPointManifestPath;
     private final Path datasetDownloadPolicyPath;
+    private final Path harmonizationProvenancePath;
+    private final Path mappingSpecsDir;
     private final Path sharedDatasetsDir;
 
     public FileService(FileFilter fileFilter, String basePath) {
@@ -93,6 +100,8 @@ public class FileService {
         this.fairDataPointDir = base.resolve("fairdatapoint").normalize();
         this.fairDataPointManifestPath = fairDataPointDir.resolve(FDP_MANIFEST_FILE_NAME).normalize();
         this.datasetDownloadPolicyPath = fairDataPointDir.resolve(DATASET_DOWNLOAD_POLICY_FILE_NAME).normalize();
+        this.harmonizationProvenancePath = fairDataPointDir.resolve(HARMONIZATION_PROVENANCE_FILE_NAME).normalize();
+        this.mappingSpecsDir = fairDataPointDir.resolve("mapping-specs").normalize();
         this.sharedDatasetsDir = fairDataPointDir.resolve("datasets").normalize();
     }
 
@@ -292,6 +301,86 @@ public class FileService {
                 manifest.seededSelectors() == null ? List.of() : manifest.seededSelectors(),
                 List.copyOf(files)
         ));
+    }
+
+    public synchronized HarmonizationProvenanceRecord registerHarmonizationProvenance(
+            String outputFileName,
+            List<String> sourceFileNames,
+            MappingSpecDTO mappingSpec) {
+        try {
+            byte[] mappingSpecContent = objectMapper.writerWithDefaultPrettyPrinter().writeValueAsBytes(mappingSpec);
+            String mappingSpecId = sha256(mappingSpecContent);
+
+            Files.createDirectories(mappingSpecsDir);
+            Path mappingSpecPath = mappingSpecsDir.resolve(mappingSpecId + ".json").normalize();
+            if (!mappingSpecPath.startsWith(mappingSpecsDir)) {
+                throw new IllegalArgumentException("Invalid mapping specification identifier");
+            }
+            Files.write(
+                    mappingSpecPath,
+                    mappingSpecContent,
+                    StandardOpenOption.CREATE,
+                    StandardOpenOption.TRUNCATE_EXISTING,
+                    StandardOpenOption.WRITE
+            );
+
+            HarmonizationProvenanceRecord record = new HarmonizationProvenanceRecord(
+                    outputFileName,
+                    List.copyOf(sourceFileNames),
+                    mappingSpecId,
+                    Instant.now().toString()
+            );
+            List<HarmonizationProvenanceRecord> records = new ArrayList<>(readHarmonizationProvenanceManifest().records());
+            records.removeIf(existing -> outputFileName.equals(existing.outputFileName()));
+            records.add(record);
+            records.sort(Comparator.comparing(HarmonizationProvenanceRecord::outputFileName, String.CASE_INSENSITIVE_ORDER));
+            writeHarmonizationProvenanceManifest(new HarmonizationProvenanceManifest(List.copyOf(records)));
+            return record;
+        } catch (IOException e) {
+            throw new UncheckedIOException("Failed to record harmonization provenance for " + outputFileName, e);
+        }
+    }
+
+    public HarmonizationProvenanceManifest readHarmonizationProvenanceManifest() {
+        try {
+            if (!Files.exists(harmonizationProvenancePath) || !Files.isRegularFile(harmonizationProvenancePath)) {
+                return new HarmonizationProvenanceManifest(List.of());
+            }
+            HarmonizationProvenanceManifest manifest = objectMapper.readValue(
+                    harmonizationProvenancePath.toFile(),
+                    HarmonizationProvenanceManifest.class
+            );
+            return manifest == null || manifest.records() == null
+                    ? new HarmonizationProvenanceManifest(List.of())
+                    : manifest;
+        } catch (IOException e) {
+            logger.warn("Failed to read harmonization provenance manifest", e);
+            return new HarmonizationProvenanceManifest(List.of());
+        }
+    }
+
+    public String readMappingSpecification(String mappingSpecId) {
+        if (mappingSpecId == null || !mappingSpecId.matches("[a-f0-9]{64}")) {
+            return null;
+        }
+        Path path = mappingSpecsDir.resolve(mappingSpecId + ".json").normalize();
+        if (!path.startsWith(mappingSpecsDir) || !Files.isRegularFile(path)) {
+            return null;
+        }
+        try {
+            return Files.readString(path);
+        } catch (IOException e) {
+            throw new UncheckedIOException("Failed to read mapping specification " + mappingSpecId, e);
+        }
+    }
+
+    private void writeHarmonizationProvenanceManifest(HarmonizationProvenanceManifest manifest) {
+        try {
+            Files.createDirectories(fairDataPointDir);
+            objectMapper.writerWithDefaultPrettyPrinter().writeValue(harmonizationProvenancePath.toFile(), manifest);
+        } catch (IOException e) {
+            throw new UncheckedIOException("Failed to write harmonization provenance manifest", e);
+        }
     }
 
     public Path resolveElementFilePath(String fileName) {
@@ -636,6 +725,19 @@ public class FileService {
             return sb.toString();
         } catch (IOException e) {
             throw new UncheckedIOException("Failed to hash dataset file: " + path, e);
+        } catch (NoSuchAlgorithmException e) {
+            throw new IllegalStateException("SHA-256 is not available", e);
+        }
+    }
+
+    private String sha256(byte[] content) {
+        try {
+            byte[] hash = MessageDigest.getInstance("SHA-256").digest(content);
+            StringBuilder sb = new StringBuilder(hash.length * 2);
+            for (byte b : hash) {
+                sb.append(String.format("%02x", b));
+            }
+            return sb.toString();
         } catch (NoSuchAlgorithmException e) {
             throw new IllegalStateException("SHA-256 is not available", e);
         }

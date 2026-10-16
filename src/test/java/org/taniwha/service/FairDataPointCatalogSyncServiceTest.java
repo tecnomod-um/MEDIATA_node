@@ -157,6 +157,70 @@ class FairDataPointCatalogSyncServiceTest {
     }
 
     @Test
+    void publishCatalogs_rewritesDerivedDatasetProvenanceToPublishedSourceUri() {
+        when(metadataUtil.generateManagedMetadataDocument()).thenReturn(
+                new MetadataDocument("fairdatapoint-generated.ttl", "")
+        );
+        when(fileService.readAllMetadataDocuments()).thenReturn(List.of(
+                new MetadataDocument("catalog.ttl", """
+                        @prefix dcat: <http://www.w3.org/ns/dcat#> .
+                        @prefix dct: <http://purl.org/dc/terms/> .
+                        @prefix prov: <http://www.w3.org/ns/prov#> .
+
+                        <http://example.org/catalog> a dcat:Catalog ;
+                            dcat:dataset <http://example.org/source>, <http://example.org/derived> .
+
+                        <http://example.org/source> a dcat:Dataset ;
+                            dct:isPartOf <http://example.org/catalog> .
+
+                        <http://example.org/derived> a dcat:Dataset ;
+                            dct:isPartOf <http://example.org/catalog> ;
+                            prov:wasDerivedFrom <http://example.org/source> ;
+                            prov:wasGeneratedBy [
+                                a prov:Activity ;
+                                prov:used <http://example.org/source>
+                            ] .
+                        """)
+        ));
+
+        when(restTemplate.postForObject(eq("http://fdp:8080/tokens"), any(HttpEntity.class), eq(Map.class)))
+                .thenReturn(Map.of("token", "service-token"));
+        when(restTemplate.exchange(eq("http://fdp:8080/"), eq(HttpMethod.GET), any(HttpEntity.class), eq(String.class)))
+                .thenReturn(ResponseEntity.ok("root"));
+        when(restTemplate.exchange(eq("http://fdp:8080/reset"), eq(HttpMethod.POST), any(HttpEntity.class), eq(Void.class)))
+                .thenReturn(ResponseEntity.noContent().build());
+        when(restTemplate.exchange(eq("http://fdp:8080/catalog"), eq(HttpMethod.POST), any(HttpEntity.class), eq(String.class)))
+                .thenReturn(ResponseEntity.created(URI.create("http://fdp:8080/catalog/123")).body(""));
+
+        AtomicInteger datasetPosts = new AtomicInteger();
+        when(restTemplate.exchange(eq("http://fdp:8080/dataset"), eq(HttpMethod.POST), any(HttpEntity.class), eq(String.class)))
+                .thenAnswer(invocation -> datasetPosts.getAndIncrement() == 0
+                        ? ResponseEntity.created(URI.create("http://fdp:8080/dataset/source-uuid")).body("")
+                        : ResponseEntity.created(URI.create("http://fdp:8080/dataset/derived-uuid")).body(""));
+        when(restTemplate.exchange(contains("/meta/state"), eq(HttpMethod.PUT), any(HttpEntity.class), eq(Void.class)))
+                .thenReturn(ResponseEntity.ok().build());
+
+        FairDataPointSyncResult result = service.publishCatalogs();
+
+        assertThat(result.datasetsPublished()).isEqualTo(2);
+        ArgumentCaptor<HttpEntity> datasetCaptor = ArgumentCaptor.forClass(HttpEntity.class);
+        verify(restTemplate, times(2)).exchange(
+                eq("http://fdp:8080/dataset"),
+                eq(HttpMethod.POST),
+                datasetCaptor.capture(),
+                eq(String.class)
+        );
+
+        String sourceBody = String.valueOf(datasetCaptor.getAllValues().get(0).getBody());
+        String derivedBody = String.valueOf(datasetCaptor.getAllValues().get(1).getBody());
+        assertThat(sourceBody).doesNotContain("wasDerivedFrom");
+        assertThat(derivedBody)
+                .contains("wasDerivedFrom")
+                .contains("http://fdp:8080/dataset/source-uuid")
+                .doesNotContain("http://example.org/source");
+    }
+
+    @Test
     void publishCatalogs_withApiKey_skipsTokenRequest() {
         service = new FairDataPointCatalogSyncService(
                 fileService,

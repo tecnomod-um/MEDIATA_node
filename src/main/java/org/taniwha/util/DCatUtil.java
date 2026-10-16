@@ -57,7 +57,8 @@ public final class DCatUtil {
             "variables",
             "variable",
             "hasVariable",
-            "wasGeneratedBy"
+            "wasGeneratedBy",
+            "wasDerivedFrom"
     );
 
     private static final Set<String> DISTRIBUTION_KNOWN_LOCAL_NAMES = Set.of(
@@ -184,6 +185,7 @@ public final class DCatUtil {
         dataset.setType(values(datasetResource, DCT + "type", "type"));
         dataset.setVariables(parseVariables(datasetResource));
         dataset.setWasGeneratedBy(firstObject(datasetResource, PROV + "wasGeneratedBy", "wasGeneratedBy"));
+        dataset.setWasDerivedFrom(values(datasetResource, PROV + "wasDerivedFrom", "wasDerivedFrom"));
 
         captureAdditionalProperties(
                 datasetResource,

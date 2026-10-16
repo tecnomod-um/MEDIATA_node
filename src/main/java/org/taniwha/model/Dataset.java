@@ -56,6 +56,7 @@ public class Dataset {
     private List<Object> type;
     private List<Variable> variables;
     private Object wasGeneratedBy;
+    private List<Object> wasDerivedFrom;
 
     @JsonIgnore
     private Map<String, Object> additionalProperties = new LinkedHashMap<>();
