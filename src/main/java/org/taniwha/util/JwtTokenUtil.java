@@ -8,6 +8,7 @@ import org.springframework.stereotype.Component;
 
 import javax.crypto.SecretKey;
 import java.nio.charset.StandardCharsets;
+import java.security.PrivateKey;
 import java.util.Date;
 import java.util.HashMap;
 import java.util.Map;
@@ -15,11 +16,17 @@ import java.util.Map;
 @Component
 public class JwtTokenUtil {
 
+    private static final String NODE_SYNC_ISSUER = "mediata-node";
+    private static final String NODE_SYNC_AUDIENCE = "mediata-orchestrator";
+
     @Value("${jwt.secret}")
     private String secret;
 
     @Value("${jwt.expiration}")
     private long expiration;
+
+    @Value("${node.sync.jwt.expiration:120}")
+    private long nodeSyncExpiration;
 
     private SecretKey getSigningKey() {
         byte[] keyBytes = secret.getBytes(StandardCharsets.UTF_8);
@@ -32,6 +39,22 @@ public class JwtTokenUtil {
 
     public String generateNodeAccessToken(String subject) {
         return generateToken(subject, Map.of("token_use", "node_access"));
+    }
+
+    public String generateNodeSyncToken(String nodeId, String endpoint, PrivateKey privateKey) {
+        return Jwts.builder()
+                .claims(Map.of(
+                        "token_use", "node_sync",
+                        "node_id", nodeId,
+                        "sync_endpoint", endpoint,
+                        "aud", NODE_SYNC_AUDIENCE
+                ))
+                .issuer(NODE_SYNC_ISSUER)
+                .subject(nodeId)
+                .issuedAt(new Date(System.currentTimeMillis()))
+                .expiration(new Date(System.currentTimeMillis() + nodeSyncExpiration * 1000))
+                .signWith(privateKey)
+                .compact();
     }
 
     public String generateToken(String subject, Map<String, Object> claims) {

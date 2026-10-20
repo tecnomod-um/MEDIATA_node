@@ -1,10 +1,16 @@
 package org.taniwha.util;
 
 import io.jsonwebtoken.ExpiredJwtException;
+import io.jsonwebtoken.Claims;
+import io.jsonwebtoken.Jwts;
 import io.jsonwebtoken.security.SignatureException;
 import org.junit.jupiter.api.Test;
 import org.springframework.context.annotation.AnnotationConfigApplicationContext;
 import org.springframework.test.context.support.TestPropertySourceUtils;
+
+import java.security.KeyPair;
+import java.security.KeyPairGenerator;
+import java.time.Instant;
 
 import static org.assertj.core.api.Assertions.*;
 
@@ -148,5 +154,31 @@ class JwtTokenUtilTest {
 
         assertThat(util.isNodeAccessToken(token)).isTrue();
         assertThat(util.getClaimAsString(token, "token_use")).isEqualTo("node_access");
+    }
+
+    @Test
+    void generateNodeSyncToken_isShortLivedAndBoundToNodeAndEndpoint() throws Exception {
+        JwtTokenUtil util = loadWith(
+                "myVerySecretKeyThatIsAtLeast32BytesLongForSecurityPurposes", "3600");
+        KeyPairGenerator generator = KeyPairGenerator.getInstance("RSA");
+        generator.initialize(2048);
+        KeyPair keyPair = generator.generateKeyPair();
+
+        long before = Instant.now().getEpochSecond();
+        String token = util.generateNodeSyncToken(
+                "node-1", "/nodes/provenance/batch", keyPair.getPrivate());
+        Claims claims = Jwts.parser()
+                .verifyWith(keyPair.getPublic())
+                .build()
+                .parseSignedClaims(token)
+                .getPayload();
+
+        assertThat(claims.getSubject()).isEqualTo("node-1");
+        assertThat(claims.getIssuer()).isEqualTo("mediata-node");
+        assertThat(claims.getAudience()).containsExactly("mediata-orchestrator");
+        assertThat(claims.get("token_use", String.class)).isEqualTo("node_sync");
+        assertThat(claims.get("sync_endpoint", String.class)).isEqualTo("/nodes/provenance/batch");
+        assertThat(claims.getExpiration().toInstant().getEpochSecond())
+                .isBetween(before + 115, before + 125);
     }
 }

@@ -37,6 +37,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Set;
+import java.util.UUID;
 import java.util.regex.Pattern;
 
 @Service
@@ -46,6 +47,7 @@ public class FileService {
     private static final String FDP_MANIFEST_FILE_NAME = "published-manifest.json";
     private static final String DATASET_DOWNLOAD_POLICY_FILE_NAME = "dataset-download-policy.json";
     private static final String HARMONIZATION_PROVENANCE_FILE_NAME = "harmonization-provenance.json";
+    private static final String HARMONIZATION_PROVENANCE_OUTBOX_FILE_NAME = "harmonization-provenance-outbox.json";
     private static final Pattern NON_SLUG = Pattern.compile("[^a-z0-9]+");
 
     private final FileFilter fileFilter;
@@ -70,6 +72,7 @@ public class FileService {
     private final Path fairDataPointManifestPath;
     private final Path datasetDownloadPolicyPath;
     private final Path harmonizationProvenancePath;
+    private final Path harmonizationProvenanceOutboxPath;
     private final Path mappingSpecsDir;
     private final Path sharedDatasetsDir;
 
@@ -101,6 +104,8 @@ public class FileService {
         this.fairDataPointManifestPath = fairDataPointDir.resolve(FDP_MANIFEST_FILE_NAME).normalize();
         this.datasetDownloadPolicyPath = fairDataPointDir.resolve(DATASET_DOWNLOAD_POLICY_FILE_NAME).normalize();
         this.harmonizationProvenancePath = fairDataPointDir.resolve(HARMONIZATION_PROVENANCE_FILE_NAME).normalize();
+        this.harmonizationProvenanceOutboxPath = fairDataPointDir
+                .resolve(HARMONIZATION_PROVENANCE_OUTBOX_FILE_NAME).normalize();
         this.mappingSpecsDir = fairDataPointDir.resolve("mapping-specs").normalize();
         this.sharedDatasetsDir = fairDataPointDir.resolve("datasets").normalize();
     }
@@ -325,11 +330,13 @@ public class FileService {
             );
 
             HarmonizationProvenanceRecord record = new HarmonizationProvenanceRecord(
+                    UUID.randomUUID().toString(),
                     outputFileName,
                     List.copyOf(sourceFileNames),
                     mappingSpecId,
                     Instant.now().toString()
             );
+            appendHarmonizationProvenanceOutbox(record);
             List<HarmonizationProvenanceRecord> records = new ArrayList<>(readHarmonizationProvenanceManifest().records());
             records.removeIf(existing -> outputFileName.equals(existing.outputFileName()));
             records.add(record);
@@ -359,6 +366,58 @@ public class FileService {
         }
     }
 
+    public synchronized List<HarmonizationProvenanceRecord> readPendingHarmonizationProvenance(int limit) {
+        int safeLimit = Math.max(1, Math.min(limit, 100));
+        return readHarmonizationProvenanceOutbox().records().stream()
+                .filter(record -> record != null && record.activityId() != null && !record.activityId().isBlank())
+                .limit(safeLimit)
+                .toList();
+    }
+
+    public synchronized void acknowledgeHarmonizationProvenance(List<String> activityIds) {
+        if (activityIds == null || activityIds.isEmpty()) {
+            return;
+        }
+        Set<String> acknowledged = activityIds.stream()
+                .filter(id -> id != null && !id.isBlank())
+                .collect(java.util.stream.Collectors.toSet());
+        if (acknowledged.isEmpty()) {
+            return;
+        }
+        List<HarmonizationProvenanceRecord> pending = new ArrayList<>(
+                readHarmonizationProvenanceOutbox().records());
+        if (pending.removeIf(record -> record != null && acknowledged.contains(record.activityId()))) {
+            writeHarmonizationProvenanceOutbox(new HarmonizationProvenanceManifest(List.copyOf(pending)));
+        }
+    }
+
+    private HarmonizationProvenanceManifest readHarmonizationProvenanceOutbox() {
+        try {
+            if (!Files.isRegularFile(harmonizationProvenanceOutboxPath)) {
+                return new HarmonizationProvenanceManifest(List.of());
+            }
+            HarmonizationProvenanceManifest outbox = objectMapper.readValue(
+                    harmonizationProvenanceOutboxPath.toFile(), HarmonizationProvenanceManifest.class);
+            return outbox == null || outbox.records() == null
+                    ? new HarmonizationProvenanceManifest(List.of())
+                    : outbox;
+        } catch (IOException e) {
+            throw new UncheckedIOException("Failed to read harmonization provenance outbox", e);
+        }
+    }
+
+    private void appendHarmonizationProvenanceOutbox(HarmonizationProvenanceRecord record) {
+        List<HarmonizationProvenanceRecord> pending = new ArrayList<>(
+                readHarmonizationProvenanceOutbox().records());
+        pending.add(record);
+        writeHarmonizationProvenanceOutbox(new HarmonizationProvenanceManifest(List.copyOf(pending)));
+    }
+
+    private void writeHarmonizationProvenanceOutbox(HarmonizationProvenanceManifest outbox) {
+        writeJsonAtomically(harmonizationProvenanceOutboxPath, outbox,
+                "harmonization provenance outbox");
+    }
+
     public String readMappingSpecification(String mappingSpecId) {
         if (mappingSpecId == null || !mappingSpecId.matches("[a-f0-9]{64}")) {
             return null;
@@ -375,11 +434,27 @@ public class FileService {
     }
 
     private void writeHarmonizationProvenanceManifest(HarmonizationProvenanceManifest manifest) {
+        writeJsonAtomically(harmonizationProvenancePath, manifest,
+                "harmonization provenance manifest");
+    }
+
+    private void writeJsonAtomically(Path target, Object value, String description) {
         try {
             Files.createDirectories(fairDataPointDir);
-            objectMapper.writerWithDefaultPrettyPrinter().writeValue(harmonizationProvenancePath.toFile(), manifest);
+            Path temporary = Files.createTempFile(fairDataPointDir, target.getFileName().toString(), ".tmp");
+            try {
+                objectMapper.writerWithDefaultPrettyPrinter().writeValue(temporary.toFile(), value);
+                try {
+                    Files.move(temporary, target, StandardCopyOption.ATOMIC_MOVE,
+                            StandardCopyOption.REPLACE_EXISTING);
+                } catch (AtomicMoveNotSupportedException ignored) {
+                    Files.move(temporary, target, StandardCopyOption.REPLACE_EXISTING);
+                }
+            } finally {
+                Files.deleteIfExists(temporary);
+            }
         } catch (IOException e) {
-            throw new UncheckedIOException("Failed to write harmonization provenance manifest", e);
+            throw new UncheckedIOException("Failed to write " + description, e);
         }
     }
 

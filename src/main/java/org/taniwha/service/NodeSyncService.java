@@ -15,6 +15,9 @@ import org.taniwha.dto.ErrorLogDTO;
 import org.taniwha.dto.RegisterResponseDTO;
 import org.taniwha.model.NodeHeartbeat;
 import org.taniwha.model.NodeInfo;
+import org.taniwha.model.NodeProvenanceActivity;
+import org.taniwha.model.NodeProvenanceBatch;
+import org.taniwha.model.NodeProvenanceBatchResponse;
 import org.taniwha.util.ColorUtil;
 import org.taniwha.util.JwtTokenUtil;
 import org.taniwha.util.KeyPairUtil;
@@ -23,18 +26,23 @@ import jakarta.annotation.PreDestroy;
 import javax.net.ssl.SSLHandshakeException;
 import java.time.Instant;
 import java.time.LocalDateTime;
+import java.security.PrivateKey;
 import java.util.Map;
+import java.util.List;
 
 @Service
 public class NodeSyncService {
 
     private static final Logger logger = LoggerFactory.getLogger(NodeSyncService.class);
+    private static final int PROVENANCE_BATCH_SIZE = 100;
 
     private final RestTemplateHolder restTemplateHolder;
     private final RetryTemplate retryTemplate;
     private final JwtTokenUtil jwtTokenUtil;
     private final String publicKeyBase64;
+    private final PrivateKey privateKey;
     private final PrincipalService principalService;
+    private final FileService fileService;
 
     @Value("${host.url}${host.service}")
     private String centralBackendUrl;
@@ -60,12 +68,15 @@ public class NodeSyncService {
                            RetryTemplate retryTemplate,
                            JwtTokenUtil jwtTokenUtil,
                            KeyPairUtil keyPairUtil,
-                           PrincipalService principalService) {
+                           PrincipalService principalService,
+                           FileService fileService) {
         this.restTemplateHolder = restTemplateHolder;
         this.retryTemplate = retryTemplate;
         this.jwtTokenUtil = jwtTokenUtil;
         this.publicKeyBase64 = keyPairUtil.getPublicKeyBase64();
+        this.privateKey = keyPairUtil.getPrivateKey();
         this.principalService = principalService;
+        this.fileService = fileService;
     }
 
     public void registerWithCentralBackend() {
@@ -109,7 +120,7 @@ public class NodeSyncService {
     public void sendHeartbeat() {
         NodeHeartbeat heartbeat = new NodeHeartbeat(objectId, Instant.now().getEpochSecond());
         UriComponentsBuilder builder = UriComponentsBuilder.fromHttpUrl(centralBackendUrl + "/nodes/heartbeat");
-        String token = jwtTokenUtil.generateToken(jwtUsername);
+        String token = jwtTokenUtil.generateNodeSyncToken(objectId, "/nodes/heartbeat", privateKey);
 
         try {
             retryTemplate.execute((RetryCallback<Void, RestClientException>) context -> {
@@ -130,6 +141,7 @@ public class NodeSyncService {
                 return null;
             });
             logger.info("Heartbeat sent successfully");
+            syncProvenanceBatch();
         } catch (HttpClientErrorException e) {
             if (e.getStatusCode() == HttpStatus.NOT_FOUND) {
                 logger.warn("Node not registered. Attempting to re-register.");
@@ -137,6 +149,47 @@ public class NodeSyncService {
             } else handleHeartbeatException(e);
         } catch (RestClientException e) {
             logger.error("Failed to send heartbeat to central backend after retries", e);
+        }
+    }
+
+    private void syncProvenanceBatch() {
+        List<NodeProvenanceActivity> activities = fileService
+                .readPendingHarmonizationProvenance(PROVENANCE_BATCH_SIZE).stream()
+                .map(record -> new NodeProvenanceActivity(
+                        record.activityId(),
+                        record.outputFileName(),
+                        record.sourceFileNames(),
+                        record.mappingSpecId(),
+                        record.generatedAt()
+                ))
+                .toList();
+        if (activities.isEmpty()) {
+            return;
+        }
+
+        NodeProvenanceBatch batch = new NodeProvenanceBatch(objectId, 1, activities);
+        String url = centralBackendUrl + "/nodes/provenance/batch";
+        String token = jwtTokenUtil.generateNodeSyncToken(
+                objectId, "/nodes/provenance/batch", privateKey);
+        try {
+            ResponseEntity<NodeProvenanceBatchResponse> response = retryTemplate.execute(
+                    (RetryCallback<ResponseEntity<NodeProvenanceBatchResponse>, RestClientException>) context -> {
+                        if (context.getRetryCount() > 0) {
+                            logger.warn("Retrying provenance synchronization. Attempt {}",
+                                    context.getRetryCount() + 1);
+                        }
+                        return restTemplateHolder.get().postForEntity(
+                                url, createHttpEntity(batch, token), NodeProvenanceBatchResponse.class);
+                    });
+            if (response != null && response.getBody() != null) {
+                List<String> acknowledged = response.getBody().getAcknowledgedEventIds() == null
+                        ? List.of()
+                        : response.getBody().getAcknowledgedEventIds();
+                fileService.acknowledgeHarmonizationProvenance(acknowledged);
+                logger.info("Synchronized {} provenance event(s)", acknowledged.size());
+            }
+        } catch (RestClientException e) {
+            logger.warn("Provenance synchronization failed; pending events will be retried", e);
         }
     }
 

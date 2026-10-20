@@ -14,10 +14,14 @@ import org.springframework.web.client.RestClientException;
 import org.springframework.web.client.RestTemplate;
 import org.taniwha.config.RestTemplateHolder;
 import org.taniwha.dto.RegisterResponseDTO;
+import org.taniwha.model.HarmonizationProvenanceRecord;
+import org.taniwha.model.NodeProvenanceBatch;
+import org.taniwha.model.NodeProvenanceBatchResponse;
 import org.taniwha.util.JwtTokenUtil;
 import org.taniwha.util.KeyPairUtil;
 
 import javax.net.ssl.SSLHandshakeException;
+import java.security.PrivateKey;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -32,6 +36,7 @@ import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.mockito.Mockito.verifyNoMoreInteractions;
+import org.mockito.ArgumentCaptor;
 
 class NodeSyncServiceTest {
 
@@ -40,7 +45,9 @@ class NodeSyncServiceTest {
     private RetryTemplate retryTemplate;
     private JwtTokenUtil jwtUtil;
     private PrincipalService principalService;
+    private FileService fileService;
     private RestTemplate restTemplate;
+    private PrivateKey privateKey;
 
     @BeforeEach
     void setUp() {
@@ -49,12 +56,17 @@ class NodeSyncServiceTest {
         jwtUtil = mock(JwtTokenUtil.class);
         KeyPairUtil keyPairUtil = mock(KeyPairUtil.class);
         principalService = mock(PrincipalService.class);
+        fileService = mock(FileService.class);
         restTemplate = mock(RestTemplate.class);
+        privateKey = mock(PrivateKey.class);
 
         when(keyPairUtil.getPublicKeyBase64()).thenReturn("PUBKEY");
+        when(keyPairUtil.getPrivateKey()).thenReturn(privateKey);
         when(restHolder.get()).thenReturn(restTemplate);
 
-        service = new NodeSyncService(restHolder, retryTemplate, jwtUtil, keyPairUtil, principalService);
+        when(fileService.readPendingHarmonizationProvenance(any(Integer.class)))
+                .thenReturn(java.util.List.of());
+        service = new NodeSyncService(restHolder, retryTemplate, jwtUtil, keyPairUtil, principalService, fileService);
         org.springframework.test.util.ReflectionTestUtils.setField(service, "centralBackendUrl", "http://central");
         org.springframework.test.util.ReflectionTestUtils.setField(service, "nodeIp", "1.2.3.4");
         org.springframework.test.util.ReflectionTestUtils.setField(service, "nodeName", "node1");
@@ -75,6 +87,7 @@ class NodeSyncServiceTest {
 
     private void stubToken() {
         when(jwtUtil.generateToken("user")).thenReturn("JWT");
+        when(jwtUtil.generateNodeSyncToken(anyString(), anyString(), eq(privateKey))).thenReturn("JWT");
     }
 
     @Test
@@ -166,6 +179,46 @@ class NodeSyncServiceTest {
         service.sendHeartbeat();
 
         verify(restTemplate).postForEntity(eq("http://central/nodes/heartbeat"), any(HttpEntity.class), eq(String.class));
+    }
+
+    @Test
+    void sendHeartbeat_synchronizesAndAcknowledgesPendingProvenance() {
+        org.springframework.test.util.ReflectionTestUtils.setField(service, "objectId", "OID");
+        when(fileService.readPendingHarmonizationProvenance(100)).thenReturn(
+                java.util.List.of(
+                        new HarmonizationProvenanceRecord(
+                                "activity-1",
+                                "parsed_source.csv",
+                                java.util.List.of("source.csv"),
+                                "a".repeat(64),
+                                "2026-10-19T11:01:00Z")
+                ));
+        NodeProvenanceBatchResponse response = new NodeProvenanceBatchResponse();
+        response.setAcknowledgedEventIds(java.util.List.of("activity-1"));
+        when(restTemplate.postForEntity(
+                eq("http://central/nodes/provenance/batch"),
+                any(HttpEntity.class),
+                eq(NodeProvenanceBatchResponse.class)))
+                .thenReturn(ResponseEntity.ok(response));
+        stubToken();
+        stubRetryTemplate(0);
+
+        service.sendHeartbeat();
+
+        @SuppressWarnings("rawtypes")
+        ArgumentCaptor<HttpEntity> request = ArgumentCaptor.forClass(HttpEntity.class);
+        verify(restTemplate).postForEntity(
+                eq("http://central/nodes/provenance/batch"), request.capture(),
+                eq(NodeProvenanceBatchResponse.class));
+        NodeProvenanceBatch batch = (NodeProvenanceBatch) request.getValue().getBody();
+        assertThat(batch.getActivities()).singleElement().satisfies(activity -> {
+            assertThat(activity.getActivityId()).isEqualTo("activity-1");
+            assertThat(activity.getSourceDatasetIds()).containsExactly("source.csv");
+            assertThat(activity.getOutputDatasetId()).isEqualTo("parsed_source.csv");
+            assertThat(activity.getMappingSpecId()).isEqualTo("a".repeat(64));
+            assertThat(activity.getGeneratedAt()).isEqualTo("2026-10-19T11:01:00Z");
+        });
+        verify(fileService).acknowledgeHarmonizationProvenance(java.util.List.of("activity-1"));
     }
 
     @Test

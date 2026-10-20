@@ -12,6 +12,7 @@ import org.taniwha.model.MetadataDocument;
 import org.taniwha.model.NodeMetadata;
 import org.taniwha.security.FileFilter;
 import org.taniwha.dto.FileInfoDto;
+import org.taniwha.dto.mapping.MappingSpecDTO;
 
 import java.io.IOException;
 import java.nio.file.Files;
@@ -682,5 +683,24 @@ class FileServiceTest {
 
         assertThatThrownBy(() -> fileService.renameFile(FileCategory.DATASETS, "src.csv", ""))
                 .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void provenanceOutboxKeepsEventUntilItIsAcknowledged() {
+        MappingSpecDTO mappingSpec = new MappingSpecDTO();
+
+        var record = fileService.registerHarmonizationProvenance(
+                "parsed_source.csv", List.of("source.csv"), mappingSpec);
+
+        assertThat(fileService.readPendingHarmonizationProvenance(100))
+                .extracting(org.taniwha.model.HarmonizationProvenanceRecord::activityId)
+                .containsExactly(record.activityId());
+
+        fileService.acknowledgeHarmonizationProvenance(List.of(record.activityId()));
+
+        assertThat(fileService.readPendingHarmonizationProvenance(100)).isEmpty();
+        assertThat(fileService.readHarmonizationProvenanceManifest().records())
+                .extracting(org.taniwha.model.HarmonizationProvenanceRecord::activityId)
+                .containsExactly(record.activityId());
     }
 }
