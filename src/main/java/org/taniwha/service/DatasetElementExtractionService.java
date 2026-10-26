@@ -13,7 +13,6 @@ import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
-import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -23,7 +22,7 @@ import java.util.Optional;
 public class DatasetElementExtractionService {
 
     private static final int MAX_CATEGORICAL_VALUES = 20;
-    private static final int MAX_TEXT_EXAMPLES = 3;
+    private static final int MIN_DISCLOSURE_COUNT = 5;
     private static final int MIN_RECORDS_FOR_UNIQUE_FILTER = 10;
     private static final DateTimeFormatter DATE_FORMAT = DateTimeFormatter.ISO_LOCAL_DATE;
 
@@ -58,7 +57,7 @@ public class DatasetElementExtractionService {
         List<DatasetElementDTO> elements = new ArrayList<>();
         for (Map.Entry<String, ColumnAccumulator> entry : byColumn.entrySet()) {
             String column = entry.getKey() == null ? "" : entry.getKey().trim();
-            if (column.isEmpty()) continue;
+            if (column.isEmpty() || entry.getValue().nonEmptyCount <= MIN_DISCLOSURE_COUNT) continue;
             elements.add(new DatasetElementDTO(column, entry.getValue().toElementValues()));
         }
 
@@ -76,7 +75,6 @@ public class DatasetElementExtractionService {
         private LocalDateTime earliest = null;
         private LocalDateTime latest = null;
         private final LinkedHashMap<String, Integer> categoricalCounts = new LinkedHashMap<>();
-        private final LinkedHashSet<String> textExamples = new LinkedHashSet<>();
 
         void accept(String rawValue) {
             String value = rawValue == null ? "" : rawValue.trim();
@@ -105,7 +103,6 @@ public class DatasetElementExtractionService {
 
             categoricalCounts.merge(value, 1, Integer::sum);
             totalTextLength += value.length();
-            if (textExamples.size() < MAX_TEXT_EXAMPLES) textExamples.add(value);
         }
 
         List<String> toElementValues() {
@@ -128,7 +125,7 @@ public class DatasetElementExtractionService {
             }
 
             if (looksLikeNaturalLanguage()) {
-                return new ArrayList<>(textExamples.isEmpty() ? List.of("Natural Language") : textExamples);
+                return List.of("Natural Language");
             }
 
             List<String> categories = new ArrayList<>();

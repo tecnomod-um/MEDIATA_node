@@ -681,7 +681,8 @@ public class HarmonizerService {
                     Object mv = mapping.get("value");
 
                     // typed passthrough -> write the raw source value
-                    if (mv instanceof String s && isTypeMarker(s)) {
+                    if (mv instanceof String s && isTypeMarker(s)
+                            && !"constant".equalsIgnoreCase(Objects.toString(valueObj.get("outputMode"), ""))) {
                         return raw;
                     }
 
@@ -692,7 +693,7 @@ public class HarmonizerService {
     private boolean isTypeMarker(String s) {
         if (s == null) return false;
         String t = s.trim().toLowerCase();
-        return "integer".equals(t) || "double".equals(t) || "date".equals(t);
+        return "integer".equals(t) || "double".equals(t) || "date".equals(t) || "natural language".equals(t);
     }
 
     private boolean matchesDeclaredType(String raw, String declaredType) {
@@ -711,6 +712,7 @@ public class HarmonizerService {
                     yield true;
                 }
                 case "date" -> DateUtil.parseDate(raw).isPresent();
+                case "natural language" -> true;
                 default -> false;
             };
         } catch (Exception ex) {

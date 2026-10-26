@@ -239,6 +239,52 @@ class HarmonizerServiceTest {
         assertThat(lines.get(2)).isEqualTo("8");
     }
 
+    @Test
+    void parseFiles_naturalLanguageMappingPassesThroughNonEmptySourceText() throws Exception {
+        makeCsv("notes.csv", "note;other\nPatient reports improved mobility;1\n;2\nNatural Language;3\n");
+
+        MappingDefinitionDTO definition = customTypedPassthroughSpec(
+                "Note", "n1::cfgNotes", "note", "natural language");
+        definition.getRules().get(0).setLogic(Map.of(
+                "is_text", List.of(Map.of("var", "n1::cfgNotes::note"))));
+
+        MappingSpecDTO spec = new MappingSpecDTO();
+        spec.setSpecVersion("1.0.0");
+        spec.setMappings(List.of(definition));
+
+        harmonizerService.parseFiles(spec, Map.of("cfgNotes", List.of("notes.csv")), null);
+
+        List<String> lines = Files.readAllLines(baseDir.resolve("datasets/parsed_notes.csv"));
+        assertThat(lines).containsExactly(
+                "Note", "Patient reports improved mobility", "", "Natural Language");
+    }
+
+    @Test
+    void parseFiles_typedMatcherCanProduceConstantInsteadOfSourceValue() throws Exception {
+        makeCsv("notes.csv", "note;age\nPatient improving;42\n;43\n");
+
+        MappingDefinitionDTO note = customTypedPassthroughSpec(
+                "NoteCategory", "n1::cfgNotes", "note", "natural language");
+        note.getRules().get(0).setLogic(Map.of(
+                "is_text", List.of(Map.of("var", "n1::cfgNotes::note"))));
+        note.getRules().get(0).getThen().setKind("constant");
+        note.getRules().get(0).getThen().setValue("Reviewed");
+
+        MappingDefinitionDTO age = customTypedPassthroughSpec(
+                "AgeCategory", "n1::cfgNotes", "age", "integer");
+        age.getRules().get(0).getThen().setKind("constant");
+        age.getRules().get(0).getThen().setValue("Adult");
+
+        MappingSpecDTO spec = new MappingSpecDTO();
+        spec.setSpecVersion("1.0.0");
+        spec.setMappings(List.of(note, age));
+        harmonizerService.parseFiles(spec, Map.of("cfgNotes", List.of("notes.csv")), null);
+
+        List<String> lines = Files.readAllLines(baseDir.resolve("datasets/parsed_notes.csv"));
+        assertThat(lines).containsExactly(
+                "NoteCategory;AgeCategory", "Reviewed;Adult", ";Adult");
+    }
+
     private MappingSpecDTO standardCopySchemaSpec(String... fields) {
         List<MappingDefinitionDTO> defs = java.util.Arrays.stream(fields)
                 .map(field -> {
