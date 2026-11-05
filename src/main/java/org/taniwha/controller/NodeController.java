@@ -14,6 +14,7 @@ import org.taniwha.dto.NodeValidationResponseDTO;
 import org.taniwha.model.NodeMetadata;
 import org.taniwha.service.NodeAccessService;
 import org.taniwha.util.JwtTokenUtil;
+import java.io.IOException;
 
 // Sets up the node in the system with the required security
 @RestController
@@ -61,6 +62,9 @@ public class NodeController {
                     logger.warn("The received sgt token is invalid");
                     return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(new NodeAuthResponseDTO("Invalid token"));
                 }
+            } catch (IOException | IllegalArgumentException e) {
+                logger.warn("Rejected malformed Kerberos envelope");
+                return ResponseEntity.badRequest().body(new NodeAuthResponseDTO("Invalid token"));
             } catch (Exception e) {
                 logger.error("Error verifying token", e);
                 return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(new NodeAuthResponseDTO("Error verifying token"));
@@ -75,7 +79,7 @@ public class NodeController {
     public ResponseEntity<NodeValidationResponseDTO> validateRequest(@RequestHeader("Authorization") String jwtToken, @RequestBody NodeValidationRequestDTO request) {
         jwtToken = jwtToken.replace("Bearer ", "");
         String sgtToken = request.getKerberosToken();
-        logger.debug("Validating tokens: JWT={}, SGT={}", jwtToken, sgtToken);
+        logger.debug("Validating node authorization exchange");
         if (nodeAccessService.validateUserToken(jwtToken, sgtToken)) {
             logger.debug("Token validation successful");
 

@@ -2,6 +2,7 @@ package org.taniwha.service;
 
 import org.apache.kerby.kerberos.kerb.type.base.EncryptionKey;
 import org.apache.kerby.kerberos.kerb.type.base.EncryptionType;
+import org.apache.kerby.kerberos.kerb.type.base.EncryptedData;
 import org.apache.kerby.kerberos.kerb.type.base.PrincipalName;
 import org.apache.kerby.kerberos.kerb.type.kdc.EncKdcRepPart;
 import org.apache.kerby.kerberos.kerb.type.ticket.EncTicketPart;
@@ -158,11 +159,13 @@ class NodeAccessServiceTest {
         when(part.getAuthTime()).thenReturn(null);
         when(part.getEndTime()).thenReturn(null);
         when(part.getRenewTill()).thenReturn(null);
+        EncryptedData encryptedData = mock(EncryptedData.class);
+        when(encryptedData.getEType()).thenReturn(EncryptionType.AES128_CTS_HMAC_SHA1_96);
+        when(encryptedData.getCipher()).thenReturn(new byte[]{1});
+        when(t.getEncryptedEncPart()).thenReturn(encryptedData);
 
         EncryptionKey key = mock(EncryptionKey.class);
-        byte[] keyData = new byte[]{1, 2, 3};
-        when(part.getKey()).thenReturn(key);
-        when(key.getKeyData()).thenReturn(keyData);
+        when(part.getKey()).thenReturn(null);
         when(key.getKeyType()).thenReturn(EncryptionType.AES128_CTS_HMAC_SHA1_96);
 
         when(principalService.getKeytab()).thenReturn(new byte[]{0});
@@ -170,6 +173,16 @@ class NodeAccessServiceTest {
                 .thenReturn(key);
         EncTicketPart encPart = mock(EncTicketPart.class);
         when(encPart.getKey()).thenReturn(key);
+        PrincipalName client = mock(PrincipalName.class);
+        when(client.getName()).thenReturn("alice");
+        when(encPart.getCname()).thenReturn(client);
+        when(encPart.getCrealm()).thenReturn("REALM");
+        when(encPart.getFlags()).thenReturn(new org.apache.kerby.kerberos.kerb.type.ticket.TicketFlags());
+        when(encPart.getAuthTime()).thenReturn(new org.apache.kerby.kerberos.kerb.type.KerberosTime(System.currentTimeMillis() - 1000));
+        when(encPart.getEndTime()).thenReturn(new org.apache.kerby.kerberos.kerb.type.KerberosTime(System.currentTimeMillis() + 60000));
+        PrincipalName envelopeClient = mock(PrincipalName.class);
+        when(envelopeClient.getName()).thenReturn("alice");
+        when(sgt.getClientPrincipal()).thenReturn(envelopeClient);
         when(krbService.decryptServiceTicket(t, key)).thenReturn(encPart);
 
         assertThat(service.verifySgtTicket(sgt)).isTrue();
@@ -184,48 +197,21 @@ class NodeAccessServiceTest {
     }
 
     @Test
-    void verifyKerberosToken_success_callsStoreAndReturnsTrue() throws Exception {
-
-        SgtTicket sgt = mock(SgtTicket.class);
-        when(krbService.decodeSgtTicket("good")).thenReturn(sgt);
-        PrincipalName pn = mock(PrincipalName.class);
-        when(sgt.getClientPrincipal()).thenReturn(pn);
-        when(pn.getName()).thenReturn("alice@REALM");
-
-        NodeAccessService spy = spy(service);
-        doReturn(true).when(spy).verifySgtTicket(sgt);
-
-        assertThat(spy.verifyKerberosToken("good")).isTrue();
-        verify(spy).storeToken(sgt);
-    }
-
-    @Test
-    void validateUserToken_noStored_returnsFalse() {
-        when(jwtUtil.getUsernameFromToken("jwt")).thenReturn("user");
+    void validateUserToken_rejectsNonCentralJwt() throws Exception {
+        when(jwtUtil.isCentralUserToken("jwt")).thenReturn(false);
         assertThat(service.validateUserToken("jwt", "sgt")).isFalse();
+        verify(krbService, never()).decodeSgtTicket(anyString());
     }
 
     @Test
-    void validateUserToken_usernameLookupFails_returnsFalse() {
-        when(jwtUtil.getUsernameFromToken("jwt")).thenThrow(new RuntimeException("bad jwt"));
-
-        assertThat(service.validateUserToken("jwt", "sgt")).isFalse();
-    }
-
-    @Test
-    void validateUserToken_withStoredAndValid_returnsTrue() throws Exception {
+    void verifyKerberosToken_rejectsEnvelopeContainingSessionKey() throws Exception {
         SgtTicket sgt = mock(SgtTicket.class);
-        PrincipalName pn = mock(PrincipalName.class);
-        when(pn.getName()).thenReturn("user@REALM");
-        when(sgt.getClientPrincipal()).thenReturn(pn);
-        service.storeToken(sgt);
-
-        when(jwtUtil.getUsernameFromToken("jwt")).thenReturn("user");
-        when(krbService.decodeSgtTicket("sgt")).thenReturn(sgt);
-
-        NodeAccessService spy = spy(service);
-        doReturn(true).when(spy).verifySgtTicket(sgt);
-
-        assertThat(spy.validateUserToken("jwt", "sgt")).isTrue();
+        when(krbService.decodeSgtTicket("good")).thenReturn(
+                new KerberosService.ServiceTicketEnvelope(sgt, new EncryptedData()));
+        when(sgt.getTicket()).thenReturn(mock(Ticket.class));
+        when(sgt.getEncKdcRepPart()).thenReturn(mock(EncKdcRepPart.class));
+        when(sgt.getEncKdcRepPart().getKey()).thenReturn(mock(EncryptionKey.class));
+        assertThat(service.verifyKerberosToken("good")).isFalse();
+        verify(krbService, never()).verifyAuthenticator(any(), any(), anyString(), anyString());
     }
 }

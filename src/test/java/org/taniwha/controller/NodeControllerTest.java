@@ -13,6 +13,13 @@ import org.taniwha.service.NodeAccessService;
 import org.taniwha.util.JwtTokenUtil;
 
 import java.util.Collections;
+import java.io.IOException;
+import ch.qos.logback.classic.Logger;
+import ch.qos.logback.classic.Level;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.read.ListAppender;
+import org.slf4j.LoggerFactory;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 
 import static org.mockito.Mockito.*;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
@@ -117,6 +124,44 @@ class NodeControllerTest {
                         .content(om.writeValueAsString(req)))
                 .andExpect(status().isInternalServerError())
                 .andExpect(jsonPath("$.message").value("Error verifying token"));
+    }
+
+    @Test
+    void malformedEnvelopeReturns400RatherThanServerError() throws Exception {
+        when(nodeAccessService.verifyKerberosToken("malformed"))
+                .thenThrow(new IOException("Invalid envelope length"));
+        mvc.perform(post("/node/authorize")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"token\":\"malformed\"}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message").value("Invalid token"));
+    }
+
+    @Test
+    void validationDoesNotLogJwtOrKerberosCredentials() throws Exception {
+        String jwt = "private-central-jwt-review-fixture";
+        String sgt = "private-service-ticket-review-fixture";
+        Logger logger = (Logger) LoggerFactory.getLogger(NodeController.class);
+        Level originalLevel = logger.getLevel();
+        ListAppender<ILoggingEvent> appender = new ListAppender<>();
+        appender.start();
+        logger.addAppender(appender);
+        logger.setLevel(Level.DEBUG);
+        try {
+            mvc.perform(post("/node/validate")
+                            .header("Authorization", "Bearer " + jwt)
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content(om.writeValueAsString(java.util.Map.of("kerberosToken", sgt))))
+                    .andExpect(status().isUnauthorized());
+            assertFalse(appender.list.stream().anyMatch(event -> {
+                String message = event.getFormattedMessage();
+                return message.contains(jwt) || message.contains(sgt);
+            }));
+        } finally {
+            logger.detachAppender(appender);
+            logger.setLevel(originalLevel);
+            appender.stop();
+        }
     }
 
     @Test
