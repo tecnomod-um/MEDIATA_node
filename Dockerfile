@@ -41,7 +41,8 @@ RUN sed -i 's/\r$//' /app/entrypoint.sh \
         /taniwha/fairdatapoint/mongo \
         /taniwha/fairdatapoint/rdf-store \
         /var/log/taniwha \
-    && chmod 777 \
+    && chmod 750 \
+        /taniwha \
         /taniwha/datasets \
         /taniwha/mapped_datasets \
         /taniwha/fhir_mappings \
