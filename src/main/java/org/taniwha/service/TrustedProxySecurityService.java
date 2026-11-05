@@ -17,6 +17,7 @@ import java.util.concurrent.ConcurrentHashMap;
 
 @Service
 public class TrustedProxySecurityService {
+    private static final int MAX_TRACKED_NONCES = 10_000;
 
     public static final String REQUEST_TIMESTAMP_HEADER = "X-Taniwha-Timestamp";
     public static final String REQUEST_NONCE_HEADER = "X-Taniwha-Nonce";
@@ -81,12 +82,6 @@ public class TrustedProxySecurityService {
             return VerificationResult.failure("Trusted proxy timestamp is outside the allowed clock skew");
         }
 
-        cleanupExpiredNonces(now);
-        Long previousTimestamp = seenNonces.putIfAbsent(nonce, requestTimestamp);
-        if (previousTimestamp != null) {
-            return VerificationResult.failure("Trusted proxy nonce has already been used");
-        }
-
         String expectedContentHash = sha256Base64(body);
         if (!expectedContentHash.equals(contentHash)) {
             return VerificationResult.failure("Trusted proxy content hash mismatch");
@@ -106,6 +101,16 @@ public class TrustedProxySecurityService {
             return VerificationResult.failure("Trusted proxy signature mismatch");
         }
 
+        synchronized (seenNonces) {
+            cleanupExpiredNonces(now);
+            if (seenNonces.containsKey(nonce)) {
+                return VerificationResult.failure("Trusted proxy nonce has already been used");
+            }
+            if (seenNonces.size() >= MAX_TRACKED_NONCES) {
+                return VerificationResult.failure("Trusted proxy replay cache is full");
+            }
+            seenNonces.put(nonce, requestTimestamp);
+        }
         return VerificationResult.success(new SignedRequestContext(request.getMethod(), pathAndQuery, nonce));
     }
 
