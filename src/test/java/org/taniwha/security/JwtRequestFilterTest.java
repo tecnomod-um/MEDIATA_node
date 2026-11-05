@@ -60,6 +60,7 @@ class JwtRequestFilterTest {
         request.setContextPath("/taniwha");
         request.addHeader("Authorization", "Bearer validToken123");
         when(jwtTokenUtil.validateToken("validToken123")).thenReturn(true);
+        when(jwtTokenUtil.isNodeAccessToken("validToken123")).thenReturn(true);
 
         jwtRequestFilter.doFilterInternal(request, response, filterChain);
 
@@ -180,6 +181,25 @@ class JwtRequestFilterTest {
 
         assertThat(response.getStatus()).isEqualTo(401);
         assertThat(response.getErrorMessage()).contains("JWT Token expired");
+        verify(filterChain, never()).doFilter(any(), any());
+    }
+
+    @Test
+    void doFilterInternal_fileEndpoint_requiresNodeAccessToken() throws ServletException, IOException {
+        request.setRequestURI("/taniwha/api/files/datasets");
+        request.setContextPath("/taniwha");
+        request.addHeader("Authorization", "Bearer userToken");
+        when(jwtTokenUtil.validateToken(anyString())).thenReturn(true);
+        when(jwtTokenUtil.isNodeAccessToken(anyString())).thenReturn(false);
+        request = new MockHttpServletRequest();
+        request.setRequestURI("/taniwha/api/files/datasets");
+        request.setContextPath("/taniwha");
+        request.addHeader("Authorization", "Bearer " + "userToken");
+
+        jwtRequestFilter.doFilterInternal(request, response, filterChain);
+
+        assertThat(response.getStatus()).isEqualTo(401);
+        verify(jwtTokenUtil).isNodeAccessToken(anyString());
         verify(filterChain, never()).doFilter(any(), any());
     }
 

@@ -7,6 +7,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
 import javax.crypto.SecretKey;
+import jakarta.annotation.PostConstruct;
 import java.nio.charset.StandardCharsets;
 import java.security.PrivateKey;
 import java.util.Date;
@@ -18,6 +19,10 @@ public class JwtTokenUtil {
 
     private static final String NODE_SYNC_ISSUER = "mediata-node";
     private static final String NODE_SYNC_AUDIENCE = "mediata-orchestrator";
+    private static final String NODE_ACCESS_ISSUER = "mediata-node";
+    private static final String NODE_ACCESS_AUDIENCE = "mediata-node-access";
+    private static final String CENTRAL_USER_ISSUER = "mediata-orchestrator";
+    private static final String CENTRAL_USER_AUDIENCE = "mediata-central";
 
     @Value("${jwt.secret}")
     private String secret;
@@ -27,6 +32,16 @@ public class JwtTokenUtil {
 
     @Value("${node.sync.jwt.expiration:120}")
     private long nodeSyncExpiration;
+
+    @Value("${jwt.node-id:${node.ip:http://localhost}}")
+    private String nodeId;
+
+    @PostConstruct
+    void validateConfiguration() {
+        if (secret == null || secret.getBytes(StandardCharsets.UTF_8).length < 32) {
+            throw new IllegalStateException("JWT_SECRET must be configured with at least 32 bytes");
+        }
+    }
 
     private SecretKey getSigningKey() {
         byte[] keyBytes = secret.getBytes(StandardCharsets.UTF_8);
@@ -38,7 +53,18 @@ public class JwtTokenUtil {
     }
 
     public String generateNodeAccessToken(String subject) {
-        return generateToken(subject, Map.of("token_use", "node_access"));
+        return Jwts.builder()
+                .claims(Map.of(
+                        "token_use", "node_access",
+                        "node_id", nodeId,
+                        "aud", NODE_ACCESS_AUDIENCE
+                ))
+                .issuer(NODE_ACCESS_ISSUER)
+                .subject(subject)
+                .issuedAt(new Date())
+                .expiration(new Date(System.currentTimeMillis() + expiration * 1000))
+                .signWith(getSigningKey())
+                .compact();
     }
 
     public String generateNodeSyncToken(String nodeId, String endpoint, PrivateKey privateKey) {
@@ -73,11 +99,36 @@ public class JwtTokenUtil {
     }
 
     public boolean isNodeAccessToken(String token) {
-        return hasClaimValue(token, "token_use", "node_access");
+        try {
+            Claims claims = getAllClaimsFromToken(token);
+            return "node_access".equals(claims.get("token_use", String.class))
+                    && NODE_ACCESS_ISSUER.equals(claims.getIssuer())
+                    && claims.getAudience().contains(NODE_ACCESS_AUDIENCE)
+                    && nodeId.equals(claims.get("node_id", String.class))
+                    && claims.getExpiration() != null
+                    && !claims.getExpiration().before(new Date());
+        } catch (RuntimeException e) {
+            return false;
+        }
     }
 
     public boolean validateToken(String token) {
         return !isTokenExpired(token);
+    }
+
+    public boolean isCentralUserToken(String token) {
+        try {
+            Claims claims = getAllClaimsFromToken(token);
+            return "central_user".equals(claims.get("token_use", String.class))
+                    && CENTRAL_USER_ISSUER.equals(claims.getIssuer())
+                    && claims.getAudience() != null
+                    && claims.getAudience().contains(CENTRAL_USER_AUDIENCE)
+                    && claims.getSubject() != null
+                    && claims.getExpiration() != null
+                    && !claims.getExpiration().before(new Date());
+        } catch (RuntimeException e) {
+            return false;
+        }
     }
 
     private String doGenerateToken(Map<String, Object> claims, String subject) {

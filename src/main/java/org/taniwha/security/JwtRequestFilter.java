@@ -46,7 +46,7 @@ public class JwtRequestFilter extends OncePerRequestFilter {
 
         String jwtToken = extractJwtToken(request, response);
         if (jwtToken == null) return;
-        if (!validateToken(jwtToken, response)) return;
+        if (!validateToken(jwtToken, request, response)) return;
         setAuthenticationContext(request);
         chain.doFilter(request, response);
     }
@@ -77,11 +77,16 @@ public class JwtRequestFilter extends OncePerRequestFilter {
         }
     }
 
-    private boolean validateToken(String jwtToken, HttpServletResponse response) throws IOException {
+    private boolean validateToken(String jwtToken, HttpServletRequest request, HttpServletResponse response) throws IOException {
         try {
             if (!jwtTokenUtil.validateToken(jwtToken)) {
                 filterLogger.warn("JWT Token is expired");
                 response.sendError(HttpServletResponse.SC_UNAUTHORIZED, "JWT Token expired");
+                return false;
+            }
+            if (!jwtTokenUtil.isNodeAccessToken(jwtToken)) {
+                filterLogger.warn("JWT Token is not scoped for this node");
+                response.sendError(HttpServletResponse.SC_UNAUTHORIZED, "JWT Token is not a node access token");
                 return false;
             }
             return true;

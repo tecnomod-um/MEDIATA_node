@@ -7,6 +7,7 @@ import io.jsonwebtoken.security.SignatureException;
 import org.junit.jupiter.api.Test;
 import org.springframework.context.annotation.AnnotationConfigApplicationContext;
 import org.springframework.test.context.support.TestPropertySourceUtils;
+import org.springframework.test.util.ReflectionTestUtils;
 
 import java.security.KeyPair;
 import java.security.KeyPairGenerator;
@@ -149,11 +150,25 @@ class JwtTokenUtilTest {
     @Test
     void generateNodeAccessToken_setsNodeAccessClaim() {
         JwtTokenUtil util = loadWith("myVerySecretKeyThatIsAtLeast32BytesLongForSecurityPurposes", "3600");
+        ReflectionTestUtils.setField(util, "nodeId", "node-1");
 
         String token = util.generateNodeAccessToken("alice");
 
         assertThat(util.isNodeAccessToken(token)).isTrue();
         assertThat(util.getClaimAsString(token, "token_use")).isEqualTo("node_access");
+        assertThat(util.getClaimAsString(token, "node_id")).isEqualTo("node-1");
+        assertThat(util.getClaimAsString(token, "iss")).isEqualTo("mediata-node");
+    }
+
+    @Test
+    void nodeAccessToken_withDifferentNodeScope_isRejected() {
+        JwtTokenUtil util = loadWith("myVerySecretKeyThatIsAtLeast32BytesLongForSecurityPurposes", "3600");
+        ReflectionTestUtils.setField(util, "nodeId", "node-1");
+        String token = util.generateNodeAccessToken("alice");
+
+        ReflectionTestUtils.setField(util, "nodeId", "node-2");
+
+        assertThat(util.isNodeAccessToken(token)).isFalse();
     }
 
     @Test
