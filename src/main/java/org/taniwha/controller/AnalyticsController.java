@@ -14,7 +14,6 @@ import org.taniwha.service.DatasetElementExtractionService;
 
 import java.util.Collections;
 import java.util.List;
-import java.util.concurrent.ExecutionException;
 
 @RestController
 @RequestMapping("/api/data")
@@ -53,10 +52,13 @@ public class AnalyticsController {
             analyticsService.startDiscoveryJob(jobId, fileNames);
             return ResponseEntity.status(HttpStatus.ACCEPTED).body(new ProcessingStartDTO(jobId, true));
 
+        } catch (java.util.concurrent.RejectedExecutionException busy) {
+            return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
+                    .body(List.of(new AnalyticsResponseDTO("The node is busy. Please retry shortly.")));
         } catch (Exception e) {
-            logger.error("Error processing file list", e);
+            logger.warn("Error processing file list");
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
-                    .body(List.of(new AnalyticsResponseDTO("Error processing files: " + e.getMessage())));
+                    .body(List.of(new AnalyticsResponseDTO("Error processing statistics.")));
         }
     }
 
@@ -67,7 +69,7 @@ public class AnalyticsController {
             List<String> fileNames = dto == null || dto.getFileNames() == null ? List.of() : dto.getFileNames();
             return ResponseEntity.ok(datasetElementExtractionService.extractDatasetElements(fileNames));
         } catch (Exception e) {
-            logger.error("Error extracting dataset elements", e);
+            logger.warn("Error extracting dataset elements");
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(List.of());
         }
     }
@@ -119,45 +121,25 @@ public class AnalyticsController {
         return ResponseEntity.ok(out);
     }
 
-    @Operation(summary = "Reprocess a feature using an explicit data type")
-    @PostMapping("/reprocessList")
-    public ResponseEntity<AnalyticsResponseDTO> recalculateFeatureList(
-            @RequestParam("fileName") String fileName,
-            @RequestParam("featureName") String featureName,
-            @RequestParam("featureType") String featureType
-    ) {
-        logger.debug("File reprocessing request: {} as type {} for file: {}", featureName, featureType, fileName);
-        if (!featureType.equalsIgnoreCase("continuous") && !featureType.equalsIgnoreCase("categorical")) {
-            logger.warn("Invalid feature type provided: {}", featureType);
-            return ResponseEntity.badRequest().body(new AnalyticsResponseDTO("Invalid feature type"));
-        }
-        try {
-            AnalyticsResponseDTO response = analyticsService.recalculateFeatureAsTypeFromDisk(fileName, featureName, featureType).get();
-            logger.info("Feature recalculated for file: {}", fileName);
-            return ResponseEntity.ok(response);
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            logger.error("Thread was interrupted while reprocessing field in file: {}", fileName, e);
-            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
-                    .body(new AnalyticsResponseDTO("Thread was interrupted while processing file."));
-        } catch (ExecutionException e) {
-            logger.error("Error recalculating feature for file: {}", fileName, e);
-            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
-                    .body(new AnalyticsResponseDTO("Error processing file: " + e.getMessage()));
-        }
-    }
-
     @Operation(summary = "Profile records matching a feature filter")
     @PostMapping("/filterByNameList")
-    public ResponseEntity<List<AnalyticsResponseDTO>> filterByNameList(@RequestBody MultiFileFilterRequest payload) {
+    public ResponseEntity<Object> filterByNameList(@RequestBody MultiFileFilterRequest payload) {
         logger.debug("Received multiple-file filter request with {} entries", payload.getMultipleFileFilters().size());
         try {
+            if (analyticsService.isAnyHugeForDiscovery(payload.getMultipleFileFilters().stream().map(FileFilters::getFileName).toList())) {
+                String id = jobs.createJob();
+                analyticsService.startFilteredDiscoveryJob(id, payload.getMultipleFileFilters());
+                return ResponseEntity.status(HttpStatus.ACCEPTED).body(new ProcessingStartDTO(id, true));
+            }
             List<AnalyticsResponseDTO> filteredList = analyticsService.filterMultipleFilesByName(payload.getMultipleFileFilters());
             return ResponseEntity.ok(filteredList);
+        } catch (java.util.concurrent.RejectedExecutionException busy) {
+            return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
+                    .body(List.of(new AnalyticsResponseDTO("The node is busy. Please retry shortly.")));
         } catch (Exception e) {
-            logger.error("Error filtering multiple files", e);
+            logger.warn("Error filtering multiple files");
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
-                    .body(Collections.singletonList(new AnalyticsResponseDTO("Error filtering multiple files: " + e.getMessage())));
+                    .body(Collections.singletonList(new AnalyticsResponseDTO("Error processing statistics.")));
         }
     }
 }

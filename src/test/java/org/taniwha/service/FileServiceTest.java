@@ -406,7 +406,7 @@ class FileServiceTest {
         Path sharedParsed = fileService.resolveSharedDatasetFilePath("parsed_fimbartheltodos.csv");
         assertThat(sharedRaw).exists();
         assertThat(sharedParsed).exists();
-        assertThat(sharedRaw.toString()).contains("/fairdatapoint/datasets/fimbartheltodos/");
+        assertThat(sharedRaw.getParent()).isEqualTo(tempBase.resolve("fairdatapoint/datasets/fimbartheltodos"));
         assertThat(Files.readString(sharedRaw)).isEqualTo("raw");
 
         fileService.renameFile(FileCategory.DATASETS, "fimbartheltodos.xlsx", "renamed.xlsx");

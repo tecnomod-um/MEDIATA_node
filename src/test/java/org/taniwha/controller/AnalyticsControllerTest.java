@@ -13,8 +13,6 @@ import org.taniwha.service.DatasetElementExtractionService;
 
 import java.util.Collections;
 import java.util.List;
-import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.ExecutionException;
 
 import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
@@ -95,7 +93,7 @@ class AnalyticsControllerTest {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(om.writeValueAsString(reqDto)))
                 .andExpect(status().isInternalServerError())
-                .andExpect(jsonPath("$[0].message").value("Error processing files: disk error"));
+                .andExpect(jsonPath("$[0].message").value("Error processing statistics."));
     }
 
     @Test
@@ -104,74 +102,6 @@ class AnalyticsControllerTest {
 
         mvc.perform(get("/api/data/processList/status/missing"))
                 .andExpect(status().isNotFound());
-    }
-
-    @Test
-    void reprocessList_invalidFeatureType_returns400() throws Exception {
-        mvc.perform(post("/api/data/reprocessList")
-                        .param("fileName", "f1")
-                        .param("featureName", "feat")
-                        .param("featureType", "badtype"))
-                .andExpect(status().isBadRequest())
-                .andExpect(jsonPath("$.message").value("Invalid feature type"));
-
-        verifyNoInteractions(analyticsService);
-    }
-
-    @Test
-    void reprocessList_successfulFuture_returns200AndDto() throws Exception {
-        AnalyticsResponseDTO dto = new AnalyticsResponseDTO("done");
-        CompletableFuture<AnalyticsResponseDTO> future = CompletableFuture.completedFuture(dto);
-
-        when(analyticsService.recalculateFeatureAsTypeFromDisk("f1", "feat", "continuous"))
-                .thenReturn(future);
-
-        mvc.perform(post("/api/data/reprocessList")
-                        .param("fileName", "f1")
-                        .param("featureName", "feat")
-                        .param("featureType", "continuous"))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.message").value("done"));
-    }
-
-    @Test
-    void reprocessList_futureInterrupted_returns500AndInterruptedMessage() throws Exception {
-        CompletableFuture<AnalyticsResponseDTO> interruptedFuture = new CompletableFuture<>() {
-            @Override
-            public AnalyticsResponseDTO get() throws InterruptedException {
-                throw new InterruptedException();
-            }
-        };
-
-        when(analyticsService.recalculateFeatureAsTypeFromDisk("f1", "feat", "categorical"))
-                .thenReturn(interruptedFuture);
-
-        mvc.perform(post("/api/data/reprocessList")
-                        .param("fileName", "f1")
-                        .param("featureName", "feat")
-                        .param("featureType", "categorical"))
-                .andExpect(status().isInternalServerError())
-                .andExpect(jsonPath("$.message").value("Thread was interrupted while processing file."));
-    }
-
-    @Test
-    void reprocessList_futureExecutionException_returns500AndErrorMessage() throws Exception {
-        CompletableFuture<AnalyticsResponseDTO> execExceptionFuture = new CompletableFuture<>() {
-            @Override
-            public AnalyticsResponseDTO get() throws ExecutionException {
-                throw new ExecutionException("calc failed", null);
-            }
-        };
-
-        when(analyticsService.recalculateFeatureAsTypeFromDisk("f1", "feat", "continuous"))
-                .thenReturn(execExceptionFuture);
-
-        mvc.perform(post("/api/data/reprocessList")
-                        .param("fileName", "f1")
-                        .param("featureName", "feat")
-                        .param("featureType", "continuous"))
-                .andExpect(status().isInternalServerError())
-                .andExpect(jsonPath("$.message").value("Error processing file: calc failed"));
     }
 
     @Test
@@ -202,7 +132,7 @@ class AnalyticsControllerTest {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(om.writeValueAsString(req)))
                 .andExpect(status().isInternalServerError())
-                .andExpect(jsonPath("$[0].message").value("Error filtering multiple files: boom"));
+                .andExpect(jsonPath("$[0].message").value("Error processing statistics."));
     }
 
     @Test
@@ -316,5 +246,28 @@ class AnalyticsControllerTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$").isArray())
                 .andExpect(jsonPath("$").isEmpty());
+    }
+
+    @Test
+    void hugeTypedRefreshUsesBackgroundJobAndPreservesRequest() throws Exception {
+        when(analyticsService.isAnyHugeForDiscovery(List.of("large.csv"))).thenReturn(true);
+        when(jobs.createJob()).thenReturn("refresh-job");
+        mvc.perform(post("/api/data/filterByNameList").contentType(MediaType.APPLICATION_JSON)
+                .content("{\"multipleFileFilters\":[{\"fileName\":\"large.csv\",\"featureTypes\":{\"Cluster\":\"categorical\"}}]}"))
+                .andExpect(status().isAccepted()).andExpect(jsonPath("$.jobId").value("refresh-job"));
+        verify(analyticsService).startFilteredDiscoveryJob(eq("refresh-job"), argThat(files ->
+                "categorical".equals(files.get(0).getFeatureTypes().get("Cluster"))));
+        verify(analyticsService, never()).filterMultipleFilesByName(anyList());
+    }
+
+    @Test
+    void busyBackgroundRefreshReturnsRetryableStatus() throws Exception {
+        when(analyticsService.isAnyHugeForDiscovery(anyList())).thenReturn(true);
+        when(jobs.createJob()).thenReturn("busy");
+        doThrow(new java.util.concurrent.RejectedExecutionException()).when(analyticsService)
+                .startFilteredDiscoveryJob(eq("busy"), anyList());
+        mvc.perform(post("/api/data/filterByNameList").contentType(MediaType.APPLICATION_JSON)
+                .content("{\"multipleFileFilters\":[{\"fileName\":\"large.csv\"}]}"))
+                .andExpect(status().isServiceUnavailable());
     }
 }

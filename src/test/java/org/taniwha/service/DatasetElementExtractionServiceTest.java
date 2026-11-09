@@ -44,6 +44,15 @@ class DatasetElementExtractionServiceTest {
     }
 
     @Test
+    void rareCategoryNamesCannotBypassDiscoveryThroughMetadataExtraction() throws Exception {
+        Path datasets = Files.createDirectories(baseDir.resolve("datasets"));
+        Files.writeString(datasets.resolve("rare.csv"), "diagnosis\n" + "common\n".repeat(12) + "protected-rare-label\n");
+        FileFilter filter = new FileFilter();
+        var service = new DatasetElementExtractionService(new FileService(filter, baseDir.toString()), new DataProcessingService(filter));
+        assertThat(service.extractDatasetElements(List.of("rare.csv")).get(0).getElements()).isEmpty();
+    }
+
+    @Test
     void columnsWithFiveOrFewerObservationsAreNotExtracted() throws Exception {
         Path datasets = Files.createDirectories(baseDir.resolve("datasets"));
         Files.writeString(datasets.resolve("small.csv"),

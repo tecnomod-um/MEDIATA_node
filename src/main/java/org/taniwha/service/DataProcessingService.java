@@ -13,11 +13,11 @@ import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
 import org.taniwha.security.FileFilter;
 import org.taniwha.util.DateUtil;
+import org.taniwha.util.NumberUtil;
 
 import java.io.*;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.text.NumberFormat;
 import java.text.ParseException;
 import java.time.LocalDateTime;
 import java.util.*;
@@ -30,7 +30,6 @@ public class DataProcessingService {
     private final FileFilter fileFilter;
     private static final Logger logger = LoggerFactory.getLogger(DataProcessingService.class);
     private static final Locale LOCALE = Locale.GERMANY;
-    private static final NumberFormat NUMBER_FORMAT = NumberFormat.getInstance(LOCALE);
     private static final String XLSX_EXTENSION = ".xlsx";
     private static final String VALUE_KEY = "value";
 
@@ -357,6 +356,10 @@ public class DataProcessingService {
 
     // Filtering logic
 
+    public boolean matchesDiscoveryFilters(Map<String, String> rowData, Map<String, Object> filters) {
+        return filters == null || filters.isEmpty() || applyFilters(rowData, filters);
+    }
+
     private boolean applyFilters(Map<String, String> rowData, Map<String, Object> filters) {
         // If there's no operator or no conditions, just accept everything
         Object operatorObj = filters.get("operator");
@@ -477,7 +480,7 @@ public class DataProcessingService {
                 default -> throw new IllegalArgumentException("Unknown filter type: " + filterType);
             };
         } catch (Exception e) {
-            logger.debug("Cannot evaluate condition: {} and {}", featureValue, criteriaMap.get(VALUE_KEY));
+            logger.debug("Cannot evaluate a discovery filter condition");
             return false;
         }
     }
@@ -520,11 +523,12 @@ public class DataProcessingService {
 
         // Fall back to numeric comparison
         try {
-            double featureNum = NUMBER_FORMAT.parse(featureValue.trim()).doubleValue();
-            double criteriaNum = NUMBER_FORMAT.parse(criteriaValue.trim()).doubleValue();
+            // Filters and statistics must interpret decimal/grouping separators identically.
+            double featureNum = NumberUtil.parseDouble(featureValue);
+            double criteriaNum = NumberUtil.parseDouble(criteriaValue);
             return Double.compare(featureNum, criteriaNum);
         } catch (ParseException e) {
-            logger.debug("Cannot compare values: {} and {}", featureValue, criteriaValue);
+            logger.debug("Discovery filter values could not be compared");
             throw new IllegalArgumentException("Cannot compare values: " + featureValue + " and " + criteriaValue, e);
         }
     }

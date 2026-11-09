@@ -44,13 +44,14 @@ public class AnalyticsProcessingJobs {
         return jobs.get(jobId);
     }
 
-    public void attachFuture(String jobId, Future<?> future) {
+    public synchronized void attachFuture(String jobId, Future<?> future) {
         JobState s = jobs.get(jobId);
         if (s == null) return;
         s.setFuture(future);
+        if (s.getState() == ProcessingStatusDTO.State.CANCELED) future.cancel(true);
     }
 
-    public void cancel(String jobId, String message) {
+    public synchronized void cancel(String jobId, String message) {
         JobState s = jobs.get(jobId);
         if (s == null) return;
 
@@ -87,11 +88,11 @@ public class AnalyticsProcessingJobs {
         );
     }
 
-    public void clear(String jobId) {
+    public synchronized void clear(String jobId) {
         jobs.remove(jobId);
     }
 
-    public void update(String jobId, int percent, String currentFile) {
+    public synchronized void update(String jobId, int percent, String currentFile) {
         JobState s = jobs.get(jobId);
         if (s == null) return;
         if (s.getState() == ProcessingStatusDTO.State.CANCELED) return;
@@ -100,7 +101,7 @@ public class AnalyticsProcessingJobs {
         s.getPercent().set(Math.max(0, Math.min(100, percent)));
     }
 
-    public void fail(String jobId, String message) {
+    public synchronized void fail(String jobId, String message) {
         JobState s = jobs.get(jobId);
         if (s == null) return;
         if (s.getState() == ProcessingStatusDTO.State.CANCELED) return;
@@ -110,13 +111,13 @@ public class AnalyticsProcessingJobs {
         s.getPercent().set(Math.max(s.getPercent().get(), 0));
     }
 
-    public void complete(String jobId, List<AnalyticsResponseDTO> results) {
+    public synchronized void complete(String jobId, List<AnalyticsResponseDTO> results) {
         JobState s = jobs.get(jobId);
         if (s == null) return;
         if (s.getState() == ProcessingStatusDTO.State.CANCELED) return;
 
-        s.setState(ProcessingStatusDTO.State.DONE);
         s.setResults(results);
+        s.setState(ProcessingStatusDTO.State.DONE);
         s.getPercent().set(100);
         s.setCurrentFile(null);
     }

@@ -57,7 +57,7 @@ public class DatasetElementExtractionService {
         List<DatasetElementDTO> elements = new ArrayList<>();
         for (Map.Entry<String, ColumnAccumulator> entry : byColumn.entrySet()) {
             String column = entry.getKey() == null ? "" : entry.getKey().trim();
-            if (column.isEmpty() || entry.getValue().nonEmptyCount <= MIN_DISCLOSURE_COUNT) continue;
+            if (column.isEmpty() || entry.getValue().nonEmptyCount <= MIN_DISCLOSURE_COUNT || !entry.getValue().permittedCategories()) continue;
             elements.add(new DatasetElementDTO(column, entry.getValue().toElementValues()));
         }
 
@@ -103,6 +103,11 @@ public class DatasetElementExtractionService {
 
             categoricalCounts.merge(value, 1, Integer::sum);
             totalTextLength += value.length();
+        }
+
+        boolean permittedCategories() {
+            return allNumeric || allDate || looksLikeNaturalLanguage()
+                    || categoricalCounts.values().stream().allMatch(count -> count > MIN_DISCLOSURE_COUNT);
         }
 
         List<String> toElementValues() {

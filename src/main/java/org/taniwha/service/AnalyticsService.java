@@ -3,15 +3,20 @@ package org.taniwha.service;
 import org.apache.commons.math3.util.Pair;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 import org.taniwha.dto.AnalyticsResponseDTO;
 import org.taniwha.dto.FileFilters;
 import org.taniwha.service.jobs.AnalyticsProcessingJobs;
+import org.taniwha.service.jobs.DiscoveryJobRunner;
 import org.taniwha.statistics.*;
 import org.taniwha.util.AggregateCalculator;
+import org.taniwha.util.AggregateDisclosure;
 import org.taniwha.util.DateUtil;
+import org.taniwha.privacy.DiscoveryDisclosureService;
+import org.taniwha.privacy.DisclosureObservation;
+import org.taniwha.privacy.DiscoveryQueryLedger;
 import org.taniwha.util.NumberUtil;
+import org.taniwha.util.FeatureTypeOverrides;
 
 import jakarta.annotation.PreDestroy;
 import java.io.BufferedInputStream;
@@ -30,6 +35,7 @@ import java.util.*;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Function;
+import java.util.function.LongConsumer;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
@@ -48,7 +54,7 @@ public class AnalyticsService {
     private static final String BIN_RANGES = "binRanges";
     private static final String NO_DATA_FOUND_MSG = "No data found in file: ";
     private static final int MIN_RECORDS_FOR_UNIQUE_FILTER = 10;
-    private static final int MIN_DISCLOSURE_COUNT = 5;
+    private static final int MIN_DISCLOSURE_COUNT = AggregateDisclosure.MIN_COUNT - 1;
     private static final String SMALL_FEATURE_SUPPRESSION_REASON =
             "Suppressed for privacy: 5 or fewer observations";
     private static final String SMALL_CELL_SUPPRESSION_REASON =
@@ -60,8 +66,9 @@ public class AnalyticsService {
     private static final Pattern XLSX_DIMENSION_LAST_ROW =
             Pattern.compile("dimension[^>]*ref=\"[A-Z]+\\d+:[A-Z]+(\\d+)\"");
 
-    private final AggregateCalculator calculator = new AggregateCalculator();
+    private final AggregateCalculator calculator = new AggregateCalculator(MIN_DISCLOSURE_COUNT + 1);
     private final DataProcessingService dataProcessingService;
+    private final DiscoveryDisclosureService disclosure;
     private final FileService fileService;
     private final AnalyticsProcessingJobs jobs;
     private final ExecutorService discoveryJobExecutor;
@@ -70,10 +77,11 @@ public class AnalyticsService {
 
     public AnalyticsService(DataProcessingService dataProcessingService,
                             FileService fileService,
-                            AnalyticsProcessingJobs jobs) {
+                            AnalyticsProcessingJobs jobs, DiscoveryDisclosureService disclosure) {
         this.dataProcessingService = dataProcessingService;
         this.fileService = fileService;
         this.jobs = jobs;
+        this.disclosure = disclosure;
         // Use a thread factory with meaningful thread names for debugging
         AtomicLong threadCounter = new AtomicLong(0);
         ThreadFactory threadFactory = r -> {
@@ -82,7 +90,8 @@ public class AnalyticsService {
             t.setDaemon(true);
             return t;
         };
-        this.discoveryJobExecutor = Executors.newCachedThreadPool(threadFactory);
+        this.discoveryJobExecutor = new ThreadPoolExecutor(2, 2, 0L, TimeUnit.MILLISECONDS,
+                new ArrayBlockingQueue<>(32), threadFactory, new ThreadPoolExecutor.AbortPolicy());
     }
 
     @PreDestroy
@@ -115,39 +124,31 @@ public class AnalyticsService {
             }
             return false;
         } catch (Exception e) {
-            // If detection fails, do NOT force progress mode (keep old behavior).
-            logger.warn("Huge detection failed; falling back to normal processing: {}", e.getMessage());
+            // A failed estimate does not prevent profiling the file.
+            logger.warn("Huge detection failed; falling back to normal processing");
             return false;
         }
     }
 
     /** Starts async processing and updates job progress via AnalyticsProcessingJobs. */
     public void startDiscoveryJob(String jobId, List<String> fileNames) {
-        Future<?> future = discoveryJobExecutor.submit(() -> {
-            try {
-                List<AnalyticsResponseDTO> results = processDatasetsOnDiskWithProgress(jobId, fileNames);
-                if (!jobs.isCanceled(jobId)) {
-                    jobs.complete(jobId, results);
-                }
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-                logger.info("Discovery async job interrupted jobId={}", jobId);
-                jobs.cancel(jobId, "Discovery canceled because the user left the page");
-            } catch (CancellationException e) {
-                logger.info("Discovery async job canceled jobId={}", jobId);
-                jobs.cancel(jobId, "Discovery canceled because the user left the page");
-            } catch (Exception e) {
-                logger.error("Discovery async job failed jobId={}", jobId, e);
-                if (!jobs.isCanceled(jobId)) {
-                    jobs.fail(jobId, "Error processing files: " +
-                            (e.getMessage() == null ? "Unknown error" : e.getMessage()));
-                }
-            }
-        });
-
-        jobs.attachFuture(jobId, future);
+        DiscoveryJobRunner.submit(jobId, discoveryJobExecutor, jobs, () -> processDatasetsOnDiskWithProgress(jobId, fileNames));
     }
 
+    public void startFilteredDiscoveryJob(String jobId, List<FileFilters> requests) {
+        List<FileFilters> files = List.copyOf(requests);
+        DiscoveryJobRunner.submit(jobId, discoveryJobExecutor, jobs, () -> {
+            List<AnalyticsResponseDTO> results = new ArrayList<>();
+            for (int index = 0; index < files.size(); index++) {
+                ensureJobActive(jobId);
+                FileFilters file = files.get(index);
+                jobs.update(jobId, percent(index, files.size()), file.getFileName());
+                results.add(filterDataByName(file.getFileName(), file.getFilters(), file.getFeatureTypes()));
+            }
+            ensureJobActive(jobId);
+            return results;
+        });
+    }
     private void ensureJobActive(String jobId) throws InterruptedException {
         if (jobs.isCanceled(jobId) || Thread.currentThread().isInterrupted()) {
             throw new InterruptedException("Discovery job canceled");
@@ -219,7 +220,6 @@ public class AnalyticsService {
 
         logger.info("Async discovery job {} set to process {} file(s)", jobId, fileNames.size());
 
-        List<Path> paths = new ArrayList<>();
         List<Long> estRowsPerFile = new ArrayList<>();
         long totalEstRows = 0L;
 
@@ -227,7 +227,6 @@ public class AnalyticsService {
             ensureJobActive(jobId);
 
             Path p = Paths.get(fileService.getDatasetFilePath(fn));
-            paths.add(p);
 
             long est = Math.max(1L, estimateRowsFast(p));
             estRowsPerFile.add(est);
@@ -243,14 +242,12 @@ public class AnalyticsService {
             ensureJobActive(jobId);
 
             String filename = fileNames.get(i);
-            Path path = paths.get(i);
 
             jobs.update(jobId, percent(doneRowsSoFar, totalEstRows), filename);
 
             AnalyticsResponseDTO result = processSingleFileOnDiskWithProgress(
                     jobId,
                     filename,
-                    path,
                     doneRowsSoFar,
                     totalEstRows
             );
@@ -273,203 +270,42 @@ public class AnalyticsService {
                                           long processedInFile,
                                           long totalEstRows) {
         long globalDone = doneRowsBeforeFile + processedInFile;
-        jobs.update(jobId, percent(globalDone, totalEstRows), filename);
+        jobs.update(jobId, Math.min(99, percent(globalDone, totalEstRows)), filename);
     }
 
     private AnalyticsResponseDTO processSingleFileOnDiskWithProgress(String jobId,
                                                                      String filename,
-                                                                     Path path,
                                                                      long doneRowsBeforeFile,
                                                                      long totalEstRows)
             throws InterruptedException {
-
-        AnalyticsResponseDTO response = new AnalyticsResponseDTO();
-        response.setFileName(filename);
-
-        Map<String, List<Double>> continuousData = new ConcurrentHashMap<>();
-        Map<String, Map<String, Integer>> categoricalData = new ConcurrentHashMap<>();
-        Map<String, List<String>> dateData = new ConcurrentHashMap<>();
-        Map<String, Long> missingValueCounts = new ConcurrentHashMap<>();
-        List<OmittedFeatureStatistics> omittedFeatures = new CopyOnWriteArrayList<>();
-        Map<Pair<String, String>, Map<Pair<String, String>, Integer>> comboCounts = new ConcurrentHashMap<>();
-        Map<String, Map<String, Double>> forcedMapping = new ConcurrentHashMap<>();
-
         try {
-            final AtomicLong rows = new AtomicLong(0L);
-
-            dataProcessingService.streamRows(path, rowData -> {
-                if (jobs.isCanceled(jobId) || Thread.currentThread().isInterrupted()) {
-                    throw new CancellationException("Discovery job canceled");
-                }
-
-                long r = rows.incrementAndGet();
-
-                if ((r % 200L) == 0L) {
-                    updateJobProgressForFile(jobId, filename, doneRowsBeforeFile, r, totalEstRows);
-                }
-
-                processRecord(
-                        rowData,
-                        continuousData,
-                        categoricalData,
-                        dateData,
-                        missingValueCounts,
-                        Optional.empty(),
-                        Optional.empty(),
-                        comboCounts,
-                        forcedMapping
-                );
+            return profileDataset(filename, null, Map.of(), rows -> {
+                if (jobs.isCanceled(jobId)) throw new CancellationException("Discovery job canceled");
+                if (rows % 200 == 0)
+                    updateJobProgressForFile(jobId, filename, doneRowsBeforeFile, rows, totalEstRows);
             });
-
-            if (jobs.isCanceled(jobId) || Thread.currentThread().isInterrupted()) {
-                throw new InterruptedException("Discovery job canceled");
-            }
-
-            updateJobProgressForFile(jobId, filename, doneRowsBeforeFile, rows.get(), totalEstRows);
-
-            long totalRows = rows.get();
-
-            if (totalRows == 0) {
-                response.setMessage(NO_DATA_FOUND_MSG + filename);
-                return response;
-            }
-
-            suppressSmallFeatures(continuousData, categoricalData, dateData, omittedFeatures);
-            filterCategoricalData(categoricalData, omittedFeatures, totalRows);
-
-            response.setContinuousFeatures(processContinuousData(continuousData, missingValueCounts, totalRows));
-            response.setCategoricalFeatures(processCategoricalData(categoricalData, missingValueCounts, totalRows));
-            response.setDateFeatures(processDateData(dateData, missingValueCounts, totalRows));
-            response.setOmittedFeatures(omittedFeatures);
-
-            response.setCovariances(calculator.calculateCovariances(continuousData));
-            response.setPearsonCorrelations(calculator.calculatePearsonCorrelations(continuousData));
-            response.setSpearmanCorrelations(calculator.calculateSpearmanCorrelations(continuousData));
-            response.setChiSquareTest(calculator.calculateChiSquaredTest(categoricalData, comboCounts));
-
-            response.setMessage("File processed successfully: " + filename);
-            return response;
-
-        } catch (CancellationException e) {
-            logger.info("Processing canceled for file {}", filename);
+        } catch (CancellationException canceled) {
             throw new InterruptedException("Discovery job canceled");
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            throw e;
-        } catch (Exception e) {
-            logger.error("Error processing file {}", filename, e);
-            response.setMessage("Error processing file " + filename + ": " + e.getMessage());
-            return response;
         }
     }
 
-    @Async
-    public CompletableFuture<AnalyticsResponseDTO> processSingleFileOnDisk(String filename) {
-        AnalyticsResponseDTO response = new AnalyticsResponseDTO();
-        response.setFileName(filename);
-
-        Map<String, List<Double>> continuousData = new ConcurrentHashMap<>();
-        Map<String, Map<String, Integer>> categoricalData = new ConcurrentHashMap<>();
-        Map<String, List<String>> dateData = new ConcurrentHashMap<>();
-        Map<String, Long> missingValueCounts = new ConcurrentHashMap<>();
-        List<OmittedFeatureStatistics> omittedFeatures = new CopyOnWriteArrayList<>();
-        Map<Pair<String, String>, Map<Pair<String, String>, Integer>> comboCounts = new ConcurrentHashMap<>();
-        Map<String, Map<String, Double>> forcedMapping = new ConcurrentHashMap<>();
-
-        try {
-            Path path = Paths.get(fileService.getDatasetFilePath(filename));
-            AtomicLong rows = new AtomicLong(0L);
-            dataProcessingService.streamRows(path, rowData -> {
-                rows.incrementAndGet();
-                processRecord(
-                        rowData,
-                        continuousData,
-                        categoricalData,
-                        dateData,
-                        missingValueCounts,
-                        Optional.empty(),
-                        Optional.empty(),
-                        comboCounts,
-                        forcedMapping
-                );
-            });
-
-            long totalRows = rows.get();
-            if (totalRows == 0) {
-                response.setMessage(NO_DATA_FOUND_MSG + filename);
-                return CompletableFuture.completedFuture(response);
-            }
-
-            suppressSmallFeatures(continuousData, categoricalData, dateData, omittedFeatures);
-            filterCategoricalData(categoricalData, omittedFeatures, totalRows);
-
-            response.setContinuousFeatures(processContinuousData(continuousData, missingValueCounts, totalRows));
-            response.setCategoricalFeatures(processCategoricalData(categoricalData, missingValueCounts, totalRows));
-            response.setDateFeatures(processDateData(dateData, missingValueCounts, totalRows));
-            response.setOmittedFeatures(omittedFeatures);
-
-            response.setCovariances(calculator.calculateCovariances(continuousData));
-            response.setPearsonCorrelations(calculator.calculatePearsonCorrelations(continuousData));
-            response.setSpearmanCorrelations(calculator.calculateSpearmanCorrelations(continuousData));
-            response.setChiSquareTest(calculator.calculateChiSquaredTest(categoricalData, comboCounts));
-
-            response.setMessage("File processed successfully: " + filename);
-        } catch (Exception e) {
-            logger.error("Error processing file {}", filename, e);
-            response.setMessage("Error processing file " + filename + ": " + e.getMessage());
-        }
-
-        return CompletableFuture.completedFuture(response);
+    public AnalyticsResponseDTO processSingleFileOnDisk(String filename) {
+        return filterDataByName(filename, null, Map.of());
     }
 
     public List<AnalyticsResponseDTO> processDatasetsOnDisk(List<String> fileNames) {
-        logger.info("Set to process {} file(s)", fileNames.size());
-        List<CompletableFuture<AnalyticsResponseDTO>> futures = fileNames.stream()
-                .map(this::processSingleFileOnDisk).toList();
-
-        List<AnalyticsResponseDTO> results = new ArrayList<>();
-        for (CompletableFuture<AnalyticsResponseDTO> future : futures) {
-            try {
-                results.add(future.get());
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-                logger.error("Thread was interrupted", e);
-                results.add(new AnalyticsResponseDTO("Thread interrupted while processing file."));
-            } catch (ExecutionException e) {
-                logger.error("Execution error in processing file", e);
-                results.add(new AnalyticsResponseDTO("Error: " + e.getMessage()));
-            }
-        }
-        logger.info("All files processed, returning {} results", results.size());
-        return results;
+        return fileNames.stream().map(this::processSingleFileOnDisk).toList();
     }
 
-    @Async
-    public CompletableFuture<AnalyticsResponseDTO> recalculateFeatureAsTypeFromDisk(String fileName, String featureName, String featureType) {
-        AnalyticsResponseDTO response = new AnalyticsResponseDTO();
-        response.setFileName(fileName);
-        Map<Pair<String, String>, Map<Pair<String, String>, Integer>> categoryCombinationCounts = new ConcurrentHashMap<>();
-
-        try {
-            String fullPath = fileService.getDatasetFilePath(fileName);
-            List<Map<String, String>> records = dataProcessingService.extractDataFromPath(Paths.get(fullPath));
-            if (records.isEmpty()) {
-                response.setMessage(NO_DATA_FOUND_MSG + fileName);
-                return CompletableFuture.completedFuture(response);
-            }
-            processData(records, Optional.of(featureName), Optional.of(featureType), response, categoryCombinationCounts);
-            response.setMessage(SUCCESS_MSG);
-        } catch (Exception e) {
-            String errMsg = e.getMessage() != null ? e.getMessage() : "Unknown error";
-            if (errMsg.toLowerCase().contains("valuemap") && errMsg.toLowerCase().contains("null"))
-                response.setMessage("This field cannot be converted to categorical.");
-            else
-                response.setMessage("Error processing file: " + errMsg);
-        }
-        return CompletableFuture.completedFuture(response);
+    private AnalyticsResponseDTO blockedResponse(String fileName, Exception failure) {
+        AnalyticsResponseDTO safe = new AnalyticsResponseDTO(failure instanceof DiscoveryQueryLedger.Blocked
+                ? DiscoveryQueryLedger.BLOCKED : failure instanceof InvalidNumericConversion
+                ? "This field cannot be converted to continuous without an explicit numerical mapping." : "Error processing statistics.");
+        safe.setFileName(fileName);
+        return safe;
     }
 
-    // Existing logic below (unchanged)
+    private static final class InvalidNumericConversion extends RuntimeException {}
 
     private void filterCategoricalData(Map<String, Map<String, Integer>> categoricalData,
                                        List<OmittedFeatureStatistics> omittedFeatures,
@@ -553,20 +389,10 @@ public class AnalyticsService {
         return true;
     }
 
-    private String determineFeatureType(Optional<String> overrideFeatureName,
-                                        Optional<String> overrideFeatureType,
-                                        String column,
-                                        String value) {
+    private String determineFeatureType(String override, String value) {
         boolean isDate = DateUtil.parseDate(value).isPresent();
-        if (overrideFeatureName.isPresent()) {
-            String originalName = getOriginalFeatureName(overrideFeatureName.get());
-            if (column.equals(originalName)) {
-                if (isDate && !overrideFeatureType.orElse("unknown").equalsIgnoreCase(CATEGORICAL_TYPE))
-                    return DATE_TYPE;
-                return overrideFeatureType.orElse("unknown").toLowerCase();
-            }
-        }
-        if (isDate) return DATE_TYPE;
+        if (isDate && !CATEGORICAL_TYPE.equals(override)) return DATE_TYPE;
+        if (override != null) return override;
         if (value.matches("-?\\d+([.,]\\d+)?")) return CONTINUOUS_TYPE;
         return CATEGORICAL_TYPE;
     }
@@ -586,11 +412,11 @@ public class AnalyticsService {
             Map.Entry<String, Integer> modeEntry = sortedEntries.get(0);
             String mode = modeEntry.getKey();
             int modeFrequency = modeEntry.getValue();
-            double modePercentage = (double) modeFrequency / totalRecords * 100;
+            double modePercentage = (double) modeFrequency / (totalRecords - missingValues) * 100;
 
             String secondMode = sortedEntries.size() > 1 ? sortedEntries.get(1).getKey() : null;
             Integer secondModeFrequency = secondMode != null ? valueMap.get(secondMode) : null;
-            Double secondModePercentage = secondModeFrequency != null ? (double) secondModeFrequency / totalRecords * 100 : null;
+            Double secondModePercentage = secondModeFrequency != null ? (double) secondModeFrequency / (totalRecords - missingValues) * 100 : null;
 
             statisticsList.add(new CategoricalFeatureStatistics(
                     key,
@@ -615,27 +441,32 @@ public class AnalyticsService {
                                                           long totalRecords) {
         List<FeatureStatistics> statisticsList = new ArrayList<>();
         continuousData.forEach((key, valueList) -> {
-            List<Double> outliers = suppressSmallResultSet(identifyOutliers(valueList));
+            // Discovery responses contain summaries only; do not return individual outlier values.
+            List<Double> outliers = List.of();
             double mean = valueList.stream().mapToDouble(Double::doubleValue).average().orElse(Double.NaN);
             double stddev = Math.sqrt(valueList.stream().mapToDouble(v -> Math.pow(v - mean, 2)).sum() / valueList.size());
             long missingValues = missingValueCounts.getOrDefault(key, 0L);
             double percentMissing = (double) missingValues / totalRecords * 100;
-            double min = Collections.min(valueList);
-            double max = Collections.max(valueList);
-            double q1 = getPercentile(valueList, 25);
-            double median = getPercentile(valueList, 50);
-            double q3 = getPercentile(valueList, 75);
+            List<Double> sorted = new ArrayList<>(valueList);
+            Collections.sort(sorted);
+            double min = sorted.get(0);
+            double max = sorted.get(sorted.size() - 1);
+            double q1 = percentileFromSorted(sorted, 25);
+            double median = percentileFromSorted(sorted, 50);
+            double q3 = percentileFromSorted(sorted, 75);
 
-            Map<String, Object> histogramInfo = generateHistogram(valueList);
+            Map<String, Object> histogramInfo = generateHistogram(valueList, sorted);
             @SuppressWarnings("unchecked")
             List<Double> bins = (List<Double>) histogramInfo.get(BINS);
             @SuppressWarnings("unchecked")
             List<String> binRanges = (List<String>) histogramInfo.get(BIN_RANGES);
 
-            statisticsList.add(new ContinuousFeatureStatistics(
+            ContinuousFeatureStatistics feature = new ContinuousFeatureStatistics(
                     key, valueList.size(), percentMissing, missingValues, valueList.size(),
-                    min, max, mean, stddev, q1, median, q3, bins, binRanges, outliers
-            ));
+                    min, max, mean, stddev, q1, median, q3, bins, binRanges, outliers);
+            feature.setValueCounts(AggregateDisclosure.numericFrequencies(valueList));
+            feature.setHistogramBinWidth(((Number) histogramInfo.getOrDefault("binWidth", 0.0)).doubleValue());
+            statisticsList.add(feature);
         });
         return statisticsList;
     }
@@ -647,7 +478,8 @@ public class AnalyticsService {
         dateData.forEach((key, dateStringList) -> {
             List<LocalDate> dates = dateStringList.stream().map(LocalDate::parse).toList();
             List<Double> dateValues = dates.stream().mapToDouble(LocalDate::toEpochDay).boxed().toList();
-            List<Double> outliers = identifyOutliers(dateValues);
+            List<Double> sortedDates = new ArrayList<>(dateValues);
+            Collections.sort(sortedDates);
 
             LocalDate earliestDate = dates.stream().min(LocalDate::compareTo).orElse(null);
             LocalDate latestDate = dates.stream().max(LocalDate::compareTo).orElse(null);
@@ -658,20 +490,18 @@ public class AnalyticsService {
             double meanEpoch = dateValues.stream().mapToDouble(v -> v).average().orElse(Double.NaN);
             LocalDate meanDate = LocalDate.ofEpochDay((long) meanEpoch);
 
-            double medianEpoch = getPercentile(dateValues, 50);
+            double medianEpoch = percentileFromSorted(sortedDates, 50);
             LocalDate medianDate = LocalDate.ofEpochDay((long) medianEpoch);
 
-            double q1Epoch = getPercentile(dateValues, 25);
+            double q1Epoch = percentileFromSorted(sortedDates, 25);
             LocalDate q1Date = LocalDate.ofEpochDay((long) q1Epoch);
 
-            double q3Epoch = getPercentile(dateValues, 75);
+            double q3Epoch = percentileFromSorted(sortedDates, 75);
             LocalDate q3Date = LocalDate.ofEpochDay((long) q3Epoch);
 
             double stdDevEpoch = Math.sqrt(dateValues.stream().mapToDouble(v -> Math.pow(v - meanEpoch, 2)).sum() / dateValues.size());
 
-            List<String> outlierDates = suppressSmallResultSet(outliers.stream()
-                    .map(outlier -> LocalDate.ofEpochDay(outlier.longValue()).format(DateTimeFormatter.ISO_LOCAL_DATE))
-                    .toList());
+            List<String> outlierDates = List.of();
 
             DateTimeFormatter formatter = DateTimeFormatter.ISO_LOCAL_DATE;
 
@@ -694,7 +524,7 @@ public class AnalyticsService {
         return dateStatisticsList;
     }
 
-    private Map<String, Object> generateHistogram(List<Double> data) {
+    private Map<String, Object> generateHistogram(List<Double> data, List<Double> sorted) {
         Map<String, Object> histogramInfo = new HashMap<>();
         if (data.isEmpty()) {
             histogramInfo.put(BINS, Collections.emptyList());
@@ -702,8 +532,8 @@ public class AnalyticsService {
             return histogramInfo;
         }
 
-        double min = Collections.min(data);
-        double max = Collections.max(data);
+        double min = sorted.get(0);
+        double max = sorted.get(sorted.size() - 1);
         if (max == min) {
             histogramInfo.put(BINS, Collections.singletonList((double) data.size()));
             histogramInfo.put(BIN_RANGES, Collections.singletonList(String.format(Locale.US, "[%f - %f]", min, max)));
@@ -711,8 +541,8 @@ public class AnalyticsService {
         }
 
         double range = max - min;
-        double q1 = getPercentile(data, 25);
-        double q3 = getPercentile(data, 75);
+        double q1 = percentileFromSorted(sorted, 25);
+        double q3 = percentileFromSorted(sorted, 75);
         double iqr = q3 - q1;
 
         double binWidth = 2.0 * iqr / Math.cbrt(data.size());
@@ -739,226 +569,207 @@ public class AnalyticsService {
             binRanges.add(String.format(Locale.US, "[%s - %s]", df.format(binMin), df.format(binMax)));
         }
 
+        histogramInfo.put("binWidth", binWidth);
         histogramInfo.put(BINS, bins);
         histogramInfo.put(BIN_RANGES, binRanges);
         return histogramInfo;
     }
 
-    private double getPercentile(List<Double> data, double percentile) {
-        if (data.isEmpty()) return 0;
-        List<Double> sortedData = new ArrayList<>(data);
-        Collections.sort(sortedData);
-        int index = (int) ((percentile / 100.0) * sortedData.size());
-        return sortedData.get(Math.min(index, sortedData.size() - 1));
+    private double percentileFromSorted(List<Double> sortedData, double percentile) {
+        if (sortedData.isEmpty()) return 0;
+        // Linear interpolation (R7), including the average of the middle two
+        // observations for an even-sized cohort. Shared by quartiles/histograms.
+        double position = (sortedData.size() - 1) * (percentile / 100.0);
+        int lower = (int) Math.floor(position), upper = (int) Math.ceil(position);
+        if (lower == upper) return sortedData.get(lower);
+        double weight = position - lower;
+        return sortedData.get(lower) * (1 - weight) + sortedData.get(upper) * weight;
     }
 
-    private List<Double> identifyOutliers(List<Double> data) {
-        List<Double> sorted = new ArrayList<>(data);
-        Collections.sort(sorted);
-        double q1 = getPercentile(sorted, 25);
-        double q3 = getPercentile(sorted, 75);
-        double iqr = q3 - q1;
-        double lowerBound = q1 - 1.5 * iqr;
-        double upperBound = q3 + 1.5 * iqr;
-        return data.stream().filter(x -> x < lowerBound || x > upperBound).toList();
+    public List<AnalyticsResponseDTO> filterMultipleFilesByName(List<FileFilters> requests) {
+        return requests.stream().map(file -> filterDataByName(
+                file.getFileName(), file.getFilters(), file.getFeatureTypes())).toList();
     }
 
-    private <T> List<T> suppressSmallResultSet(List<T> values) {
-        return values.size() <= MIN_DISCLOSURE_COUNT ? Collections.emptyList() : values;
+    public AnalyticsResponseDTO filterDataByName(String fileName, Map<String, Object> filters) {
+        return filterDataByName(fileName, filters, Map.of());
     }
 
-    public List<AnalyticsResponseDTO> filterMultipleFilesByName(List<FileFilters> fileFiltersList) {
-        List<CompletableFuture<AnalyticsResponseDTO>> futures = new ArrayList<>();
-
-        for (FileFilters ff : fileFiltersList) {
-            String fileName = ff.getFileName();
-            Map<String, Object> filters = ff.getFilters();
-            if (filters == null) futures.add(processSingleFileOnDisk(fileName));
-            else futures.add(filterDataByName(fileName, filters));
-        }
-
-        List<AnalyticsResponseDTO> results = new ArrayList<>();
-        for (CompletableFuture<AnalyticsResponseDTO> future : futures) {
-            try {
-                results.add(future.get());
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-                logger.error("Thread was interrupted while filtering multiple files", e);
-                results.add(new AnalyticsResponseDTO("Thread interrupted while filtering multiple files."));
-            } catch (ExecutionException e) {
-                logger.error("Execution error while filtering multiple files", e);
-                results.add(new AnalyticsResponseDTO("Error: " + e.getMessage()));
-            }
-        }
-        return results;
+    public AnalyticsResponseDTO filterDataByName(String fileName, Map<String, Object> filters,
+                                                Map<String, String> featureTypes) {
+        return profileDataset(fileName, filters, featureTypes, rows -> {});
     }
 
-    @Async
-    public CompletableFuture<AnalyticsResponseDTO> filterDataByName(String fileName, Map<String, Object> filters) {
+    private AnalyticsResponseDTO profileDataset(String fileName, Map<String, Object> filters,
+                                                Map<String, String> featureTypes, LongConsumer progress) {
         AnalyticsResponseDTO response = new AnalyticsResponseDTO();
         response.setFileName(fileName);
-        Map<Pair<String, String>, Map<Pair<String, String>, Integer>> categoryCombinationCounts = new ConcurrentHashMap<>();
-
         try {
-            String fullPath = fileService.getDatasetFilePath(fileName);
-            List<Map<String, String>> records = dataProcessingService.extractFilteredDataFromPath(Paths.get(fullPath), filters);
-
-            if (records.isEmpty()) {
-                response.setMessage("No records match the provided filters for file: " + fileName);
-                return CompletableFuture.completedFuture(response);
+            Map<String, String> overrides = FeatureTypeOverrides.validate(featureTypes);
+            response.setFeatureTypeSummaryVersion(1);
+            response.setFeatureTypes(overrides);
+            Path path = Paths.get(fileService.getDatasetFilePath(fileName));
+            DisclosureObservation observation = disclosure.begin(path);
+            DiscoveryAccumulator buffer = new DiscoveryAccumulator();
+            long[] scanned = {0};
+            dataProcessingService.streamRows(path, row -> {
+                if (Thread.currentThread().isInterrupted()) throw new CancellationException("Discovery interrupted");
+                progress.accept(++scanned[0]);
+                boolean included = filters == null || dataProcessingService.matchesDiscoveryFilters(row, filters);
+                observation.row(row, included);
+                if (included) accumulateRecord(row, buffer, overrides, observation);
+            });
+            if (Thread.currentThread().isInterrupted()) throw new CancellationException("Discovery interrupted");
+            progress.accept(scanned[0]);
+            if (buffer.rows == 0) {
+                response.setMessage(filters == null ? NO_DATA_FOUND_MSG + fileName
+                        : "No records match the provided filters for file: " + fileName);
+            } else {
+                completeProfile(buffer, response, observation);
             }
-
-            processData(records, Optional.empty(), Optional.empty(), response, categoryCombinationCounts);
-            response.setMessage(SUCCESS_MSG);
-        } catch (Exception e) {
-            logger.error("Error filtering file by name {}", fileName, e);
-            response.setMessage("Error filtering file " + fileName + ": " + e.getMessage());
+            return disclosure.release(observation, response);
+        } catch (CancellationException canceled) {
+            throw canceled;
+        } catch (Exception failure) {
+            logger.warn("Discovery statistics processing failed");
+            return blockedResponse(fileName, failure);
         }
-        return CompletableFuture.completedFuture(response);
     }
 
-    private String getOriginalFeatureName(String featureName) {
-        if (featureName == null) return null;
-        int idx = featureName.indexOf(" (");
-        return idx != -1 ? featureName.substring(0, idx) : featureName;
+    private void accumulateRecord(Map<String, String> row, DiscoveryAccumulator buffer,
+                                  Map<String, String> overrides, DisclosureObservation observation) {
+        buffer.rows++;
+        observation.numeric(processRecord(row, buffer.continuous, buffer.categorical, buffer.dates, buffer.missing,
+                overrides, buffer.combinations));
     }
 
-    private void processData(List<Map<String, String>> records,
-                             Optional<String> overrideFeatureName,
-                             Optional<String> overrideFeatureType,
-                             AnalyticsResponseDTO response,
-                             Map<Pair<String, String>, Map<Pair<String, String>, Integer>> categoryCombinationCounts) {
-
-        Map<String, Map<String, Double>> forcedMapping = new ConcurrentHashMap<>();
-
-        Map<String, List<Double>> continuousData = new ConcurrentHashMap<>();
-        Map<String, Map<String, Integer>> categoricalData = new ConcurrentHashMap<>();
-        Map<String, List<String>> dateData = new ConcurrentHashMap<>();
-        Map<String, Long> missingValueCounts = new ConcurrentHashMap<>();
-        List<OmittedFeatureStatistics> omittedFeatures = new CopyOnWriteArrayList<>();
-
-        records.forEach(rowData ->
-                processRecord(rowData, continuousData, categoricalData, dateData, missingValueCounts,
-                        overrideFeatureName, overrideFeatureType, categoryCombinationCounts, forcedMapping)
-        );
-
-        long totalRecords = records.size();
+    private void completeProfile(DiscoveryAccumulator buffer, AnalyticsResponseDTO response, DisclosureObservation observation) {
+        Map<String, List<Double>> continuousData = buffer.continuous;
+        Map<String, Map<String, Integer>> categoricalData = buffer.categorical;
+        Map<String, List<String>> dateData = buffer.dates;
+        Map<String, Long> missingValueCounts = buffer.missing;
+        List<OmittedFeatureStatistics> omittedFeatures = buffer.omitted;
+        long totalRecords = buffer.rows;
+        // Retain all-missing column identities so automatic mappings cannot
+        // silently exclude a selected site's unavailable observations.
+        for (String column : missingValueCounts.keySet()) {
+            if (!continuousData.containsKey(column) && !categoricalData.containsKey(column) && !dateData.containsKey(column))
+                omittedFeatures.add(new OmittedFeatureStatistics(column, 0, 0, 0, SMALL_FEATURE_SUPPRESSION_REASON));
+        }
         suppressSmallFeatures(continuousData, categoricalData, dateData, omittedFeatures);
-        filterCategoricalData(categoricalData, omittedFeatures, records.size());
+        filterCategoricalData(categoricalData, omittedFeatures, totalRecords);
 
-        if (overrideFeatureName.isPresent() && overrideFeatureType.isPresent()) {
-            String normalizedKey = getOriginalFeatureName(overrideFeatureName.get());
-            String type = overrideFeatureType.get().toLowerCase();
-            logger.debug("processData override branch: normalizedKey = {}, type = {}", normalizedKey, type);
-
-            if (type.equals(CONTINUOUS_TYPE)) {
-                if (dateData.containsKey(normalizedKey)) {
-                    response.setDateFeatures(processDateData(
-                            Collections.singletonMap(normalizedKey, dateData.get(normalizedKey)),
-                            missingValueCounts, totalRecords));
-                } else if (continuousData.containsKey(normalizedKey)) {
-                    response.setContinuousFeatures(processContinuousData(
-                            Collections.singletonMap(normalizedKey, continuousData.get(normalizedKey)),
-                            missingValueCounts, totalRecords));
-                }
-            } else if (type.equals(CATEGORICAL_TYPE) && categoricalData.containsKey(normalizedKey)) {
-                response.setCategoricalFeatures(processCategoricalData(
-                        Collections.singletonMap(normalizedKey, categoricalData.get(normalizedKey)),
-                        missingValueCounts, totalRecords));
-            }
-        } else {
-            response.setContinuousFeatures(processContinuousData(continuousData, missingValueCounts, totalRecords));
-            response.setCategoricalFeatures(processCategoricalData(categoricalData, missingValueCounts, totalRecords));
-            response.setDateFeatures(processDateData(dateData, missingValueCounts, totalRecords));
-        }
+        response.setContinuousFeatures(processContinuousData(continuousData, missingValueCounts, totalRecords));
+        response.setCategoricalFeatures(processCategoricalData(categoricalData, missingValueCounts, totalRecords));
+        response.setDateFeatures(processDateData(dateData, missingValueCounts, totalRecords));
 
         response.setOmittedFeatures(omittedFeatures);
 
-        response.setCovariances(calculator.calculateCovariances(continuousData));
-        response.setPearsonCorrelations(calculator.calculatePearsonCorrelations(continuousData));
-        response.setSpearmanCorrelations(calculator.calculateSpearmanCorrelations(continuousData));
-        response.setChiSquareTest(calculator.calculateChiSquaredTest(categoricalData, categoryCombinationCounts));
+        Set<String> numericColumns = new HashSet<>(continuousData.keySet());
+        numericColumns.addAll(dateData.keySet());
+        setNumericRelationships(response, observation.numericColumns(numericColumns));
+        response.setChiSquareTest(calculator.calculateChiSquaredTest(categoricalData, buffer.combinations));
+        response.setCategoricalPairSummaries(calculator.categoricalPairSummaries(categoricalData, buffer.combinations));
 
         response.setMessage(SUCCESS_MSG);
     }
 
-    private void processRecord(Map<String, String> rowData,
+    private void setNumericRelationships(AnalyticsResponseDTO response, Map<String, List<Double>> alignedData) {
+        List<NumericPairSummary> summaries = calculator.numericPairSummaries(alignedData);
+        response.setNumericPairSummaries(summaries);
+        Map<String, Map<String, Double>> covariances = new HashMap<>(), correlations = new HashMap<>();
+        for (NumericPairSummary pair : summaries) {
+            if (pair.featureX().equals(pair.featureY())) continue;
+            putSymmetric(covariances, pair.featureX(), pair.featureY(), pair.crossMoment() / (pair.count() - 1));
+            double denominator = Math.sqrt(pair.m2X()) * Math.sqrt(pair.m2Y());
+            if (denominator > 0) putSymmetric(correlations, pair.featureX(), pair.featureY(),
+                    Math.max(-1, Math.min(1, pair.crossMoment() / denominator)));
+        }
+        response.setCovariances(covariances);
+        response.setPearsonCorrelations(correlations);
+        response.setSpearmanCorrelations(calculator.calculateSpearmanCorrelations(alignedData));
+    }
+
+    private void putSymmetric(Map<String, Map<String, Double>> matrix, String x, String y, double value) {
+        matrix.computeIfAbsent(x, ignored -> new HashMap<>()).put(y, value);
+        matrix.computeIfAbsent(y, ignored -> new HashMap<>()).put(x, value);
+    }
+
+    private Map<String, Double> processRecord(Map<String, String> rowData,
                                Map<String, List<Double>> continuousData,
                                Map<String, Map<String, Integer>> categoricalData,
-                               Map<String, List<String>> dateData,
-                               Map<String, Long> missingValueCounts,
-                               Optional<String> overrideFeatureName,
-                               Optional<String> overrideFeatureType,
-                               Map<Pair<String, String>, Map<Pair<String, String>, Integer>> categoryCombinationCounts,
-                               Map<String, Map<String, Double>> forcedMapping) {
+                               Map<String, List<String>> dateData, Map<String, Long> missingValueCounts,
+                               Map<String, String> overrides,
+                               Map<Pair<String, String>, Map<Pair<String, String>, Integer>> categoryCombinationCounts) {
 
+        Map<String, Double> numericRow = new HashMap<>();
         rowData.forEach((column, value) -> {
-            String effectiveColumn;
-            if (overrideFeatureName.isPresent() &&
-                    getOriginalFeatureName(overrideFeatureName.get()).equals(getOriginalFeatureName(column))) {
-                effectiveColumn = getOriginalFeatureName(column);
-            } else effectiveColumn = column;
+            String override = overrides.get(column);
 
             if (value == null || value.trim().isEmpty() || "NULL".equalsIgnoreCase(value.trim())) {
-                missingValueCounts.merge(effectiveColumn, 1L, Long::sum);
+                missingValueCounts.merge(column, 1L, Long::sum);
                 return;
             }
 
             String trimmedValue = value.trim();
-            String featureType = determineFeatureType(overrideFeatureName, overrideFeatureType, column, trimmedValue);
+            String featureType = determineFeatureType(override, trimmedValue);
 
             switch (featureType) {
                 case DATE_TYPE -> {
-                    DateUtil.parseDate(trimmedValue).ifPresent(parsedDate -> dateData
-                            .computeIfAbsent(effectiveColumn, k -> new CopyOnWriteArrayList<>())
-                            .add(parsedDate.format(DateTimeFormatter.ISO_LOCAL_DATE)));
-                    continuousData.remove(effectiveColumn);
-                    categoricalData.remove(effectiveColumn);
+                    DateUtil.parseDate(trimmedValue).ifPresent(parsedDate -> {
+                        dateData.computeIfAbsent(column, k -> new ArrayList<>())
+                                .add(parsedDate.format(DateTimeFormatter.ISO_LOCAL_DATE));
+                        numericRow.put(column, (double) parsedDate.toLocalDate().toEpochDay());
+                    });
+                    continuousData.remove(column);
+                    categoricalData.remove(column);
                 }
                 case CONTINUOUS_TYPE -> {
                     try {
                         double parsedNumber = NumberUtil.parseDouble(trimmedValue);
-                        continuousData.computeIfAbsent(effectiveColumn, k -> new CopyOnWriteArrayList<>()).add(parsedNumber);
+                        Double numericValue = parsedNumber;
+                        continuousData.computeIfAbsent(column, k -> new ArrayList<>()).add(numericValue);
+                        numericRow.put(column, numericValue);
                     } catch (NumberFormatException | ParseException e) {
-                        if (overrideFeatureType.isPresent() &&
-                                overrideFeatureType.get().equalsIgnoreCase(CONTINUOUS_TYPE)) {
-                            Map<String, Double> mapping = forcedMapping.computeIfAbsent(effectiveColumn, k -> new ConcurrentHashMap<>());
-                            Double numericValue = mapping.computeIfAbsent(trimmedValue, k -> mapping.size() + 1.0);
-                            continuousData.computeIfAbsent(effectiveColumn, k -> new CopyOnWriteArrayList<>()).add(numericValue);
+                        if (CONTINUOUS_TYPE.equals(override)) {
+                            // Encounter-order category codes differ across nodes and have no
+                            // valid numerical interpretation for moments or pooled relationships.
+                            throw new InvalidNumericConversion();
                         } else {
-                            logger.debug("Error parsing number from string: {}", trimmedValue);
+                            logger.debug("A numeric value could not be parsed");
                         }
                     }
-                    categoricalData.remove(effectiveColumn);
-                    dateData.remove(effectiveColumn);
+                    categoricalData.remove(column);
+                    dateData.remove(column);
                 }
                 case CATEGORICAL_TYPE -> {
-                    categoricalData.computeIfAbsent(effectiveColumn, k -> new ConcurrentHashMap<>())
+                    categoricalData.computeIfAbsent(column, k -> new HashMap<>())
                             .merge(trimmedValue, 1, Integer::sum);
-                    continuousData.remove(effectiveColumn);
-                    dateData.remove(effectiveColumn);
+                    continuousData.remove(column);
+                    dateData.remove(column);
                 }
                 default -> logger.error("Unsupported record type detected for column: {}", column);
             }
         });
 
-        List<String> categoricalColumns = new CopyOnWriteArrayList<>(categoricalData.keySet());
+        List<String> categoricalColumns = new ArrayList<>(categoricalData.keySet());
         for (int i = 0; i < categoricalColumns.size(); i++) {
             for (int j = i + 1; j < categoricalColumns.size(); j++) {
                 String col1 = categoricalColumns.get(i);
                 String col2 = categoricalColumns.get(j);
-                String val1 = rowData.getOrDefault(col1, "").trim();
-                String val2 = rowData.getOrDefault(col2, "").trim();
+                String val1 = Objects.toString(rowData.get(col1), "").trim();
+                String val2 = Objects.toString(rowData.get(col2), "").trim();
                 if (!val1.isEmpty() && !"NULL".equalsIgnoreCase(val1) &&
                         !val2.isEmpty() && !"NULL".equalsIgnoreCase(val2)) {
 
                     Pair<String, String> columnPair = new Pair<>(col1, col2);
                     Pair<String, String> valuePair = new Pair<>(val1, val2);
 
-                    categoryCombinationCounts.computeIfAbsent(columnPair, k -> new ConcurrentHashMap<>())
+                    categoryCombinationCounts.computeIfAbsent(columnPair, k -> new HashMap<>())
                             .merge(valuePair, 1, Integer::sum);
                 }
             }
         }
+        return numericRow;
     }
 }

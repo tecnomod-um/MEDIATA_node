@@ -3,7 +3,7 @@ package org.taniwha.service.semanticcde;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
-import java.nio.file.Files;
+import java.io.File;
 import java.nio.file.Path;
 import java.util.List;
 
@@ -16,22 +16,15 @@ class ExternalSemanticCdeProcessorClientTest {
 
     @Test
     void executeSupportsClasspathProcessorLaunch() throws Exception {
-        Path script = tempDir.resolve("fake-java.sh");
-        Path marker = tempDir.resolve("args.txt");
-        Path envMarker = tempDir.resolve("env.txt");
-        Files.writeString(script, """
-                #!/usr/bin/env bash
-                printf '%%s\\n' "$@" > "%s"
-                printf '%%s\\n' "$SEMANTIC_CDE_REPOSITORY_URL" > "%s"
-                """.formatted(marker, envMarker));
-        script.toFile().setExecutable(true);
-        script.toFile().setReadable(true);
+        String executable = System.getProperty("os.name").startsWith("Windows") ? "java.exe" : "java";
+        Path java = Path.of(System.getProperty("java.home"), "bin", executable);
+        Path classes = Path.of(FakeProcessor.class.getProtectionDomain().getCodeSource().getLocation().toURI());
 
         SemanticCdeProcessorProperties properties = new SemanticCdeProcessorProperties(
-                script.toString(),
+                java.toString(),
                 null,
-                marker + ":ignored-classpath",
-                "org.semanticor.SemanticorApplication",
+                classes + File.pathSeparator + "ignored-classpath",
+                FakeProcessor.class.getName(),
                 "https://semantics.inf.um.es/mediata/scde",
                 10
         );
@@ -45,13 +38,22 @@ class ExternalSemanticCdeProcessorClientTest {
         ));
 
         assertThat(result.success()).isTrue();
-        assertThat(Files.readString(marker))
-                .contains("-cp")
+        assertThat(result.log())
                 .contains("ignored-classpath")
-                .contains("org.semanticor.SemanticorApplication")
+                .contains(FakeProcessor.class.getName())
                 .contains("https://registry.example/scde-index/definition.ttl")
                 .contains("MAP-1,MAP-2");
-        assertThat(Files.readString(envMarker))
+        assertThat(result.log())
                 .contains("https://semantics.inf.um.es/mediata/scde");
+    }
+
+    /** Real Java subprocess fixture, so the launch contract is exercised on every OS. */
+    public static class FakeProcessor {
+        public static void main(String[] args) {
+            System.out.println(FakeProcessor.class.getName());
+            System.out.println(System.getProperty("java.class.path"));
+            System.out.println(String.join("\n", args));
+            System.out.println(System.getenv("SEMANTIC_CDE_REPOSITORY_URL"));
+        }
     }
 }

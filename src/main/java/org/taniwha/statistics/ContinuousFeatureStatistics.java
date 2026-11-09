@@ -14,9 +14,18 @@ public class ContinuousFeatureStatistics extends FeatureStatistics {
     private final double qrt1;
     private final double median;
     private final double qrt3;
-    private final List<Double> histogram;
-    private final List<String> binRanges;
+    private List<Double> histogram;
+    private List<String> binRanges;
+    @com.fasterxml.jackson.annotation.JsonIgnore
+    private double histogramBinWidth;
+    public void setHistogramBinWidth(double width) { this.histogramBinWidth = width; }
+    public void suppressHistogram() { histogram = List.of(); binRanges = List.of(); }
     private final List<Double> outliers;
+    private List<NumericValueCount> valueCounts = List.of();
+
+    public void setValueCounts(List<NumericValueCount> valueCounts) {
+        this.valueCounts = List.copyOf(valueCounts);
+    }
 
     public ContinuousFeatureStatistics(String featureName, long count, double percentMissing, long missingValuesCount, int cardinality, double min, double max, double mean, double stdDev, double qrt1, double median, double qrt3, List<Double> histogramBins, List<String> binRanges, List<Double> outliers) {
         super(featureName, count, percentMissing, missingValuesCount);

@@ -12,6 +12,8 @@ import org.taniwha.dto.AnalyticsResponseDTO;
 import org.taniwha.dto.FileFilters;
 import org.taniwha.dto.ProcessingStatusDTO;
 import org.taniwha.service.jobs.AnalyticsProcessingJobs;
+import org.taniwha.privacy.DiscoveryDisclosureService;
+import org.taniwha.privacy.DisclosureObservation;
 
 import java.io.IOException;
 import java.nio.file.Files;
@@ -22,7 +24,6 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.CompletableFuture;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.*;
@@ -36,12 +37,18 @@ class AnalyticsServiceTest {
     @Mock
     private FileService fileService;
 
+    @Mock
+    private DiscoveryDisclosureService disclosure;
+
     @InjectMocks
     private AnalyticsService analyticsService;
 
     @BeforeEach
     void init() {
         MockitoAnnotations.openMocks(this);
+        when(disclosure.begin(any())).thenAnswer(inv -> new DisclosureObservation(null));
+        when(disclosure.release(any(), any())).thenAnswer(inv -> inv.getArgument(1));
+        when(dataProcessingService.matchesDiscoveryFilters(any(), any())).thenReturn(true);
     }
 
     @Test
@@ -64,15 +71,15 @@ class AnalyticsServiceTest {
     }
 
     @Test
-    void filterMultipleFilesByName_nullFilters_usesProcessSingleFileOnDisk() {
+    void filterMultipleFilesByName_nullFilters_usesSharedProfiler() {
         AnalyticsService spySvc = Mockito.spy(analyticsService);
         FileFilters ff = new FileFilters();
         ff.setFileName("f1");
         ff.setFilters(null);
 
         AnalyticsResponseDTO canned = new AnalyticsResponseDTO("OK1");
-        doReturn(CompletableFuture.completedFuture(canned))
-                .when(spySvc).processSingleFileOnDisk("f1");
+        doReturn(canned)
+                .when(spySvc).filterDataByName("f1", null, null);
 
         var results = spySvc.filterMultipleFilesByName(List.of(ff));
         assertThat(results).extracting(AnalyticsResponseDTO::getMessage).containsExactly("OK1");
@@ -86,35 +93,31 @@ class AnalyticsServiceTest {
         ff.setFilters(Map.of("col", 123));
 
         AnalyticsResponseDTO canned = new AnalyticsResponseDTO("OK2");
-        doReturn(CompletableFuture.completedFuture(canned))
-                .when(spySvc).filterDataByName(eq("f2"), anyMap());
+        doReturn(canned)
+                .when(spySvc).filterDataByName(eq("f2"), anyMap(), isNull());
 
         var results = spySvc.filterMultipleFilesByName(List.of(ff));
         assertThat(results).extracting(AnalyticsResponseDTO::getMessage).containsExactly("OK2");
     }
 
     @Test
-    void recalculateFeatureAsTypeFromDisk_emptyRecords_returnsNoData() throws Exception {
+    void typedRefresh_emptyRecords_returnsNoData() throws Exception {
         String filename = "f1";
         when(fileService.getDatasetFilePath(filename)).thenReturn("/tmp/" + filename);
-        when(dataProcessingService.extractDataFromPath(any(Path.class)))
-                .thenReturn(Collections.emptyList());
+        stubStreamRows(filename, Collections.emptyList());
 
-        var future = analyticsService.recalculateFeatureAsTypeFromDisk(filename, "feat", "continuous");
-        AnalyticsResponseDTO dto = future.get();
+        var dto = analyticsService.filterDataByName(filename, null, Map.of("feat", "continuous"));
         assertThat(dto.getFileName()).isEqualTo(filename);
         assertThat(dto.getMessage()).isEqualTo("No data found in file: " + filename);
     }
 
     @Test
-    void recalculateFeatureAsTypeFromDisk_oneRecord_suppressesFeature() throws Exception {
+    void typedRefresh_oneRecord_suppressesFeature() throws Exception {
         String filename = "f2";
         when(fileService.getDatasetFilePath(filename)).thenReturn("/tmp/" + filename);
-        when(dataProcessingService.extractDataFromPath(any(Path.class)))
-                .thenReturn(List.of(Map.of("col1", "42")));
+        stubStreamRows(filename, List.of(Map.of("col1", "42")));
 
-        var future = analyticsService.recalculateFeatureAsTypeFromDisk(filename, "col1", "continuous");
-        AnalyticsResponseDTO dto = future.get();
+        var dto = analyticsService.filterDataByName(filename, null, Map.of("col1", "continuous"));
 
         assertThat(dto.getMessage()).isEqualTo("Data processed successfully");
         assertThat(dto.getFileName()).isEqualTo(filename);
@@ -142,11 +145,10 @@ class AnalyticsServiceTest {
             return null;
         }).when(dataProcessingService).streamRows(eq(Paths.get("/tmp/" + filename)), any());
 
-        CompletableFuture<AnalyticsResponseDTO> f = analyticsService.processSingleFileOnDisk(filename);
-        AnalyticsResponseDTO dto = f.get();
+        AnalyticsResponseDTO dto = analyticsService.processSingleFileOnDisk(filename);
 
         assertThat(dto.getMessage())
-                .isEqualTo("File processed successfully: " + filename);
+                .isEqualTo("Data processed successfully");
         assertThat(dto.getContinuousFeatures())
                 .anySatisfy(c -> assertThat(c.getFeatureName()).isEqualTo("num"));
         assertThat(dto.getDateFeatures())
@@ -165,9 +167,8 @@ class AnalyticsServiceTest {
     void filterDataByName_emptyRecords_returnsNoMatchMessage() throws Exception {
         String fn = "f3";
         when(fileService.getDatasetFilePath(fn)).thenReturn("/tmp/" + fn);
-        when(dataProcessingService.extractFilteredDataFromPath(any(), anyMap()))
-                .thenReturn(Collections.emptyList());
-        var dto = analyticsService.filterDataByName(fn, Map.of("a", 1)).get();
+        stubStreamRows(fn, Collections.emptyList());
+        var dto = analyticsService.filterDataByName(fn, Map.of("a", 1));
         assertThat(dto.getMessage())
                 .isEqualTo("No records match the provided filters for file: " + fn);
     }
@@ -176,24 +177,11 @@ class AnalyticsServiceTest {
     void filterDataByName_exception_returnsErrorMessage() throws Exception {
         String fn = "f3";
         when(fileService.getDatasetFilePath(fn)).thenReturn("/tmp/" + fn);
-        when(dataProcessingService.extractFilteredDataFromPath(any(), anyMap()))
-                .thenThrow(new RuntimeException("uh oh"));
+        doThrow(new RuntimeException("uh oh")).when(dataProcessingService).streamRows(any(Path.class), any());
 
-        var dto = analyticsService.filterDataByName(fn, Map.of("a", 1)).get();
+        var dto = analyticsService.filterDataByName(fn, Map.of("a", 1));
         assertThat(dto.getMessage())
-                .isEqualTo("Error filtering file f3: uh oh");
-    }
-
-    @Test
-    void recalcFeature_errorMessageContainsValueMap_null() throws Exception {
-        String fn = "bad.csv";
-        when(fileService.getDatasetFilePath(fn)).thenReturn("/tmp/" + fn);
-        when(dataProcessingService.extractDataFromPath(any()))
-                .thenThrow(new RuntimeException("ValueMap foo null pointer"));
-
-        var dto = analyticsService.recalculateFeatureAsTypeFromDisk(fn, "f", "categorical").get();
-        assertThat(dto.getMessage())
-                .isEqualTo("This field cannot be converted to categorical.");
+                .isEqualTo("Error processing statistics.");
     }
 
     @Test
@@ -204,38 +192,20 @@ class AnalyticsServiceTest {
         doThrow(new IOException("ioerror"))
                 .when(dataProcessingService).streamRows(eq(Paths.get("/tmp/" + filename)), any());
 
-        AnalyticsResponseDTO dto = analyticsService.processSingleFileOnDisk(filename).get();
+        AnalyticsResponseDTO dto = analyticsService.processSingleFileOnDisk(filename);
         assertThat(dto.getMessage())
-                .isEqualTo("Error processing file " + filename + ": ioerror");
+                .isEqualTo("Error processing statistics.");
     }
 
     @Test
-    @DisplayName("recalculateFeatureAsTypeFromDisk override='date' produces no feature lists")
-    void recalcFeature_overrideDate_noFeatureLists() throws Exception {
-        String filename = "df.csv";
-        when(fileService.getDatasetFilePath(filename)).thenReturn("/tmp/" + filename);
-        when(dataProcessingService.extractDataFromPath(any()))
-                .thenReturn(List.of(Map.of("dcol", "2020-01-15")));
-
-        AnalyticsResponseDTO dto =
-                analyticsService.recalculateFeatureAsTypeFromDisk(filename, "dcol", "date").get();
-
-        assertThat(dto.getMessage()).isEqualTo("Data processed successfully");
-        assertThat(dto.getDateFeatures()).isNullOrEmpty();
-        assertThat(dto.getContinuousFeatures()).isNullOrEmpty();
-        assertThat(dto.getCategoricalFeatures()).isNullOrEmpty();
-    }
-
-    @Test
-    @DisplayName("recalculateFeatureAsTypeFromDisk override=‘categorical’ sets only categoricalFeatures")
+    @DisplayName("Typed refresh override=‘categorical’ sets only categoricalFeatures")
     void recalcFeature_overrideCategorical_setsCategoricalFeatures() throws Exception {
         String filename = "cf.csv";
         when(fileService.getDatasetFilePath(filename)).thenReturn("/tmp/" + filename);
-        when(dataProcessingService.extractDataFromPath(any()))
-                .thenReturn(Collections.nCopies(6, Map.of("ccol", "foo")));
+        stubStreamRows(filename, Collections.nCopies(6, Map.of("ccol", "foo")));
 
         AnalyticsResponseDTO dto =
-                analyticsService.recalculateFeatureAsTypeFromDisk(filename, "ccol", "categorical").get();
+                analyticsService.filterDataByName(filename, null, Map.of("ccol", "categorical"));
 
         assertThat(dto.getMessage()).isEqualTo("Data processed successfully");
         assertThat(dto.getCategoricalFeatures())
@@ -243,37 +213,6 @@ class AnalyticsServiceTest {
                 .first().extracting("featureName").isEqualTo("ccol");
         assertThat(dto.getDateFeatures()).isNullOrEmpty();
         assertThat(dto.getContinuousFeatures()).isNullOrEmpty();
-    }
-
-    @Test
-    @DisplayName("processDatasetsOnDisk a failing future → ExecutionException branch")
-    void processDatasetsOnDisk_executionException() {
-        AnalyticsService spySvc = Mockito.spy(analyticsService);
-        CompletableFuture<AnalyticsResponseDTO> bad = new CompletableFuture<>();
-        bad.completeExceptionally(new RuntimeException("boom"));
-        doReturn(bad).when(spySvc).processSingleFileOnDisk("f");
-
-        List<AnalyticsResponseDTO> results = spySvc.processDatasetsOnDisk(List.of("f"));
-        assertThat(results).hasSize(1);
-        assertThat(results.get(0).getMessage()).startsWith("Error:");
-    }
-
-    @Test
-    @DisplayName("processDatasetsOnDisk an interrupted future → InterruptedException branch")
-    void processDatasetsOnDisk_interruptedException() {
-        AnalyticsService spySvc = Mockito.spy(analyticsService);
-        CompletableFuture<AnalyticsResponseDTO> intr = new CompletableFuture<>() {
-            @Override
-            public AnalyticsResponseDTO get() throws InterruptedException {
-                throw new InterruptedException("forced");
-            }
-        };
-        doReturn(intr).when(spySvc).processSingleFileOnDisk("g");
-
-        List<AnalyticsResponseDTO> results = spySvc.processDatasetsOnDisk(List.of("g"));
-        assertThat(results).hasSize(1);
-        assertThat(results.get(0).getMessage())
-                .isEqualTo("Thread interrupted while processing file.");
     }
 
     @Test
@@ -291,7 +230,7 @@ class AnalyticsServiceTest {
             return null;
         }).when(dataProcessingService).streamRows(eq(Paths.get("/tmp/" + filename)), any());
 
-        AnalyticsResponseDTO dto = analyticsService.processSingleFileOnDisk(filename).get();
+        AnalyticsResponseDTO dto = analyticsService.processSingleFileOnDisk(filename);
         assertThat(dto.getCategoricalFeatures()).isEmpty();
         assertThat(dto.getOmittedFeatures())
                 .singleElement()
@@ -300,22 +239,17 @@ class AnalyticsServiceTest {
     }
 
     @Test
-    @DisplayName("recalculateFeatureAsTypeFromDisk override continuous with non-numeric forces mapping")
-    void recalcFeature_overrideContinuous_forcedMapping() throws Exception {
+    @DisplayName("Numerical recalculation rejects arbitrary encounter-order category encoding")
+    void recalcFeature_overrideContinuous_requiresExplicitNumericMapping() throws Exception {
         String filename = "force.csv";
         when(fileService.getDatasetFilePath(filename)).thenReturn("/tmp/" + filename);
-        when(dataProcessingService.extractDataFromPath(any(Path.class)))
-                .thenReturn(Collections.nCopies(6, Map.of("fcol", "foo")));
+        stubStreamRows(filename, Collections.nCopies(6, Map.of("fcol", "foo")));
 
-        AnalyticsResponseDTO dto = analyticsService
-                .recalculateFeatureAsTypeFromDisk(filename, "fcol", "continuous")
-                .get();
-        assertThat(dto.getMessage()).isEqualTo("Data processed successfully");
-        assertThat(dto.getContinuousFeatures())
-                .hasSize(1)
-                .first()
-                .extracting("featureName", "count")
-                .containsExactly("fcol", 6L);
+        AnalyticsResponseDTO dto = analyticsService.filterDataByName(filename, null, Map.of("fcol", "continuous"))
+                ;
+        assertThat(dto.getMessage()).isEqualTo("This field cannot be converted to continuous without an explicit numerical mapping.");
+        assertThat(dto.getContinuousFeatures()).isEmpty();
+        assertThat(dto.getNumericPairSummaries()).isEmpty();
     }
 
     @Test
@@ -328,12 +262,11 @@ class AnalyticsServiceTest {
         for (int i = 1; i <= 6; i++) {
             recs.add(Map.of("cat", "A", "num", Integer.toString(i)));
         }
-        when(dataProcessingService.extractFilteredDataFromPath(any(Path.class), anyMap()))
-                .thenReturn(recs);
+        stubStreamRows(filename, recs);
 
         AnalyticsResponseDTO dto = analyticsService
                 .filterDataByName(filename, Map.of("cat", "A"))
-                .get();
+                ;
 
         assertThat(dto.getMessage()).isEqualTo("Data processed successfully");
         assertThat(dto.getCategoricalFeatures())
@@ -368,14 +301,13 @@ class AnalyticsServiceTest {
     void filterDataByName_fiveMatchingRecords_suppressesAllAnalytics() throws Exception {
         String filename = "filtered-five.csv";
         when(fileService.getDatasetFilePath(filename)).thenReturn("/tmp/" + filename);
-        when(dataProcessingService.extractFilteredDataFromPath(any(Path.class), anyMap()))
-                .thenReturn(List.of(
+        stubStreamRows(filename, List.of(
                         Map.of("num", "1"), Map.of("num", "2"), Map.of("num", "3"),
                         Map.of("num", "4"), Map.of("num", "5")));
 
         AnalyticsResponseDTO dto = analyticsService
                 .filterDataByName(filename, Map.of("group", "small"))
-                .get();
+                ;
 
         assertThat(dto.getContinuousFeatures()).isEmpty();
         assertThat(dto.getCategoricalFeatures()).isEmpty();
@@ -398,7 +330,7 @@ class AnalyticsServiceTest {
         for (int i = 0; i < 5; i++) rows.add(Map.of("group", "rare"));
         stubStreamRows(filename, rows);
 
-        AnalyticsResponseDTO dto = analyticsService.processSingleFileOnDisk(filename).get();
+        AnalyticsResponseDTO dto = analyticsService.processSingleFileOnDisk(filename);
 
         assertThat(dto.getCategoricalFeatures()).isEmpty();
         assertThat(dto.getOmittedFeatures())
@@ -416,7 +348,7 @@ class AnalyticsServiceTest {
         for (int i = 0; i < 5; i++) rows.add(Map.of("visitDate", "2020-02-01"));
         stubStreamRows(filename, rows);
 
-        AnalyticsResponseDTO dto = analyticsService.processSingleFileOnDisk(filename).get();
+        AnalyticsResponseDTO dto = analyticsService.processSingleFileOnDisk(filename);
 
         assertThat(dto.getDateFeatures()).isEmpty();
         assertThat(dto.getOmittedFeatures())
@@ -434,7 +366,7 @@ class AnalyticsServiceTest {
         rows.add(Map.of("num", "100"));
         stubStreamRows(filename, rows);
 
-        AnalyticsResponseDTO dto = analyticsService.processSingleFileOnDisk(filename).get();
+        AnalyticsResponseDTO dto = analyticsService.processSingleFileOnDisk(filename);
 
         assertThat(dto.getContinuousFeatures())
                 .singleElement()
@@ -447,7 +379,103 @@ class AnalyticsServiceTest {
         List<Map<String, String>> rows = new ArrayList<>();
         for (int i = 1; i <= count; i++) rows.add(Map.of("num", Integer.toString(i)));
         stubStreamRows(filename, rows);
-        return analyticsService.processSingleFileOnDisk(filename).get();
+        return analyticsService.processSingleFileOnDisk(filename);
+    }
+
+    @Test
+    void streamedAndFilteredRelationshipsUseTheSamePatientPairs() throws Exception {
+        var rows = rowsWithDifferentMissingPositions();
+        stubStreamRows("pairs.csv", rows);
+        when(dataProcessingService.matchesDiscoveryFilters(any(), any())).thenReturn(true);
+        assertAlignedRelationships(analyticsService.processSingleFileOnDisk("pairs.csv"));
+        assertAlignedRelationships(analyticsService.filterDataByName("pairs.csv", Map.of()));
+    }
+
+    @Test
+    void typeRecalculationReusesAlignedRelationships() throws Exception {
+        stubStreamRows("pairs.csv", rowsWithDifferentMissingPositions());
+        var result = analyticsService.filterDataByName("pairs.csv", null, Map.of("x", "continuous"));
+        assertAlignedRelationships(result);
+        assertThat(result.getFeatureTypeSummaryVersion()).isEqualTo(1);
+        assertThat(result.getFeatureTypes()).containsEntry("x", "continuous");
+        assertThat(result.getContinuousFeatures()).extracting("featureName").containsExactlyInAnyOrder("x", "y");
+        verify(dataProcessingService, never()).extractDataFromPath(any());
+    }
+
+    @Test
+    void asyncDiscoveryReusesAlignedRelationships() throws Exception {
+        Path csv = tempDir.resolve("pairs.csv");
+        Files.writeString(csv, "x,y\n1,2\n");
+        stubStreamRows("pairs.csv", rowsWithDifferentMissingPositions());
+        when(fileService.getDatasetFilePath("pairs.csv")).thenReturn(csv.toString());
+        doAnswer(invocation -> {
+            java.util.function.Consumer<Map<String, String>> consumer = invocation.getArgument(1);
+            rowsWithDifferentMissingPositions().forEach(consumer);
+            return null;
+        }).when(dataProcessingService).streamRows(eq(csv), any());
+        AnalyticsProcessingJobs realJobs = new AnalyticsProcessingJobs();
+        org.springframework.test.util.ReflectionTestUtils.setField(analyticsService, "jobs", realJobs);
+        String jobId = realJobs.createJob();
+        analyticsService.startDiscoveryJob(jobId, List.of("pairs.csv"));
+        long deadline = System.currentTimeMillis() + 5000;
+        while (realJobs.getJob(jobId).getState() == ProcessingStatusDTO.State.RUNNING && System.currentTimeMillis() < deadline) {
+            Thread.sleep(20);
+        }
+        assertThat(realJobs.getJob(jobId).getState()).isEqualTo(ProcessingStatusDTO.State.DONE);
+        var asyncResult = realJobs.getJob(jobId).getResults().get(0);
+        assertAlignedRelationships(asyncResult);
+        assertThat(asyncResult).usingRecursiveComparison()
+                .isEqualTo(analyticsService.processSingleFileOnDisk("pairs.csv"));
+        assertThat(asyncResult).usingRecursiveComparison()
+                .isEqualTo(analyticsService.filterDataByName("pairs.csv", Map.of()));
+        assertThat(asyncResult.getOmittedFeatures()).extracting("featureName").contains("Unavailable");
+    }
+
+    @Test
+    void suppressesSmallPairwiseCohortsEvenWhenBothFeaturesAreReleased() throws Exception {
+        var rows = new ArrayList<Map<String, String>>();
+        for (int i = 0; i < 10; i++) rows.add(Map.of("x", i < 6 ? String.valueOf(i) : "", "y", i >= 4 ? String.valueOf(i * 2) : ""));
+        stubStreamRows("few-pairs.csv", rows);
+        var result = analyticsService.processSingleFileOnDisk("few-pairs.csv");
+        assertThat(result.getContinuousFeatures()).hasSize(2);
+        assertThat(result.getCovariances()).isEmpty();
+        assertThat(result.getPearsonCorrelations()).isEmpty();
+        assertThat(result.getSpearmanCorrelations()).isEmpty();
+    }
+
+    private List<Map<String, String>> rowsWithDifferentMissingPositions() {
+        var rows = new ArrayList<Map<String, String>>();
+        for (int i = 1; i <= 10; i++) rows.add(Map.of("x", i == 1 ? "" : String.valueOf(i), "y", i == 2 ? "" : String.valueOf(i * 2), "Unavailable", ""));
+        return rows;
+    }
+
+    @Test
+    void discoveryReleasesOnlyAggregatesIncludingForOutliersAndDates() throws Exception {
+        var rows = new ArrayList<Map<String, String>>();
+        for (int i = 0; i < 100; i++) rows.add(Map.of("x", "0", "date", "2020-01-01"));
+        for (int i = 0; i < 6; i++) rows.add(Map.of("x", "10000", "date", "2030-01-01"));
+        stubStreamRows("aggregates.csv", rows);
+        var result = analyticsService.processSingleFileOnDisk("aggregates.csv");
+        var numeric = (org.taniwha.statistics.ContinuousFeatureStatistics) result.getContinuousFeatures().get(0);
+        assertThat(numeric.getOutliers()).isEmpty();
+        assertThat(numeric.getValueCounts()).hasSize(2).allSatisfy(cell -> assertThat(cell.count()).isGreaterThanOrEqualTo(6));
+        assertThat(result.getDateFeatures().get(0).getOutliers()).isEmpty();
+        assertThat(result.getNumericPairSummaries()).anySatisfy(pair -> {
+            assertThat(pair.featureX()).isEqualTo("date"); assertThat(pair.featureY()).isEqualTo("x");
+            assertThat(pair.count()).isEqualTo(106);
+            assertThat(pair.frequencies()).hasSize(2).allSatisfy(cell -> assertThat(cell.count()).isGreaterThanOrEqualTo(6));
+        });
+    }
+
+    private void assertAlignedRelationships(AnalyticsResponseDTO result) {
+        assertThat(result.getRelationshipSummaryVersion()).isEqualTo(1);
+        assertThat(result.getNumericPairSummaries()).anySatisfy(pair -> {
+            assertThat(pair.featureX()).isEqualTo("x"); assertThat(pair.featureY()).isEqualTo("y");
+            assertThat(pair.count()).isEqualTo(8); assertThat(pair.frequencies()).isEmpty();
+        });
+        assertThat(result.getCovariances().get("x").get("y")).isCloseTo(12.0, org.assertj.core.data.Offset.offset(1e-12));
+        assertThat(result.getPearsonCorrelations().get("x").get("y")).isCloseTo(1.0, org.assertj.core.data.Offset.offset(1e-12));
+        assertThat(result.getSpearmanCorrelations().get("x").get("y")).isCloseTo(1.0, org.assertj.core.data.Offset.offset(1e-12));
     }
 
     private void stubStreamRows(String filename, List<Map<String, String>> rows) throws Exception {

@@ -11,5 +11,6 @@ public class FileFilters {
     private String fileName;
     private String nodeId;
     private Map<String, Object> filters;
+    private Map<String, String> featureTypes;
 
 }
