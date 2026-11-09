@@ -57,8 +57,6 @@ public class AnalyticsService {
     private static final int MIN_DISCLOSURE_COUNT = AggregateDisclosure.MIN_COUNT - 1;
     private static final String SMALL_FEATURE_SUPPRESSION_REASON =
             "Suppressed for privacy: 5 or fewer observations";
-    private static final String SMALL_CELL_SUPPRESSION_REASON =
-            "Suppressed for privacy: contains a value occurring 5 or fewer times";
 
     private static final long HUGE_BYTES_THRESHOLD = 1_000_000; // ~1MB
     private static final long HUGE_ROWS_THRESHOLD = 5_000;      // ~5k rows
@@ -348,38 +346,16 @@ public class AnalyticsService {
                                        Map<String, List<String>> dateData,
                                        List<OmittedFeatureStatistics> omittedFeatures) {
         continuousData.entrySet().removeIf(entry -> suppressFeatureIfNeeded(
-                entry.getKey(), entry.getValue().size(), false,
-                omittedFeatures));
-
-        categoricalData.entrySet().removeIf(entry -> {
-            long count = entry.getValue().values().stream().mapToLong(Integer::longValue).sum();
-            boolean containsSmallCell = entry.getValue().values().stream()
-                    .anyMatch(cellCount -> cellCount <= MIN_DISCLOSURE_COUNT);
-            return suppressFeatureIfNeeded(entry.getKey(), count, containsSmallCell,
-                    omittedFeatures);
-        });
-
-        dateData.entrySet().removeIf(entry -> {
-            Map<String, Long> dateCounts = entry.getValue().stream()
-                    .collect(Collectors.groupingBy(Function.identity(), Collectors.counting()));
-            boolean containsSmallCell = dateCounts.values().stream()
-                    .anyMatch(cellCount -> cellCount <= MIN_DISCLOSURE_COUNT);
-            return suppressFeatureIfNeeded(entry.getKey(), entry.getValue().size(), containsSmallCell,
-                    omittedFeatures);
-        });
+                entry.getKey(), entry.getValue().size(), omittedFeatures));
+        categoricalData.entrySet().removeIf(entry -> suppressFeatureIfNeeded(
+                entry.getKey(), entry.getValue().values().stream().mapToLong(Integer::longValue).sum(), omittedFeatures));
+        dateData.entrySet().removeIf(entry -> suppressFeatureIfNeeded(
+                entry.getKey(), entry.getValue().size(), omittedFeatures));
     }
 
-    private boolean suppressFeatureIfNeeded(String featureName,
-                                            long nonMissingCount,
-                                            boolean containsSmallCell,
+    private boolean suppressFeatureIfNeeded(String featureName, long nonMissingCount,
                                             List<OmittedFeatureStatistics> omittedFeatures) {
-        String reason = null;
-        if (nonMissingCount <= MIN_DISCLOSURE_COUNT) {
-            reason = SMALL_FEATURE_SUPPRESSION_REASON;
-        } else if (containsSmallCell) {
-            reason = SMALL_CELL_SUPPRESSION_REASON;
-        }
-
+        String reason = nonMissingCount <= MIN_DISCLOSURE_COUNT ? SMALL_FEATURE_SUPPRESSION_REASON : null;
         if (reason == null) return false;
 
         // Do not expose exact counts or missingness for privacy-suppressed features.

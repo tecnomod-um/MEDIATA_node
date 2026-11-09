@@ -4,10 +4,10 @@ import org.springframework.stereotype.Service;
 import org.taniwha.dto.AnalyticsResponseDTO;
 import org.taniwha.statistics.*;
 import java.nio.file.Path;
-import java.time.LocalDate;
 import java.util.*;
+import org.taniwha.util.AggregateDisclosure;
 
-/** Enforces release-history rules against the exact cohorts used by response fields. */
+/** Releases descriptive aggregates; the ledger separately gates requested query cohorts. */
 @Service
 public class DiscoveryDisclosureService {
     private final DiscoveryQueryLedger ledger;
@@ -15,44 +15,35 @@ public class DiscoveryDisclosureService {
     public DisclosureObservation begin(Path path) { return new DisclosureObservation(ledger.begin(path)); }
     public AnalyticsResponseDTO release(DisclosureObservation observation, AnalyticsResponseDTO response) {
         return ledger.release(observation.version, observation.rows, observation.selected, partition -> {
-            AnalyticsResponseDTO permitted = redact(response, observation, partition);
+            AnalyticsResponseDTO permitted = redact(response, observation);
             permitted.setDisclosurePolicyVersion(1);
             return permitted;
         });
     }
 
-    private AnalyticsResponseDTO redact(AnalyticsResponseDTO response, DisclosureObservation observation, CohortPartition partition) {
+    private AnalyticsResponseDTO redact(AnalyticsResponseDTO response, DisclosureObservation observation) {
         Set<String> numeric = new HashSet<>(), categorical = new HashSet<>();
         List<OmittedFeatureStatistics> omitted = new ArrayList<>(response.getOmittedFeatures());
         List<FeatureStatistics> continuous = new ArrayList<>(), categories = new ArrayList<>();
         List<DateFeatureStatistics> dates = new ArrayList<>();
         for (FeatureStatistics feature : response.getContinuousFeatures()) {
             BitSet cohort = observation.members(feature.getFeatureName(), true);
-            List<BitSet> implied = new ArrayList<>(observation.impliedMomentCells(feature.getFeatureName()));
-            implied.add(cohort);
-            if (!valid(cohort, feature.getCount()) || !partition.allow(implied)) {
+            if (!valid(cohort, feature.getCount())) {
                 omit(omitted, feature);
                 continue;
             }
             numeric.add(feature.getFeatureName());
             ContinuousFeatureStatistics item = (ContinuousFeatureStatistics) feature;
-            List<BitSet> cells = item.getValueCounts().stream().map(cell -> observation.value(feature.getFeatureName(), cell.value(), true)).toList();
-            if (!partition.allow(cells)) item.setValueCounts(List.of());
-            List<BitSet> bins = observation.histogram(item);
-            if (bins == null || !partition.allow(bins)) item.suppressHistogram();
+            HistogramDisclosure.release(item);
             continuous.add(item);
         }
         for (FeatureStatistics feature : response.getCategoricalFeatures()) {
             CategoricalFeatureStatistics item = (CategoricalFeatureStatistics) feature;
-            List<BitSet> cohorts = new ArrayList<>(); cohorts.add(observation.members(feature.getFeatureName(), false));
-            item.getCategoryCounts().keySet().forEach(value -> cohorts.add(observation.value(feature.getFeatureName(), value, false)));
-            if (!valid(cohorts.get(0), feature.getCount()) || !partition.allow(cohorts)) { omit(omitted, feature); continue; }
+            if (!valid(observation.members(feature.getFeatureName(), false), feature.getCount())) { omit(omitted, feature); continue; }
             categories.add(item); categorical.add(feature.getFeatureName());
         }
         for (DateFeatureStatistics feature : response.getDateFeatures()) {
-            List<BitSet> cohorts = new ArrayList<>(); cohorts.add(observation.members(feature.getFeatureName(), true));
-            feature.getDateHistogram().keySet().forEach(day -> cohorts.add(observation.value(feature.getFeatureName(), (double) LocalDate.parse(day).toEpochDay(), true)));
-            if (!valid(cohorts.get(0), feature.getCount()) || !partition.allow(cohorts)) { omit(omitted, feature); continue; }
+            if (!valid(observation.members(feature.getFeatureName(), true), feature.getCount())) { omit(omitted, feature); continue; }
             dates.add(feature); numeric.add(feature.getFeatureName());
         }
         response.setContinuousFeatures(continuous); response.setCategoricalFeatures(categories); response.setDateFeatures(dates);
@@ -60,15 +51,9 @@ public class DiscoveryDisclosureService {
         for (NumericPairSummary pair : response.getNumericPairSummaries()) {
             if (!numeric.contains(pair.featureX()) || !numeric.contains(pair.featureY())) continue;
             BitSet cohort = DisclosureObservation.intersect(observation.members(pair.featureX(), true), observation.members(pair.featureY(), true));
-            List<BitSet> implied = new ArrayList<>(observation.impliedMomentCells(pair.featureX(), pair.featureY()));
-            implied.add(cohort);
-            if (!valid(cohort, pair.count()) || !partition.allow(implied)) continue;
+            if (!valid(cohort, pair.count())) continue;
             numericPairs.add(List.of(pair.featureX(), pair.featureY())); numericPairs.add(List.of(pair.featureY(), pair.featureX()));
-            List<BitSet> cells = pair.frequencies().stream().map(cell -> DisclosureObservation.intersect(
-                    observation.value(pair.featureX(), cell.x(), true), observation.value(pair.featureY(), cell.y(), true))).toList();
-            NumericPairSummary releasedPair = pair;
-            if (!partition.allow(cells)) releasedPair = new NumericPairSummary(pair.featureX(), pair.featureY(), pair.count(), pair.meanX(), pair.meanY(), pair.m2X(), pair.m2Y(), pair.crossMoment(), List.of());
-            pairs.add(releasedPair);
+            pairs.add(pair);
         }
         response.setNumericPairSummaries(pairs);
         response.setCovariances(filterMatrix(response.getCovariances(), numericPairs));
@@ -77,11 +62,8 @@ public class DiscoveryDisclosureService {
         List<CategoricalPairSummary> tables = new ArrayList<>(); Set<List<String>> categoryPairs = new HashSet<>();
         for (CategoricalPairSummary pair : response.getCategoricalPairSummaries()) {
             if (!categorical.contains(pair.featureX()) || !categorical.contains(pair.featureY())) continue;
-            List<BitSet> cells = pair.frequencies().stream().map(cell -> DisclosureObservation.intersect(
-                    observation.value(pair.featureX(), cell.x(), false), observation.value(pair.featureY(), cell.y(), false))).toList();
             BitSet cohort = DisclosureObservation.intersect(observation.members(pair.featureX(), false), observation.members(pair.featureY(), false));
-            List<BitSet> cohorts = new ArrayList<>(cells); cohorts.add(cohort);
-            if (!valid(cohort, pair.count()) || !partition.allow(cohorts)) continue;
+            if (!valid(cohort, pair.count())) continue;
             tables.add(pair); categoryPairs.add(List.of(pair.featureX(), pair.featureY())); categoryPairs.add(List.of(pair.featureY(), pair.featureX()));
         }
         response.setCategoricalPairSummaries(tables);
@@ -91,7 +73,9 @@ public class DiscoveryDisclosureService {
                 feature.getReason().startsWith("Suppressed for privacy:") ? feature.getReason() : "Suppressed for privacy: release controls")).toList());
         return response;
     }
-    private boolean valid(BitSet cohort, long count) { return cohort != null && cohort.cardinality() == count; }
+    private boolean valid(BitSet cohort, long count) {
+        return cohort != null && count >= AggregateDisclosure.MIN_COUNT && cohort.cardinality() == count;
+    }
     private void omit(List<OmittedFeatureStatistics> omitted, FeatureStatistics feature) {
         omitted.add(new OmittedFeatureStatistics(feature.getFeatureName(), 0, 0, 0, "Suppressed for privacy: release controls"));
     }
