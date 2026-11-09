@@ -216,8 +216,8 @@ class AnalyticsServiceTest {
     }
 
     @Test
-    @DisplayName("processSingleFileOnDisk suppresses categorical columns containing small cells")
-    void processSingleFileOnDisk_suppressesSmallCategoricalCells() throws Exception {
+    @DisplayName("processSingleFileOnDisk omits identifier-like high-cardinality columns")
+    void processSingleFileOnDisk_omitsHighCardinalityColumns() throws Exception {
         String filename = "highcard.csv";
         when(fileService.getDatasetFilePath(filename)).thenReturn("/tmp/" + filename);
         List<Map<String, String>> rows = new ArrayList<>();
@@ -235,7 +235,7 @@ class AnalyticsServiceTest {
         assertThat(dto.getOmittedFeatures())
                 .singleElement()
                 .extracting("featureName", "reason")
-                .containsExactly("u", "Suppressed for privacy: contains a value occurring 5 or fewer times");
+                .containsExactly("u", "Too many unique values (100.0%)");
     }
 
     @Test
@@ -323,39 +323,29 @@ class AnalyticsServiceTest {
     }
 
     @Test
-    void processSingleFileOnDisk_rareCategory_suppressesEntireFeature() throws Exception {
+    void processSingleFileOnDisk_rareCategory_remainsAnAggregate() throws Exception {
         String filename = "rare-category.csv";
         List<Map<String, String>> rows = new ArrayList<>();
         for (int i = 0; i < 6; i++) rows.add(Map.of("group", "common"));
         for (int i = 0; i < 5; i++) rows.add(Map.of("group", "rare"));
         stubStreamRows(filename, rows);
-
-        AnalyticsResponseDTO dto = analyticsService.processSingleFileOnDisk(filename);
-
-        assertThat(dto.getCategoricalFeatures()).isEmpty();
-        assertThat(dto.getOmittedFeatures())
-                .singleElement()
-                .extracting("featureName", "count", "reason")
-                .containsExactly("group", 0L,
-                        "Suppressed for privacy: contains a value occurring 5 or fewer times");
+        var dto = analyticsService.processSingleFileOnDisk(filename);
+        assertThat(dto.getCategoricalFeatures()).singleElement()
+                .hasFieldOrPropertyWithValue("categoryCounts", Map.of("common", 6, "rare", 5));
+        assertThat(dto.getOmittedFeatures()).isEmpty();
     }
 
     @Test
-    void processSingleFileOnDisk_rareDate_suppressesEntireFeature() throws Exception {
+    void processSingleFileOnDisk_rareDate_remainsAnAggregate() throws Exception {
         String filename = "rare-date.csv";
         List<Map<String, String>> rows = new ArrayList<>();
         for (int i = 0; i < 6; i++) rows.add(Map.of("visitDate", "2020-01-01"));
         for (int i = 0; i < 5; i++) rows.add(Map.of("visitDate", "2020-02-01"));
         stubStreamRows(filename, rows);
-
-        AnalyticsResponseDTO dto = analyticsService.processSingleFileOnDisk(filename);
-
-        assertThat(dto.getDateFeatures()).isEmpty();
-        assertThat(dto.getOmittedFeatures())
-                .singleElement()
-                .extracting("featureName", "count", "reason")
-                .containsExactly("visitDate", 0L,
-                        "Suppressed for privacy: contains a value occurring 5 or fewer times");
+        var dto = analyticsService.processSingleFileOnDisk(filename);
+        assertThat(dto.getDateFeatures()).singleElement()
+                .hasFieldOrPropertyWithValue("dateHistogram", Map.of("2020-01-01", 6L, "2020-02-01", 5L));
+        assertThat(dto.getOmittedFeatures()).isEmpty();
     }
 
     @Test

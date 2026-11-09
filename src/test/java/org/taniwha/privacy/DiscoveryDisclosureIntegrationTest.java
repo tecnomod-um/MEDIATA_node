@@ -121,32 +121,54 @@ class DiscoveryDisclosureIntegrationTest {
         blocked(analytics.filterDataByName("cohort.csv", less(21)));
         blocked(analytics.filterDataByName("cohort.csv", less(25)));
     }
-    @Test void rareMissingnessAndRareHistogramCellsAreSuppressedAtTheNode() throws Exception {
+    @Test void sparseHistogramTailsAreCombinedAndMissingnessDoesNotHideAnOtherwiseValidFeature() throws Exception {
         StringBuilder csv = new StringBuilder("Age,Score\n");
         for (int i = 0; i < 24; i++) csv.append(i == 23 ? 10000 : 20 + i).append(',').append(i == 0 ? "" : "42").append('\n');
         initialise(csv.toString());
         var response = analytics.processSingleFileOnDisk("cohort.csv");
-        assertThat(response.getContinuousFeatures()).noneSatisfy(feature -> assertThat(feature.getFeatureName()).isEqualTo("Score"));
-        assertThat(response.getContinuousFeatures()).anySatisfy(feature -> {
-            assertThat(feature.getFeatureName()).isEqualTo("Age");
-            assertThat(((org.taniwha.statistics.ContinuousFeatureStatistics) feature).getHistogram()).isEmpty();
-        });
-        assertThat(response.getOmittedFeatures()).allSatisfy(feature -> {
-            assertThat(feature.getCount()).isZero(); assertThat(feature.getMissingValuesCount()).isZero();
+        assertThat(response.getDisclosureMode()).isEqualTo("COHORT_AGGREGATES");
+        assertThat(response.getContinuousFeatures()).extracting("featureName").containsExactlyInAnyOrder("Age", "Score");
+        assertThat(response.getContinuousFeatures()).allSatisfy(feature -> {
+            var numeric = (org.taniwha.statistics.ContinuousFeatureStatistics) feature;
+            assertThat(numeric.getHistogram()).isNotEmpty().allMatch(n -> n == 0 || n >= 6);
+            assertThat(numeric.getHistogram().stream().mapToDouble(Double::doubleValue).sum()).isEqualTo(numeric.getCount());
+            assertThat(numeric.getOutliers()).isEmpty();
         });
     }
-    @Test void numericTypeConversionCannotExposeRareCategoryCountsThroughMoments() throws Exception {
+
+    @Test void uncommonValuesRemainAvailableAsAggregateStatisticsAndCategoricalCharts() throws Exception {
         StringBuilder csv = new StringBuilder("Age,Flag\n");
         for (int i = 0; i < 24; i++) csv.append(20 + i).append(',').append(i == 0 ? "1" : "0").append('\n');
         initialise(csv.toString());
         var response = analytics.processSingleFileOnDisk("cohort.csv");
-        assertThat(response.getContinuousFeatures()).noneSatisfy(feature -> assertThat(feature.getFeatureName()).isEqualTo("Flag"));
-        assertThat(response.getNumericPairSummaries()).noneSatisfy(pair -> assertThat(List.of(pair.featureX(), pair.featureY())).contains("Flag"));
+        assertThat(response.getContinuousFeatures()).extracting("featureName").contains("Flag");
+        assertThat(response.getContinuousFeatures()).filteredOn(f -> f.getFeatureName().equals("Flag")).singleElement()
+                .hasFieldOrPropertyWithValue("valueCounts", List.of());
         response = analytics.filterDataByName("cohort.csv", null, Map.of("Flag", "categorical"));
-        assertThat(response.getCategoricalFeatures()).isEmpty();
+        assertThat(response.getCategoricalFeatures()).singleElement()
+                .hasFieldOrPropertyWithValue("categoryCounts", Map.of("0", 23, "1", 1));
     }
 
-    @Test void numericalMeansCannotBypassHistoryWhenTheirValueCountsWereWithheld() throws Exception {
+    @Test void everyClinicalFeatureRetainsAHistogramDespiteUncommonOrdinalValues() throws Exception {
+        StringBuilder data = new StringBuilder("Age,Dressing,Grooming,Mobility,Transfers,Stairs,Bathing,ToiletUse,Feeding\n");
+        for (int row = 0; row < 96; row++) {
+            data.append(30 + row % 55);
+            for (int feature = 1; feature < 9; feature++) data.append(',').append(row == feature ? 0 : 5 * (row % 3 + 1));
+            data.append('\n');
+        }
+        initialise(data.toString());
+        var response = analytics.processSingleFileOnDisk("cohort.csv");
+        assertThat(response.getContinuousFeatures()).hasSize(9).allSatisfy(feature -> {
+            var numeric = (org.taniwha.statistics.ContinuousFeatureStatistics) feature;
+            assertThat(numeric.getHistogram()).isNotEmpty().allMatch(count -> count == 0 || count >= 6);
+            assertThat(numeric.getHistogram()).hasSameSizeAs(numeric.getBinRanges());
+            assertThat(numeric.getHistogram().stream().mapToDouble(Double::doubleValue).sum()).isEqualTo(96);
+            assertThat(numeric.getOutliers()).isEmpty();
+        });
+        assertThat(response.getOmittedFeatures()).isEmpty();
+    }
+
+    @Test void descriptiveMomentsDoNotHideVariablesButActualQueryDifferencesRemainProtected() throws Exception {
         StringBuilder csv = new StringBuilder("Age,Flag\n");
         for (int i = 0; i < 24; i++) {
             int flag = i < 6 || i == 12 ? 0 : 1;
@@ -156,36 +178,26 @@ class DiscoveryDisclosureIntegrationTest {
         var selected = analytics.filterDataByName("cohort.csv", less(32));
         assertThat(selected.getContinuousFeatures()).anyMatch(f -> f.getFeatureName().equals("Flag"));
         var whole = analytics.processSingleFileOnDisk("cohort.csv");
-        // Whole count * (1 - mean) would reveal 7 zeros; subtract the released
-        // selected count of 6 zeros to expose a single protected outside record.
-        assertThat(whole.getContinuousFeatures()).noneMatch(f -> f.getFeatureName().equals("Flag"));
-        assertThat(whole.getNumericPairSummaries()).noneMatch(p -> p.featureX().equals("Flag") || p.featureY().equals("Flag"));
+        assertThat(whole.getContinuousFeatures()).anyMatch(f -> f.getFeatureName().equals("Flag"));
+        assertThat(whole.getNumericPairSummaries()).anyMatch(p -> p.featureX().equals("Flag") || p.featureY().equals("Flag"));
+        blocked(analytics.filterDataByName("cohort.csv", less(31)));
     }
 
-    @Test void crossMomentsCannotReconstructAWithheldRareJointCount() throws Exception {
+    @Test void pairedMomentsRemainAvailableWithoutReturningRareExactJointFrequencies() throws Exception {
         int[] counts = {1, 7, 8, 8};
-        double[] moments = new double[4];
-        double[][] constraints = new double[4][4];
         StringBuilder csv = new StringBuilder("X,Y\n");
-        for (int x = 0; x < counts.length; x++) {
-            for (int power = 0; power < 4; power++) {
-                constraints[power][x] = Math.pow(x, power);
-                moments[power] += counts[x] * constraints[power][x];
-            }
-            for (int row = 0; row < counts[x]; row++) csv.append(x).append(',').append(x * x).append('\n');
-        }
-        // n, sum(X), sum(X²), sum(XY) solve all four counts when Y=X².
-        var solved = new org.apache.commons.math3.linear.LUDecomposition(
-                new org.apache.commons.math3.linear.Array2DRowRealMatrix(constraints)).getSolver()
-                .solve(new org.apache.commons.math3.linear.ArrayRealVector(moments));
-        assertThat(solved.getEntry(0)).isCloseTo(1, within(1e-10));
+        for (int x = 0; x < counts.length; x++) for (int repeat = 0; repeat < counts[x]; repeat++)
+            csv.append(x).append(',').append(x * x).append('\n');
         initialise(csv.toString());
         var response = analytics.processSingleFileOnDisk("cohort.csv");
         assertThat(response.getContinuousFeatures()).hasSize(2);
-        assertThat(response.getNumericPairSummaries()).noneMatch(p -> !p.featureX().equals(p.featureY()));
-        assertThat(response.getCovariances()).isEmpty();
-        assertThat(response.getPearsonCorrelations()).isEmpty();
-        assertThat(response.getSpearmanCorrelations()).isEmpty();
+        assertThat(response.getNumericPairSummaries()).anySatisfy(pair -> {
+            assertThat(pair.featureX()).isEqualTo("X");
+            assertThat(pair.featureY()).isEqualTo("Y");
+            assertThat(pair.count()).isEqualTo(24);
+            assertThat(pair.frequencies()).isEmpty();
+        });
+        assertThat(response.getCovariances().get("X")).containsKey("Y");
     }
 
     @Test void typedFilterRefreshKeepsAllOverridesAndRecomputesCompleteRelationships() throws Exception {

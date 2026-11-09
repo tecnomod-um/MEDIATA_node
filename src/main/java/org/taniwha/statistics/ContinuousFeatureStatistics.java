@@ -16,10 +16,20 @@ public class ContinuousFeatureStatistics extends FeatureStatistics {
     private final double qrt3;
     private List<Double> histogram;
     private List<String> binRanges;
+    private String histogramStatus = "AVAILABLE";
     @com.fasterxml.jackson.annotation.JsonIgnore
     private double histogramBinWidth;
     public void setHistogramBinWidth(double width) { this.histogramBinWidth = width; }
-    public void suppressHistogram() { histogram = List.of(); binRanges = List.of(); }
+    public void suppressHistogram() {
+        histogram = List.of();
+        binRanges = List.of();
+        histogramStatus = "WITHHELD";
+    }
+    public void coarsenHistogram(List<Double> counts, List<String> ranges) {
+        histogram = List.copyOf(counts);
+        binRanges = List.copyOf(ranges);
+        histogramStatus = "COARSENED";
+    }
     private final List<Double> outliers;
     private List<NumericValueCount> valueCounts = List.of();
 
