@@ -382,7 +382,7 @@ public class AnalyticsService {
             double percentMissing = (double) missingValues / totalRecords * 100;
 
             List<Map.Entry<String, Integer>> sortedEntries = valueMap.entrySet().stream()
-                    .sorted((entry1, entry2) -> entry2.getValue().compareTo(entry1.getValue()))
+                    .sorted(Map.Entry.<String, Integer>comparingByValue().reversed().thenComparing(Map.Entry.comparingByKey()))
                     .toList();
 
             Map.Entry<String, Integer> modeEntry = sortedEntries.get(0);
@@ -441,6 +441,7 @@ public class AnalyticsService {
                     key, valueList.size(), percentMissing, missingValues, valueList.size(),
                     min, max, mean, stddev, q1, median, q3, bins, binRanges, outliers);
             feature.setValueCounts(AggregateDisclosure.numericFrequencies(valueList));
+            feature.setSummary(ContinuousSummary.calculateSorted(sorted, mean, stddev));
             feature.setHistogramBinWidth(((Number) histogramInfo.getOrDefault("binWidth", 0.0)).doubleValue());
             statisticsList.add(feature);
         });
