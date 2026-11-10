@@ -62,15 +62,53 @@ class DiscoveryDisclosureIntegrationTest {
             assertThat(numeric.getMedian()).isEqualTo(2.5);
             assertThat(numeric.getQrt1()).isEqualTo(1.75);
             assertThat(numeric.getQrt3()).isEqualTo(3.25);
+            assertThat(numeric.getSumCubedDeviations()).isZero();
+            assertThat(numeric.getSkewness()).isZero();
+            assertThat(numeric.getKurtosis()).isNotNull();
+            assertThat(numeric.getSumFourthDeviations()).isPositive();
+            assertThat(numeric.getSampleStdDev()).isGreaterThan(numeric.getStdDev());
+            assertThat(numeric.getMeanCiLower()).isLessThan(2.5);
+            assertThat(numeric.getMeanCiUpper()).isGreaterThan(2.5);
+            assertThat(numeric.getModes()).containsExactly(1., 2., 3., 4.);
+            assertThat(numeric.getModeFrequency()).isEqualTo(6);
         });
         assertThat(response.getCategoricalFeatures()).singleElement().satisfies(feature -> {
             var categorical = (org.taniwha.statistics.CategoricalFeatureStatistics) feature;
             assertThat(categorical.getModeFrequencyPercentage()).isEqualTo(50);
+            assertThat(categorical.getCardinality()).isEqualTo(2);
+            assertThat(categorical.getMode()).isEqualTo("F");
+            assertThat(categorical.getSecondMode()).isEqualTo("M");
             assertThat(categorical.getSecondModePercentage()).isEqualTo(50);
             assertThat(categorical.getPercentMissing()).isEqualTo(20);
         });
         assertThat(response.getDateFeatures()).singleElement().satisfies(date ->
                 assertThat(date.getMedian()).isEqualTo("2020-01-03"));
+    }
+
+    @Test void addedNumericalStatisticsFollowFilteringAndTypeChanges() throws Exception {
+        StringBuilder data = new StringBuilder("Age\n");
+        for (int value = 1; value <= 4; value++) data.append((value + "\n").repeat(6));
+        data.append("\n".repeat(6));
+        initialise(data.toString());
+        var filtered = analytics.filterDataByName("cohort.csv", less(3));
+        assertThat(filtered.getContinuousFeatures()).singleElement().satisfies(feature -> {
+            var numeric = (org.taniwha.statistics.ContinuousFeatureStatistics) feature;
+            assertThat(numeric.getCount()).isEqualTo(12);
+            assertThat(numeric.getMean()).isEqualTo(1.5);
+            assertThat(numeric.getSkewness()).isZero();
+            assertThat(numeric.getModes()).containsExactly(1., 2.);
+            assertThat(numeric.getModeFrequency()).isEqualTo(6);
+        });
+        var categorical = analytics.filterDataByName("cohort.csv", null, Map.of("Age", "categorical"));
+        assertThat(categorical.getContinuousFeatures()).isEmpty();
+        var restored = analytics.filterDataByName("cohort.csv", null, Map.of("Age", "continuous"));
+        assertThat(restored.getContinuousFeatures()).singleElement().satisfies(feature -> {
+            var numeric = (org.taniwha.statistics.ContinuousFeatureStatistics) feature;
+            assertThat(numeric.getCount()).isEqualTo(24);
+            assertThat(numeric.getMean()).isEqualTo(2.5);
+            assertThat(numeric.getSkewness()).isZero();
+            assertThat(numeric.getModes()).containsExactly(1., 2., 3., 4.);
+        });
     }
 
     @Test void entirelyMissingColumnsRemainExplicitlyUnavailableInsteadOfDisappearingFromMappings() throws Exception {

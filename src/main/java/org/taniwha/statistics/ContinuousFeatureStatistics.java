@@ -32,6 +32,29 @@ public class ContinuousFeatureStatistics extends FeatureStatistics {
     }
     private final List<Double> outliers;
     private List<NumericValueCount> valueCounts = List.of();
+    private Double sumCubedDeviations;
+    private Double sumFourthDeviations;
+    private Double sampleStdDev;
+    private Double skewness;
+    private Double kurtosis;
+    private Double meanCiLower;
+    private Double meanCiUpper;
+    private List<Double> modes = List.of();
+    private Long modeFrequency;
+    private String modeStatus = "Unavailable";
+
+    public void setSummary(ContinuousSummary summary) {
+        sumCubedDeviations = summary.sumCubedDeviations();
+        sumFourthDeviations = summary.sumFourthDeviations();
+        sampleStdDev = summary.sampleStdDev();
+        skewness = summary.skewness();
+        kurtosis = summary.kurtosis();
+        meanCiLower = summary.meanCiLower();
+        meanCiUpper = summary.meanCiUpper();
+        modes = summary.modes();
+        modeFrequency = summary.modeFrequency();
+        modeStatus = summary.modeStatus();
+    }
 
     public void setValueCounts(List<NumericValueCount> valueCounts) {
         this.valueCounts = List.copyOf(valueCounts);
