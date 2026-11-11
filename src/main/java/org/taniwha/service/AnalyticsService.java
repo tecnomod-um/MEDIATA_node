@@ -425,6 +425,10 @@ public class AnalyticsService {
             double percentMissing = (double) missingValues / totalRecords * 100;
             List<Double> sorted = new ArrayList<>(valueList);
             Collections.sort(sorted);
+            int cardinality = 1;
+            for (int index = 1; index < sorted.size(); index++) {
+                if (Double.compare(sorted.get(index - 1), sorted.get(index)) != 0) cardinality++;
+            }
             double min = sorted.get(0);
             double max = sorted.get(sorted.size() - 1);
             double q1 = percentileFromSorted(sorted, 25);
@@ -438,7 +442,7 @@ public class AnalyticsService {
             List<String> binRanges = (List<String>) histogramInfo.get(BIN_RANGES);
 
             ContinuousFeatureStatistics feature = new ContinuousFeatureStatistics(
-                    key, valueList.size(), percentMissing, missingValues, valueList.size(),
+                    key, valueList.size(), percentMissing, missingValues, cardinality,
                     min, max, mean, stddev, q1, median, q3, bins, binRanges, outliers);
             feature.setValueCounts(AggregateDisclosure.numericFrequencies(valueList));
             feature.setSummary(ContinuousSummary.calculateSorted(sorted, mean, stddev));
@@ -617,7 +621,7 @@ public class AnalyticsService {
                                   Map<String, String> overrides, DisclosureObservation observation) {
         buffer.rows++;
         observation.numeric(processRecord(row, buffer.continuous, buffer.categorical, buffer.dates, buffer.missing,
-                overrides, buffer.combinations));
+                overrides, buffer.combinations, observation));
     }
 
     private void completeProfile(DiscoveryAccumulator buffer, AnalyticsResponseDTO response, DisclosureObservation observation) {
@@ -677,7 +681,8 @@ public class AnalyticsService {
                                Map<String, Map<String, Integer>> categoricalData,
                                Map<String, List<String>> dateData, Map<String, Long> missingValueCounts,
                                Map<String, String> overrides,
-                               Map<Pair<String, String>, Map<Pair<String, String>, Integer>> categoryCombinationCounts) {
+                               Map<Pair<String, String>, Map<Pair<String, String>, Integer>> categoryCombinationCounts,
+                               DisclosureObservation observation) {
 
         Map<String, Double> numericRow = new HashMap<>();
         rowData.forEach((column, value) -> {
@@ -694,8 +699,9 @@ public class AnalyticsService {
             switch (featureType) {
                 case DATE_TYPE -> {
                     DateUtil.parseDate(trimmedValue).ifPresent(parsedDate -> {
-                        dateData.computeIfAbsent(column, k -> new ArrayList<>())
-                                .add(parsedDate.format(DateTimeFormatter.ISO_LOCAL_DATE));
+                        String date = parsedDate.format(DateTimeFormatter.ISO_LOCAL_DATE);
+                        dateData.computeIfAbsent(column, k -> new ArrayList<>()).add(date);
+                        observation.exactCell(column, date);
                         numericRow.put(column, (double) parsedDate.toLocalDate().toEpochDay());
                     });
                     continuousData.remove(column);
@@ -722,6 +728,7 @@ public class AnalyticsService {
                 case CATEGORICAL_TYPE -> {
                     categoricalData.computeIfAbsent(column, k -> new HashMap<>())
                             .merge(trimmedValue, 1, Integer::sum);
+                    observation.exactCell(column, trimmedValue);
                     continuousData.remove(column);
                     dateData.remove(column);
                 }

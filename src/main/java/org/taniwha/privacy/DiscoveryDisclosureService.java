@@ -15,35 +15,44 @@ public class DiscoveryDisclosureService {
     public DisclosureObservation begin(Path path) { return new DisclosureObservation(ledger.begin(path)); }
     public AnalyticsResponseDTO release(DisclosureObservation observation, AnalyticsResponseDTO response) {
         return ledger.release(observation.version, observation.rows, observation.selected, partition -> {
-            AnalyticsResponseDTO permitted = redact(response, observation);
-            permitted.setDisclosurePolicyVersion(1);
+            AnalyticsResponseDTO permitted = redact(response, observation, partition);
+            permitted.setDisclosurePolicyVersion(2);
             return permitted;
         });
     }
 
-    private AnalyticsResponseDTO redact(AnalyticsResponseDTO response, DisclosureObservation observation) {
+    private AnalyticsResponseDTO redact(AnalyticsResponseDTO response, DisclosureObservation observation, CohortPartition partition) {
         Set<String> numeric = new HashSet<>(), categorical = new HashSet<>();
         List<OmittedFeatureStatistics> omitted = new ArrayList<>(response.getOmittedFeatures());
         List<FeatureStatistics> continuous = new ArrayList<>(), categories = new ArrayList<>();
         List<DateFeatureStatistics> dates = new ArrayList<>();
         for (FeatureStatistics feature : response.getContinuousFeatures()) {
+            ContinuousFeatureStatistics item = (ContinuousFeatureStatistics) feature;
             BitSet cohort = observation.members(feature.getFeatureName(), true);
-            if (!valid(cohort, feature.getCount())) {
+            // Count, mean and the two endpoints recover both counts for a binary field.
+            if (!valid(cohort, feature.getCount()) || (item.getCardinality() == 2 && item.getValueCounts().isEmpty())) {
                 omit(omitted, feature);
                 continue;
             }
             numeric.add(feature.getFeatureName());
-            ContinuousFeatureStatistics item = (ContinuousFeatureStatistics) feature;
             HistogramDisclosure.release(item);
             continuous.add(item);
         }
-        for (FeatureStatistics feature : response.getCategoricalFeatures()) {
+        for (FeatureStatistics feature : response.getCategoricalFeatures().stream().sorted(Comparator.comparing(FeatureStatistics::getFeatureName)).toList()) {
             CategoricalFeatureStatistics item = (CategoricalFeatureStatistics) feature;
-            if (!valid(observation.members(feature.getFeatureName(), false), feature.getCount())) { omit(omitted, feature); continue; }
+            if (!valid(observation.members(feature.getFeatureName(), false), feature.getCount())
+                    || !observation.releaseExactCells(feature.getFeatureName(), item.getCategoryCounts(), partition)) {
+                omit(omitted, feature);
+                continue;
+            }
             categories.add(item); categorical.add(feature.getFeatureName());
         }
-        for (DateFeatureStatistics feature : response.getDateFeatures()) {
-            if (!valid(observation.members(feature.getFeatureName(), true), feature.getCount())) { omit(omitted, feature); continue; }
+        for (DateFeatureStatistics feature : response.getDateFeatures().stream().sorted(Comparator.comparing(FeatureStatistics::getFeatureName)).toList()) {
+            if (!valid(observation.members(feature.getFeatureName(), true), feature.getCount())
+                    || !observation.releaseExactCells(feature.getFeatureName(), feature.getDateHistogram(), partition)) {
+                omit(omitted, feature);
+                continue;
+            }
             dates.add(feature); numeric.add(feature.getFeatureName());
         }
         response.setContinuousFeatures(continuous); response.setCategoricalFeatures(categories); response.setDateFeatures(dates);

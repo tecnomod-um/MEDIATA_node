@@ -53,7 +53,7 @@ class DiscoveryDisclosureIntegrationTest {
         for (int i = 0; i < 6; i++) data.append(",,\n");
         initialise(data.toString());
         var response = analytics.filterDataByName("cohort.csv", null);
-        assertThat(response.getDisclosurePolicyVersion()).isEqualTo(1);
+        assertThat(response.getDisclosurePolicyVersion()).isEqualTo(2);
         assertThat(response.getStatisticsConventionVersion()).isEqualTo(1);
         assertThat(response.getContinuousFeatures()).singleElement().satisfies(feature -> {
             var numeric = (org.taniwha.statistics.ContinuousFeatureStatistics) feature;
@@ -114,7 +114,7 @@ class DiscoveryDisclosureIntegrationTest {
     @Test void entirelyMissingColumnsRemainExplicitlyUnavailableInsteadOfDisappearingFromMappings() throws Exception {
         initialise("Age,Value\n" + ",1\n".repeat(12));
         var response = analytics.filterDataByName("cohort.csv", null);
-        assertThat(response.getDisclosurePolicyVersion()).isEqualTo(1);
+        assertThat(response.getDisclosurePolicyVersion()).isEqualTo(2);
         assertThat(response.getContinuousFeatures()).singleElement().satisfies(feature ->
                 assertThat(feature.getFeatureName()).isEqualTo("Value"));
         assertThat(response.getOmittedFeatures()).singleElement().satisfies(feature -> {
@@ -142,7 +142,7 @@ class DiscoveryDisclosureIntegrationTest {
         analytics.startDiscoveryJob(jobId, List.of("cohort.csv"));
         jobs.getJob(jobId).getFuture().get(10, java.util.concurrent.TimeUnit.SECONDS);
         assertThat(jobs.getJob(jobId).getResults()).singleElement().satisfies(response ->
-                assertThat(response.getDisclosurePolicyVersion()).isEqualTo(1));
+                assertThat(response.getDisclosurePolicyVersion()).isEqualTo(2));
         blocked(analytics.filterDataByName("cohort.csv", less(31)));
 
         Files.writeString(base.resolve("datasets/cohort.csv"), csv() + "99,C\n");
@@ -174,17 +174,36 @@ class DiscoveryDisclosureIntegrationTest {
         });
     }
 
-    @Test void uncommonValuesRemainAvailableAsAggregateStatisticsAndCategoricalCharts() throws Exception {
+    @Test void categoricalOverrideCannotExposeOneRecordThroughCountsModesOrComplements() throws Exception {
         StringBuilder csv = new StringBuilder("Age,Flag\n");
         for (int i = 0; i < 24; i++) csv.append(20 + i).append(',').append(i == 0 ? "1" : "0").append('\n');
         initialise(csv.toString());
         var response = analytics.processSingleFileOnDisk("cohort.csv");
-        assertThat(response.getContinuousFeatures()).extracting("featureName").contains("Flag");
-        assertThat(response.getContinuousFeatures()).filteredOn(f -> f.getFeatureName().equals("Flag")).singleElement()
-                .hasFieldOrPropertyWithValue("valueCounts", List.of());
+        assertThat(response.getContinuousFeatures()).extracting("featureName").containsExactly("Age");
+        assertThat(response.getNumericPairSummaries()).noneMatch(pair -> pair.featureX().equals("Flag") || pair.featureY().equals("Flag"));
         response = analytics.filterDataByName("cohort.csv", null, Map.of("Flag", "categorical"));
-        assertThat(response.getCategoricalFeatures()).singleElement()
-                .hasFieldOrPropertyWithValue("categoryCounts", Map.of("0", 23, "1", 1));
+        assertThat(response.getCategoricalFeatures()).isEmpty();
+        assertThat(response.getOmittedFeatures()).singleElement()
+                .extracting("featureName", "count", "missingValuesCount").containsExactly("Flag", 0L, 0L);
+    }
+
+    @Test void exactDateAndCategorySummariesWithholdSmallCellsAndMissingComplements() throws Exception {
+        initialise("Age,Group,VisitDate\n" + "40,A,2020-01-01\n".repeat(6)
+                + "40,B,2020-01-01\n".repeat(6) + "40,,2020-01-02\n");
+        var response = analytics.processSingleFileOnDisk("cohort.csv");
+        assertThat(response.getContinuousFeatures()).extracting("featureName").containsExactly("Age");
+        assertThat(response.getCategoricalFeatures()).isEmpty();
+        assertThat(response.getDateFeatures()).isEmpty();
+        assertThat(response.getOmittedFeatures()).extracting("featureName").containsExactlyInAnyOrder("Group", "VisitDate");
+    }
+
+    @Test void aLaterFilterCannotSplitPreviouslyReleasedCategoryCountsIntoSmallCells() throws Exception {
+        initialise("Age,Group\n" + "20,A\n".repeat(7) + "20,B\n".repeat(5)
+                + "40,A\n".repeat(5) + "40,B\n".repeat(7));
+        var whole = analytics.processSingleFileOnDisk("cohort.csv");
+        assertThat(whole.getCategoricalFeatures()).singleElement()
+                .hasFieldOrPropertyWithValue("categoryCounts", Map.of("A", 12, "B", 12));
+        blocked(analytics.filterDataByName("cohort.csv", less(30)));
     }
 
     @Test void everyClinicalFeatureRetainsAHistogramDespiteUncommonOrdinalValues() throws Exception {
@@ -246,7 +265,7 @@ class DiscoveryDisclosureIntegrationTest {
         initialise(csv.toString());
         Map<String, String> types = Map.of("X", "categorical", "Y", "categorical");
         var response = analytics.filterDataByName("cohort.csv", null, types);
-        assertThat(response.getDisclosurePolicyVersion()).isEqualTo(1);
+        assertThat(response.getDisclosurePolicyVersion()).isEqualTo(2);
         assertThat(response.getFeatureTypeSummaryVersion()).isEqualTo(1);
         assertThat(response.getFeatureTypes()).isEqualTo(types);
         assertThat(response.getCategoricalFeatures()).hasSize(4);
@@ -287,7 +306,7 @@ class DiscoveryDisclosureIntegrationTest {
         }
         initialise(csv.toString());
         var response = analytics.processSingleFileOnDisk("cohort.csv");
-        assertThat(response.getDisclosurePolicyVersion()).isEqualTo(1);
+        assertThat(response.getDisclosurePolicyVersion()).isEqualTo(2);
         assertThat(response.getContinuousFeatures()).hasSize(2);
         assertThat(response.getCategoricalFeatures()).hasSize(2);
         assertThat(response.getDateFeatures()).hasSize(1);
