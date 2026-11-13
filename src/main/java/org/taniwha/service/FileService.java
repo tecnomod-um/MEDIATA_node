@@ -479,6 +479,8 @@ public class FileService {
     }
 
     public List<String> listDatasetFiles() {
+        // TODO: Incorporate additional file extensions via the file connector.
+        // Combine this list with configured database sources in the Discovery catalog, keeping file-only callers separate.
         return listFilesInFolder(datasetsFolder);
     }
 

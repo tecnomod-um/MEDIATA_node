@@ -1,5 +1,7 @@
 package org.taniwha.controller;
 
+import org.taniwha.service.jobs.AnalyticsJobState;
+
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import org.slf4j.Logger;
@@ -79,7 +81,7 @@ public class AnalyticsController {
     public ResponseEntity<ProcessingStatusDTO> processListStatus(
             @PathVariable String jobId
     ) {
-        AnalyticsProcessingJobs.JobState s = jobs.getJob(jobId);
+        AnalyticsJobState s = jobs.getJob(jobId);
         if (s == null) return ResponseEntity.notFound().build();
         // Do NOT include results in polling response
         return ResponseEntity.ok(jobs.toDto(s, false));
@@ -88,7 +90,7 @@ public class AnalyticsController {
     @Operation(summary = "Cancel a profiling job")
     @PostMapping("/processList/cancel/{jobId}")
     public ResponseEntity<ProcessingStatusDTO> cancelProcessList(@PathVariable String jobId) {
-        AnalyticsProcessingJobs.JobState s = jobs.getJob(jobId);
+        AnalyticsJobState s = jobs.getJob(jobId);
         if (s == null) {
             logger.warn("Received cancel request for unknown discovery jobId={}", jobId);
             return ResponseEntity.notFound().build();
@@ -104,7 +106,7 @@ public class AnalyticsController {
     @Operation(summary = "Get profiling job results")
     @GetMapping("/processList/result/{jobId}")
     public ResponseEntity<List<AnalyticsResponseDTO>> processListResult(@PathVariable String jobId) {
-        AnalyticsProcessingJobs.JobState s = jobs.getJob(jobId);
+        AnalyticsJobState s = jobs.getJob(jobId);
         if (s == null) return ResponseEntity.notFound().build();
 
         if (s.getState() == ProcessingStatusDTO.State.CANCELED) {

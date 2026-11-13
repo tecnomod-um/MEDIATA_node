@@ -29,7 +29,7 @@ class CleaningProcessingJobsTest {
     void getJob_withValidJobId_shouldReturnJobState() {
         String jobId = jobs.createJob();
 
-        CleaningProcessingJobs.JobState state = jobs.getJob(jobId);
+        CleaningJobState state = jobs.getJob(jobId);
 
         assertThat(state).isNotNull();
         assertThat(state.getJobId()).isEqualTo(jobId);
@@ -51,7 +51,7 @@ class CleaningProcessingJobsTest {
 
         jobs.update(jobId, 45, "file.csv", "Cleaning file.csv");
 
-        CleaningProcessingJobs.JobState state = jobs.getJob(jobId);
+        CleaningJobState state = jobs.getJob(jobId);
         assertThat(state.getPercent().get()).isEqualTo(45);
         assertThat(state.getCurrentFile()).isEqualTo("file.csv");
         assertThat(state.getMessage()).isEqualTo("Cleaning file.csv");
@@ -82,7 +82,7 @@ class CleaningProcessingJobsTest {
 
         jobs.complete(jobId, "Cleaning completed successfully.");
 
-        CleaningProcessingJobs.JobState state = jobs.getJob(jobId);
+        CleaningJobState state = jobs.getJob(jobId);
         assertThat(state.getState()).isEqualTo(CleaningProcessingJobs.State.DONE);
         assertThat(state.getPercent().get()).isEqualTo(100);
         assertThat(state.getCurrentFile()).isNull();
@@ -103,7 +103,7 @@ class CleaningProcessingJobsTest {
 
         jobs.fail(jobId, "Boom");
 
-        CleaningProcessingJobs.JobState state = jobs.getJob(jobId);
+        CleaningJobState state = jobs.getJob(jobId);
         assertThat(state.getState()).isEqualTo(CleaningProcessingJobs.State.ERROR);
         assertThat(state.getMessage()).isEqualTo("Boom");
         assertThat(state.getPercent().get()).isEqualTo(55);

@@ -10,7 +10,7 @@ import java.util.stream.Collectors;
 public class MappingSpecAdapter {
 
     private static final Set<String> TYPE_MARKERS = Set.of("integer", "double", "date", "natural language");
-    private static final Object UNSET = new Object();
+    static final Object UNSET = new Object();
 
     public String sourceFileName(String sourceId) {
         if (sourceId == null) return "";
@@ -570,32 +570,8 @@ public class MappingSpecAdapter {
         return s == null ? "" : s;
     }
 
-    private record SourceColumnRef(String sourceId, String fileName, String column) {}
+    record SourceColumnRef(String sourceId, String fileName, String column) {}
 
     private record LegacyMatcher(String fileName, String groupColumn, Object value) {}
 
-    private static final class RangeAccumulator {
-        private SourceColumnRef ref;
-        private Object min = UNSET;
-        private Object max = UNSET;
-        private boolean valid = true;
-
-        void accept(SourceColumnRef nextRef, String op, Object literal) {
-            if (!valid) return;
-
-            if (ref == null) {
-                ref = nextRef;
-            } else if (!Objects.equals(ref.sourceId(), nextRef.sourceId())
-                    || !Objects.equals(ref.column(), nextRef.column())) {
-                valid = false;
-                return;
-            }
-
-            switch (op) {
-                case ">=", ">" -> min = literal;
-                case "<=", "<" -> max = literal;
-                default -> valid = false;
-            }
-        }
-    }
 }

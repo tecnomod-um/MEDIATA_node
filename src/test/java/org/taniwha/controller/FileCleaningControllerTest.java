@@ -1,5 +1,7 @@
 package org.taniwha.controller;
 
+import org.taniwha.service.jobs.CleaningJobState;
+
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -207,7 +209,7 @@ class FileCleaningControllerTest {
     @Test
     void getCleanResult_doneStateNullResult_returnsDefaultMessage() throws Exception {
         String jobId = cleaningJobs.createJob();
-        CleaningProcessingJobs.JobState s = cleaningJobs.getJob(jobId);
+        CleaningJobState s = cleaningJobs.getJob(jobId);
         s.setState(CleaningProcessingJobs.State.DONE);
         s.setResult(null);
 

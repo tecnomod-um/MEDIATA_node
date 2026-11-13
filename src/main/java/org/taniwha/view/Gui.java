@@ -1,7 +1,6 @@
 package org.taniwha.view;
 
 import javafx.application.Platform;
-import javafx.concurrent.Task;
 import javafx.geometry.Insets;
 import javafx.geometry.Pos;
 import javafx.scene.Scene;
@@ -174,40 +173,10 @@ public class Gui extends javafx.application.Application {
     private void handleConnect(TextField portField, TextField nodeIpField, TextField nameField, TextField descField, String color) {
         isAppRunning = true;
         progressBar.setVisible(true);
-        Task<Void> task = new Task<>() {
-            @Override
-            protected Void call() {
-                try {
-                    String port = portField.getText();
-                    String nodeIp = nodeIpField.getText();
-                    String name = nameField.getText();
-                    String desc = descField.getText();
-
-                    log("Port: " + port);
-                    log("Node IP: " + nodeIp);
-                    log("Name: " + name);
-                    log("Description: " + desc);
-                    log("Color: " + color);
-
-                    String[] args = new String[]{
-                            "--PORT=" + port,
-                            "--NODE_IP=" + nodeIp,
-                            "--NAME=" + name,
-                            "--DESC=" + desc,
-                            "--COLOR=" + color
-                    };
-                    Application.launchSpringBootApp(args);
-                } catch (Exception e) {
-                    Platform.runLater(() -> log("Error starting the application: " + e.getMessage()));
-                } finally {
-                    Platform.runLater(() -> {
-                        progressBar.setVisible(false);
-                        isAppRunning = false;
-                    });
-                }
-                return null;
-            }
-        };
+        NodeStartupTask task = new NodeStartupTask(portField, nodeIpField, nameField, descField, color, this::log, () -> {
+            progressBar.setVisible(false);
+            isAppRunning = false;
+        });
         new Thread(task).start();
     }
 

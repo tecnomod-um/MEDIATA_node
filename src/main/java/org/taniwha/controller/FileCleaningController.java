@@ -1,5 +1,7 @@
 package org.taniwha.controller;
 
+import org.taniwha.service.jobs.CleaningJobState;
+
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import org.slf4j.Logger;
@@ -94,7 +96,7 @@ public class FileCleaningController {
     @Operation(summary = "Get cleaning job status")
     @GetMapping("/clean/status/{jobId}")
     public ResponseEntity<Map<String, Object>> getCleanStatus(@PathVariable String jobId) {
-        CleaningProcessingJobs.JobState s = cleaningJobs.getJob(jobId);
+        CleaningJobState s = cleaningJobs.getJob(jobId);
         if (s == null) {
             return ResponseEntity.notFound().build();
         }
@@ -111,7 +113,7 @@ public class FileCleaningController {
     @Operation(summary = "Get cleaning job results")
     @GetMapping("/clean/result/{jobId}")
     public ResponseEntity<Map<String, Object>> getCleanResult(@PathVariable String jobId) {
-        CleaningProcessingJobs.JobState s = cleaningJobs.getJob(jobId);
+        CleaningJobState s = cleaningJobs.getJob(jobId);
         if (s == null) {
             return ResponseEntity.notFound().build();
         }

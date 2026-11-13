@@ -30,7 +30,7 @@ class HarmonizationProcessingJobsTest {
     void getJob_withValidJobId_shouldReturnJobState() {
         String jobId = jobs.createJob();
 
-        HarmonizationProcessingJobs.JobState state = jobs.getJob(jobId);
+        HarmonizationJobState state = jobs.getJob(jobId);
 
         assertThat(state).isNotNull();
         assertThat(state.getJobId()).isEqualTo(jobId);
@@ -52,7 +52,7 @@ class HarmonizationProcessingJobsTest {
 
         jobs.update(jobId, 35, "dataset.csv", "Processing dataset.csv");
 
-        HarmonizationProcessingJobs.JobState state = jobs.getJob(jobId);
+        HarmonizationJobState state = jobs.getJob(jobId);
         assertThat(state.getPercent().get()).isEqualTo(35);
         assertThat(state.getCurrentDataset()).isEqualTo("dataset.csv");
         assertThat(state.getMessage()).isEqualTo("Processing dataset.csv");
@@ -83,7 +83,7 @@ class HarmonizationProcessingJobsTest {
 
         jobs.complete(jobId, "Files processed successfully.");
 
-        HarmonizationProcessingJobs.JobState state = jobs.getJob(jobId);
+        HarmonizationJobState state = jobs.getJob(jobId);
         assertThat(state.getState()).isEqualTo(HarmonizationStatusDTO.State.DONE);
         assertThat(state.getPercent().get()).isEqualTo(100);
         assertThat(state.getCurrentDataset()).isNull();
@@ -104,7 +104,7 @@ class HarmonizationProcessingJobsTest {
 
         jobs.fail(jobId, "Failure");
 
-        HarmonizationProcessingJobs.JobState state = jobs.getJob(jobId);
+        HarmonizationJobState state = jobs.getJob(jobId);
         assertThat(state.getState()).isEqualTo(HarmonizationStatusDTO.State.ERROR);
         assertThat(state.getMessage()).isEqualTo("Failure");
         assertThat(state.getPercent().get()).isEqualTo(65);

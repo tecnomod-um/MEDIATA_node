@@ -38,6 +38,7 @@ public class DataProcessingService {
     }
 
     public void streamRows(Path path, Consumer<Map<String,String>> rowConsumer) throws IOException {
+        // TODO: Reuse the CSV/XLSX readers in a file connector. Database connectors should emit the same row shape.
         fileFilter.validate(path);
         String name = path.getFileName().toString().toLowerCase();
         if (name.endsWith(".csv")) {
@@ -356,6 +357,7 @@ public class DataProcessingService {
     // filtering logic
 
     public boolean matchesDiscoveryFilters(Map<String, String> rowData, Map<String, Object> filters) {
+        // TODO: Verify filter parity across connectors for missing values, dates, numbers and category codes.
         return filters == null || filters.isEmpty() || applyFilters(rowData, filters);
     }
 

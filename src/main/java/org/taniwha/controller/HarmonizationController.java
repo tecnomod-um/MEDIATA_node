@@ -1,5 +1,7 @@
 package org.taniwha.controller;
 
+import org.taniwha.service.jobs.HarmonizationJobState;
+
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import org.slf4j.Logger;
@@ -62,7 +64,7 @@ public class HarmonizationController {
     @Operation(summary = "Get harmonization job status")
     @GetMapping("/parse/status/{jobId}")
     public ResponseEntity<HarmonizationStatusDTO> parseStatus(@PathVariable String jobId) {
-        HarmonizationProcessingJobs.JobState s = jobs.getJob(jobId);
+        HarmonizationJobState s = jobs.getJob(jobId);
         if (s == null) return ResponseEntity.notFound().build();
         return ResponseEntity.ok(jobs.toDto(s, false));
     }
@@ -70,7 +72,7 @@ public class HarmonizationController {
     @Operation(summary = "Get harmonization job results")
     @GetMapping("/parse/result/{jobId}")
     public ResponseEntity<String> parseResult(@PathVariable String jobId) {
-        HarmonizationProcessingJobs.JobState s = jobs.getJob(jobId);
+        HarmonizationJobState s = jobs.getJob(jobId);
         if (s == null) return ResponseEntity.notFound().build();
 
         if (s.getState() == HarmonizationStatusDTO.State.ERROR) {

@@ -1,5 +1,7 @@
 package org.taniwha.service;
 
+import org.taniwha.service.jobs.HarmonizationJobState;
+
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -509,7 +511,7 @@ class HarmonizerServiceTest {
             Thread.sleep(50);
         }
 
-        HarmonizationProcessingJobs.JobState state = jobs.getJob(jobId);
+        HarmonizationJobState state = jobs.getJob(jobId);
         assertThat(state.getState()).isEqualTo(HarmonizationStatusDTO.State.DONE);
         assertThat(state.getResult()).isEqualTo("Files processed successfully.");
     }

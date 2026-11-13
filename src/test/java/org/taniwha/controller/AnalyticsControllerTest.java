@@ -1,5 +1,7 @@
 package org.taniwha.controller;
 
+import org.taniwha.service.jobs.AnalyticsJobState;
+
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -155,7 +157,7 @@ class AnalyticsControllerTest {
 
     @Test
     void processListStatus_knownJob_returnsStatusDto() throws Exception {
-        AnalyticsProcessingJobs.JobState state = mock(AnalyticsProcessingJobs.JobState.class);
+        AnalyticsJobState state = mock(AnalyticsJobState.class);
         when(jobs.getJob("job-1")).thenReturn(state);
 
         ProcessingStatusDTO dto = new ProcessingStatusDTO("job-1", ProcessingStatusDTO.State.RUNNING, 55, "file.csv", null, null);
@@ -177,7 +179,7 @@ class AnalyticsControllerTest {
 
     @Test
     void cancelProcessList_knownJob_cancelsAndReturnsDto() throws Exception {
-        AnalyticsProcessingJobs.JobState state = mock(AnalyticsProcessingJobs.JobState.class);
+        AnalyticsJobState state = mock(AnalyticsJobState.class);
         when(jobs.getJob("job-99")).thenReturn(state);
 
         ProcessingStatusDTO dto = new ProcessingStatusDTO(
@@ -201,7 +203,7 @@ class AnalyticsControllerTest {
 
     @Test
     void processListResult_canceledState_returns410() throws Exception {
-        AnalyticsProcessingJobs.JobState state = mock(AnalyticsProcessingJobs.JobState.class);
+        AnalyticsJobState state = mock(AnalyticsJobState.class);
         when(state.getState()).thenReturn(ProcessingStatusDTO.State.CANCELED);
         when(jobs.getJob("j")).thenReturn(state);
 
@@ -213,7 +215,7 @@ class AnalyticsControllerTest {
 
     @Test
     void processListResult_notDoneState_returns409() throws Exception {
-        AnalyticsProcessingJobs.JobState state = mock(AnalyticsProcessingJobs.JobState.class);
+        AnalyticsJobState state = mock(AnalyticsJobState.class);
         when(state.getState()).thenReturn(ProcessingStatusDTO.State.RUNNING);
         when(jobs.getJob("j")).thenReturn(state);
 
@@ -223,7 +225,7 @@ class AnalyticsControllerTest {
 
     @Test
     void processListResult_doneState_returns200WithResults() throws Exception {
-        AnalyticsProcessingJobs.JobState state = mock(AnalyticsProcessingJobs.JobState.class);
+        AnalyticsJobState state = mock(AnalyticsJobState.class);
         when(state.getState()).thenReturn(ProcessingStatusDTO.State.DONE);
         when(state.getResults()).thenReturn(List.of(new AnalyticsResponseDTO("r1")));
         when(jobs.getJob("j")).thenReturn(state);
@@ -237,7 +239,7 @@ class AnalyticsControllerTest {
 
     @Test
     void processListResult_doneStateNullResults_returns200WithEmptyList() throws Exception {
-        AnalyticsProcessingJobs.JobState state = mock(AnalyticsProcessingJobs.JobState.class);
+        AnalyticsJobState state = mock(AnalyticsJobState.class);
         when(state.getState()).thenReturn(ProcessingStatusDTO.State.DONE);
         when(state.getResults()).thenReturn(null);
         when(jobs.getJob("j")).thenReturn(state);

@@ -115,6 +115,7 @@ public class AnalyticsService {
 
     /** Backend decides whether discovery should run in "progress mode". */
     public boolean isAnyHugeForDiscovery(List<String> fileNames) {
+        // TODO: Use the connector's size estimate for async profiling when the source has no local file size.
         try {
             for (String fn : fileNames) {
                 Path p = Paths.get(fileService.getDatasetFilePath(fn));
@@ -588,9 +589,11 @@ public class AnalyticsService {
             response.setFeatureTypeSummaryVersion(1);
             response.setFeatureTypes(overrides);
             Path path = Paths.get(fileService.getDatasetFilePath(fileName));
+            // TODO: Use connector snapshot identity when enabling disclosure history for non-file sources.
             DisclosureObservation observation = disclosure.begin(path);
             DiscoveryAccumulator buffer = new DiscoveryAccumulator();
             long[] scanned = {0};
+            // TODO: Open the selected source by dataset ID and stream its rows through this same filter and statistics path.
             dataProcessingService.streamRows(path, row -> {
                 if (Thread.currentThread().isInterrupted()) throw new CancellationException("Discovery interrupted");
                 progress.accept(++scanned[0]);
