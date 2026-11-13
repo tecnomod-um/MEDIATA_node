@@ -2,7 +2,7 @@ package org.taniwha.privacy;
 
 import java.io.IOException;
 
-/** Local site operator command. It never starts the web service. */
+// Local site operator command
 public final class DiscoveryDatasetRegistration {
     private static final String COMMAND = "--register-discovery-dataset";
     private static final String PATH_OPTION = "--app.path=";

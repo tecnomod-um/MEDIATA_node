@@ -4,7 +4,7 @@ import java.util.*;
 import org.taniwha.util.AlignedNumericData;
 import org.taniwha.util.AggregateDisclosure;
 
-/** Transient memberships built during parsing; only indices reach the local ledger. */
+// Transient memberships built during parsing; only indices reach the local ledger
 public final class DisclosureObservation {
     final DiscoveryQueryLedger.Version version;
     final BitSet selected = new BitSet();

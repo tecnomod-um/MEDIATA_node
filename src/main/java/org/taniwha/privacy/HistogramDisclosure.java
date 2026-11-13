@@ -8,7 +8,7 @@ import java.util.ArrayList;
 import java.util.List;
 import org.taniwha.util.AggregateDisclosure;
 
-/** Retains the finest permitted adjacent ranges without releasing protected cells. */
+// Retains the finest permitted adjacent ranges without releasing protected cells
 final class HistogramDisclosure {
     private HistogramDisclosure() {}
 

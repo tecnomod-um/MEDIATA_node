@@ -7,12 +7,13 @@ import java.nio.file.Path;
 import java.util.*;
 import org.taniwha.util.AggregateDisclosure;
 
-/** Releases descriptive aggregates; the ledger separately gates requested query cohorts. */
+//  Releases descriptive aggregates, the ledger gates requested query cohorts
 @Service
 public class DiscoveryDisclosureService {
     private final DiscoveryQueryLedger ledger;
     public DiscoveryDisclosureService(DiscoveryQueryLedger ledger) { this.ledger = ledger; }
     public DisclosureObservation begin(Path path) { return new DisclosureObservation(ledger.begin(path)); }
+
     public AnalyticsResponseDTO release(DisclosureObservation observation, AnalyticsResponseDTO response) {
         return ledger.release(observation.version, observation.rows, observation.selected, partition -> {
             AnalyticsResponseDTO permitted = redact(response, observation, partition);
@@ -82,12 +83,15 @@ public class DiscoveryDisclosureService {
                 feature.getReason().startsWith("Suppressed for privacy:") ? feature.getReason() : "Suppressed for privacy: release controls")).toList());
         return response;
     }
+
     private boolean valid(BitSet cohort, long count) {
         return cohort != null && count >= AggregateDisclosure.MIN_COUNT && cohort.cardinality() == count;
     }
+
     private void omit(List<OmittedFeatureStatistics> omitted, FeatureStatistics feature) {
         omitted.add(new OmittedFeatureStatistics(feature.getFeatureName(), 0, 0, 0, "Suppressed for privacy: release controls"));
     }
+
     private Map<String, Map<String, Double>> filterMatrix(Map<String, Map<String, Double>> matrix, Set<List<String>> allowed) {
         Map<String, Map<String, Double>> result = new HashMap<>();
         matrix.forEach((x, values) -> values.forEach((y, value) -> {

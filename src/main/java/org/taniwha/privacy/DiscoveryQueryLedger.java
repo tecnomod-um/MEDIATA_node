@@ -13,15 +13,17 @@ import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Function;
 
-/** Durable, shared release history for one Java node. Lock and commit precede disclosure. */
+// Durable, shared release history for one Java node. Lock and commit precede disclosure.
 @Component
 public class DiscoveryQueryLedger {
     public static final String BLOCKED = "Statistics withheld by disclosure controls. The query history or dataset requires review.";
     public static final String UNREGISTERED = "Statistics withheld by disclosure controls. Ask the site operator to register this dataset for Discovery.";
+
     public static final class Blocked extends RuntimeException {
         public Blocked() { this(BLOCKED); }
         private Blocked(String message) { super(message); }
     }
+
     public record Version(Path path, String pathKey, String contentKey) {}
     private record Registry(Map<String, String> paths, Set<String> approved, Set<String> initialised) {}
     private record State(int rows, int[] labels) {}
@@ -145,18 +147,22 @@ public class DiscoveryQueryLedger {
         if (value.paths() == null || value.approved() == null || value.initialised() == null) throw new Blocked();
         return value;
     }
+
     private Path checkedPath(Path path) throws IOException {
         Path real = path.toRealPath();
         if (!real.startsWith(datasets.toRealPath()) || !Files.isRegularFile(real)) throw new Blocked();
         return real;
     }
+
     private static boolean supportedDataset(String name) {
         String lower = name.toLowerCase(Locale.ROOT);
         return lower.endsWith(".csv") || lower.endsWith(".xlsx");
     }
+
     private String pathKey(Path path) {
         return hash(path.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8));
     }
+
     private String digest(Path path) throws IOException {
         try (InputStream input = Files.newInputStream(path)) {
             MessageDigest digest = MessageDigest.getInstance("SHA-256"); byte[] buffer = new byte[65536]; int n;
@@ -164,10 +170,12 @@ public class DiscoveryQueryLedger {
             return HexFormat.of().formatHex(digest.digest());
         } catch (NoSuchAlgorithmException e) { throw new IllegalStateException(e); }
     }
+
     private String hash(byte[] value) {
         try { return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(value)); }
         catch (NoSuchAlgorithmException e) { throw new IllegalStateException(e); }
     }
+
     private void write(Path destination, Object value) throws IOException {
         Path temporary = Files.createTempFile(directory, "commit-", ".tmp");
         try {
@@ -178,6 +186,7 @@ public class DiscoveryQueryLedger {
             Files.move(temporary, destination, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
         } finally { Files.deleteIfExists(temporary); }
     }
+
     private interface IOAction<T> { T run() throws IOException; }
     private <T> T locked(IOAction<T> action) throws IOException {
         synchronized (LOCKS.computeIfAbsent(directory, ignored -> new Object())) {

@@ -4,7 +4,7 @@ import org.taniwha.util.AggregateDisclosure;
 import java.util.*;
 import java.util.function.IntUnaryOperator;
 
-/** Node-local membership equivalence classes; storage is linear in the dataset size. */
+// Node-local membership equivalence classes. storage is linear in the dataset size
 public final class CohortPartition {
     private int[] labels;
     public CohortPartition(int[] labels) { this.labels = labels.clone(); }
@@ -19,7 +19,7 @@ public final class CohortPartition {
         return true;
     }
 
-    /** Check all cells and their complement atomically, in one pass over the dataset. */
+    // Check all cells and their complement atomically, in one pass over the dataset
     boolean allowDisjoint(Collection<BitSet> cells) {
         int[] groups = new int[labels.length];
         int group = 0;
