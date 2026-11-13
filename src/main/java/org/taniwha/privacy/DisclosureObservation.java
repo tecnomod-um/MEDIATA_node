@@ -6,7 +6,7 @@ import org.taniwha.util.AggregateDisclosure;
 
 // Transient memberships built during parsing; only indices reach the local ledger
 public final class DisclosureObservation {
-    final DiscoveryQueryLedger.Version version;
+    final DiscoveryDatasetVersion version;
     final BitSet selected = new BitSet();
     int rows;
     private int numericCursor = -1;
@@ -15,7 +15,7 @@ public final class DisclosureObservation {
     private final Map<String, Map<String, BitSet>> exactCells = new HashMap<>();
     private final Set<String> overCellLimit = new HashSet<>();
 
-    public DisclosureObservation(DiscoveryQueryLedger.Version version) { this.version = version; }
+    public DisclosureObservation(DiscoveryDatasetVersion version) { this.version = version; }
     public void row(Map<String, String> values, boolean included) {
         int index = rows++;
         if (!included) return;

@@ -14,7 +14,7 @@ import org.taniwha.util.AggregateDisclosure;
 import org.taniwha.util.DateUtil;
 import org.taniwha.privacy.DiscoveryDisclosureService;
 import org.taniwha.privacy.DisclosureObservation;
-import org.taniwha.privacy.DiscoveryQueryLedger;
+import org.taniwha.privacy.DiscoveryDisclosureBlockedException;
 import org.taniwha.util.NumberUtil;
 import org.taniwha.util.FeatureTypeOverrides;
 
@@ -296,14 +296,12 @@ public class AnalyticsService {
     }
 
     private AnalyticsResponseDTO blockedResponse(String fileName, Exception failure) {
-        AnalyticsResponseDTO safe = new AnalyticsResponseDTO(failure instanceof DiscoveryQueryLedger.Blocked
-                ? failure.getMessage() : failure instanceof InvalidNumericConversion
+        AnalyticsResponseDTO safe = new AnalyticsResponseDTO(failure instanceof DiscoveryDisclosureBlockedException
+                ? failure.getMessage() : failure instanceof InvalidNumericConversionException
                 ? "This field cannot be converted to continuous without an explicit numerical mapping." : "Error processing statistics.");
         safe.setFileName(fileName);
         return safe;
     }
-
-    private static final class InvalidNumericConversion extends RuntimeException {}
 
     private void filterCategoricalData(Map<String, Map<String, Integer>> categoricalData,
                                        List<OmittedFeatureStatistics> omittedFeatures,
@@ -717,7 +715,7 @@ public class AnalyticsService {
                         if (CONTINUOUS_TYPE.equals(override)) {
                             // Encounter-order category codes differ across nodes and have no
                             // valid numerical interpretation for moments or pooled relationships.
-                            throw new InvalidNumericConversion();
+                            throw new InvalidNumericConversionException();
                         } else {
                             logger.debug("A numeric value could not be parsed");
                         }

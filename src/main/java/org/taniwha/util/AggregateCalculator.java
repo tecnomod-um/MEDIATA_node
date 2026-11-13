@@ -7,7 +7,9 @@ import org.apache.commons.math3.stat.correlation.SpearmansCorrelation;
 import org.apache.commons.math3.stat.inference.ChiSquareTest;
 import org.apache.commons.math3.util.Pair;
 import org.taniwha.statistics.ChiSquaredTestResult;
+import org.taniwha.statistics.NumericPairCount;
 import org.taniwha.statistics.NumericPairSummary;
+import org.taniwha.statistics.CategoricalPairCount;
 import org.taniwha.statistics.CategoricalPairSummary;
 import org.apache.commons.math3.stat.StatUtils;
 import org.apache.commons.math3.stat.descriptive.moment.Variance;
@@ -43,10 +45,10 @@ public class AggregateCalculator {
             for (int k = 0; k < xs.length && cells.size() <= AggregateDisclosure.MAX_CELLS; k++) {
                 cells.merge(Pair.create(xs[k], ys[k]), 1L, Long::sum);
             }
-            List<NumericPairSummary.Cell> frequencies = List.of();
+            List<NumericPairCount> frequencies = List.of();
             if (cells.size() <= AggregateDisclosure.MAX_CELLS
                     && cells.values().stream().allMatch(count -> count >= AggregateDisclosure.MIN_COUNT)) {
-                frequencies = cells.entrySet().stream().map(entry -> new NumericPairSummary.Cell(
+                frequencies = cells.entrySet().stream().map(entry -> new NumericPairCount(
                         entry.getKey().getFirst(), entry.getKey().getSecond(), entry.getValue())).toList();
             }
             summaries.add(new NumericPairSummary(x, y, xs.length, meanX, meanY, m2X, m2Y, cross, frequencies));
@@ -73,7 +75,7 @@ public class AggregateCalculator {
             if (count < minimumPairedCount || cells.size() > AggregateDisclosure.MAX_CELLS
                     || cells.values().stream().anyMatch(n -> n < minimumCellCount)) continue;
             summaries.add(new CategoricalPairSummary(x, y, count, cells.entrySet().stream()
-                    .map(entry -> new CategoricalPairSummary.Cell(entry.getKey().getFirst(), entry.getKey().getSecond(), entry.getValue())).toList()));
+                    .map(entry -> new CategoricalPairCount(entry.getKey().getFirst(), entry.getKey().getSecond(), entry.getValue())).toList()));
         }
         return summaries;
     }
@@ -172,8 +174,8 @@ public class AggregateCalculator {
             CategoricalPairSummary summary = released.stream().filter(pair -> pair.featureX().equals(x) && pair.featureY().equals(y)).findFirst().orElse(null);
             double pValue = Double.NaN;
             if (summary != null) {
-                List<String> xs = summary.frequencies().stream().map(CategoricalPairSummary.Cell::x).distinct().sorted().toList();
-                List<String> ys = summary.frequencies().stream().map(CategoricalPairSummary.Cell::y).distinct().sorted().toList();
+                List<String> xs = summary.frequencies().stream().map(CategoricalPairCount::x).distinct().sorted().toList();
+                List<String> ys = summary.frequencies().stream().map(CategoricalPairCount::y).distinct().sorted().toList();
                 if (xs.size() >= 2 && ys.size() >= 2) {
                     long[][] table = new long[xs.size()][ys.size()];
                     summary.frequencies().forEach(cell -> table[xs.indexOf(cell.x())][ys.indexOf(cell.y())] += cell.count());

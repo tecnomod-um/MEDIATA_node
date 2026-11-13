@@ -16,11 +16,7 @@ import java.util.function.Function;
 @Component
 public class DiscoveryQueryLedger {
     public static final String BLOCKED = "Statistics withheld by disclosure controls. The query history or dataset requires review.";
-    public static final class Blocked extends RuntimeException { public Blocked() { super(BLOCKED); } }
     private static final String DERIVED = "derived";
-    public record Version(Path path, String pathKey, String contentKey) {}
-    private record Registry(Map<String, String> paths, Set<String> approved, Set<String> initialised) {}
-    private record State(int rows, int[] labels) {}
     private static final Map<Path, Object> LOCKS = new ConcurrentHashMap<>();
     private final ObjectMapper mapper = new ObjectMapper();
     private final Path datasets, directory, registryFile;
@@ -34,8 +30,8 @@ public class DiscoveryQueryLedger {
                 java.nio.file.attribute.PosixFilePermissions.fromString("rwx------"));
         locked(() -> {
             if (!Files.exists(registryFile)) {
-                if (Files.exists(directory.resolve("initialised"))) throw new Blocked();
-                Registry registry = new Registry(new HashMap<>(), new HashSet<>(), new HashSet<>());
+                if (Files.exists(directory.resolve("initialised"))) throw new DiscoveryDisclosureBlockedException();
+                DiscoveryLedgerRegistry registry = new DiscoveryLedgerRegistry(new HashMap<>(), new HashSet<>(), new HashSet<>());
                 try (var files = Files.list(datasets)) {
                     for (Path path : files.filter(Files::isRegularFile).toList()) {
                         if (!supportedDataset(path.getFileName().toString())) continue;
@@ -51,22 +47,22 @@ public class DiscoveryQueryLedger {
         });
     }
 
-    public Version begin(Path path) {
+    public DiscoveryDatasetVersion begin(Path path) {
         try {
             Path real = checkedPath(path);
-            if (!supportedDataset(real.getFileName().toString())) throw new Blocked();
+            if (!supportedDataset(real.getFileName().toString())) throw new DiscoveryDisclosureBlockedException();
             String key = pathKey(real), content = digest(real);
             return locked(() -> {
-                Registry registry = readRegistry();
+                DiscoveryLedgerRegistry registry = readRegistry();
                 String registered = registry.paths().get(key);
                 if (registered == null) {
                     registered = rememberPath(registry, real, content);
                     write(registryFile, registry);
                 }
-                if (!registered.equals(content) || !registry.approved().contains(content)) throw new Blocked();
-                return new Version(real, key, content);
+                if (!registered.equals(content) || !registry.approved().contains(content)) throw new DiscoveryDisclosureBlockedException();
+                return new DiscoveryDatasetVersion(real, key, content);
             });
-        } catch (IOException e) { throw new Blocked(); }
+        } catch (IOException e) { throw new DiscoveryDisclosureBlockedException(); }
     }
 
     /** Remember the original version before the application edits a dataset in place. */
@@ -83,7 +79,7 @@ public class DiscoveryQueryLedger {
         if (!path.toAbsolutePath().normalize().startsWith(datasets)) return;
         Path real = checkedPath(path);
         locked(() -> {
-            Registry registry = readRegistry();
+            DiscoveryLedgerRegistry registry = readRegistry();
             String registered = registry.paths().get(pathKey(real));
             if (registered == null) {
                 String name = real.getFileName().toString();
@@ -91,7 +87,7 @@ public class DiscoveryQueryLedger {
             }
             if (destination != null) {
                 Path parent = destination.toAbsolutePath().normalize().getParent().toRealPath();
-                if (!parent.equals(datasets.toRealPath())) throw new Blocked();
+                if (!parent.equals(datasets.toRealPath())) throw new DiscoveryDisclosureBlockedException();
                 Path target = parent.resolve(destination.getFileName());
                 registry.paths().putIfAbsent(pathKey(target), registered);
             }
@@ -100,7 +96,7 @@ public class DiscoveryQueryLedger {
         });
     }
 
-    private String rememberPath(Registry registry, Path path, String content) {
+    private String rememberPath(DiscoveryLedgerRegistry registry, Path path, String content) {
         // The application's harmonization and Excel cleaning outputs may contain the same people.
         String name = path.getFileName().toString().toLowerCase(Locale.ROOT);
         String version = !registry.approved().contains(content)
@@ -110,55 +106,55 @@ public class DiscoveryQueryLedger {
         return version;
     }
 
-    public <T> T release(Version version, int rows, BitSet selected, Function<CohortPartition, T> action) {
+    public <T> T release(DiscoveryDatasetVersion version, int rows, BitSet selected, Function<CohortPartition, T> action) {
         // Do not distinguish an absent cohort from a protected one-to-five-record cohort.
-        if (selected.cardinality() < org.taniwha.util.AggregateDisclosure.MIN_COUNT) throw new Blocked();
+        if (selected.cardinality() < org.taniwha.util.AggregateDisclosure.MIN_COUNT) throw new DiscoveryDisclosureBlockedException();
         try {
             return locked(() -> {
-                Registry registry = readRegistry();
+                DiscoveryLedgerRegistry registry = readRegistry();
                 if (!Objects.equals(registry.paths().get(version.pathKey()), version.contentKey())
-                        || !digest(version.path()).equals(version.contentKey())) throw new Blocked();
+                        || !digest(version.path()).equals(version.contentKey())) throw new DiscoveryDisclosureBlockedException();
                 Path stateFile = directory.resolve(version.contentKey() + ".json");
                 int[] labels;
                 if (Files.exists(stateFile)) {
-                    State state = mapper.readValue(stateFile.toFile(), State.class);
-                    if (state.rows() != rows) throw new Blocked();
+                    DiscoveryLedgerState state = mapper.readValue(stateFile.toFile(), DiscoveryLedgerState.class);
+                    if (state.rows() != rows) throw new DiscoveryDisclosureBlockedException();
                     labels = decode(state);
                 } else {
-                    if (registry.initialised().contains(version.contentKey())) throw new Blocked();
+                    if (registry.initialised().contains(version.contentKey())) throw new DiscoveryDisclosureBlockedException();
                     labels = new int[rows];
                 }
                 CohortPartition partition = new CohortPartition(labels);
-                if (!partition.allow(List.of(selected))) throw new Blocked();
+                if (!partition.allow(List.of(selected))) throw new DiscoveryDisclosureBlockedException();
                 T response = action.apply(partition);
                 // Detect in-place changes during calculation, before writing or returning any response.
-                if (!digest(version.path()).equals(version.contentKey())) throw new Blocked();
-                write(stateFile, new State(rows, partition.labels()));
+                if (!digest(version.path()).equals(version.contentKey())) throw new DiscoveryDisclosureBlockedException();
+                write(stateFile, new DiscoveryLedgerState(rows, partition.labels()));
                 registry.initialised().add(version.contentKey()); write(registryFile, registry);
                 return response;
             });
-        } catch (IOException | IllegalArgumentException e) { throw new Blocked(); }
+        } catch (IOException | IllegalArgumentException e) { throw new DiscoveryDisclosureBlockedException(); }
     }
 
-    private int[] decode(State state) {
-        if (state.labels() == null || state.labels().length != state.rows() || state.rows() < 0) throw new Blocked();
+    private int[] decode(DiscoveryLedgerState state) {
+        if (state.labels() == null || state.labels().length != state.rows() || state.rows() < 0) throw new DiscoveryDisclosureBlockedException();
         Map<Integer, Integer> counts = new HashMap<>();
         for (int label : state.labels()) {
-            if (label < 0) throw new Blocked();
+            if (label < 0) throw new DiscoveryDisclosureBlockedException();
             counts.merge(label, 1, Integer::sum);
         }
-        if (counts.values().stream().anyMatch(count -> count < org.taniwha.util.AggregateDisclosure.MIN_COUNT)) throw new Blocked();
+        if (counts.values().stream().anyMatch(count -> count < org.taniwha.util.AggregateDisclosure.MIN_COUNT)) throw new DiscoveryDisclosureBlockedException();
         return state.labels();
     }
 
-    private Registry readRegistry() throws IOException {
-        Registry value = mapper.readValue(registryFile.toFile(), Registry.class);
-        if (value.paths() == null || value.approved() == null || value.initialised() == null) throw new Blocked();
+    private DiscoveryLedgerRegistry readRegistry() throws IOException {
+        DiscoveryLedgerRegistry value = mapper.readValue(registryFile.toFile(), DiscoveryLedgerRegistry.class);
+        if (value.paths() == null || value.approved() == null || value.initialised() == null) throw new DiscoveryDisclosureBlockedException();
         return value;
     }
     private Path checkedPath(Path path) throws IOException {
         Path real = path.toRealPath();
-        if (!real.startsWith(datasets.toRealPath()) || !Files.isRegularFile(real)) throw new Blocked();
+        if (!real.startsWith(datasets.toRealPath()) || !Files.isRegularFile(real)) throw new DiscoveryDisclosureBlockedException();
         return real;
     }
     private static boolean supportedDataset(String name) {
@@ -189,8 +185,7 @@ public class DiscoveryQueryLedger {
             Files.move(temporary, destination, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
         } finally { Files.deleteIfExists(temporary); }
     }
-    private interface IOAction<T> { T run() throws IOException; }
-    private <T> T locked(IOAction<T> action) throws IOException {
+    private <T> T locked(LedgerOperation<T> action) throws IOException {
         synchronized (LOCKS.computeIfAbsent(directory, ignored -> new Object())) {
             try (FileChannel channel = FileChannel.open(directory.resolve("ledger.lock"), StandardOpenOption.CREATE, StandardOpenOption.WRITE);
                  var ignored = channel.lock()) { return action.run(); }
