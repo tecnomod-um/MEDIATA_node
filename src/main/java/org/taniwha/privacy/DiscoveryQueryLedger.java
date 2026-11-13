@@ -1,6 +1,8 @@
 package org.taniwha.privacy;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 import java.io.*;
@@ -20,11 +22,24 @@ public class DiscoveryQueryLedger {
     private static final Map<Path, Object> LOCKS = new ConcurrentHashMap<>();
     private final ObjectMapper mapper = new ObjectMapper();
     private final Path datasets, directory, registryFile;
+    private final boolean enabled;
 
-    public DiscoveryQueryLedger(@Value("${app.path}") String basePath) throws IOException {
+    public DiscoveryQueryLedger(String basePath) throws IOException {
+        this(basePath, true);
+    }
+
+    @Autowired
+    public DiscoveryQueryLedger(@Value("${app.path}") String basePath,
+                                @Value("${discovery.history.enabled:true}") boolean enabled) throws IOException {
+        this.enabled = enabled;
         Path base = Paths.get(basePath).toAbsolutePath().normalize();
         datasets = base.resolve("datasets"); directory = base.resolve("discovery-privacy");
         registryFile = directory.resolve("registry.json");
+        if (!enabled) {
+            LoggerFactory.getLogger(DiscoveryQueryLedger.class)
+                    .warn("Discovery query history is disabled. Use only isolated nodes with synthetic data.");
+            return;
+        }
         Files.createDirectories(datasets); Files.createDirectories(directory);
         if (Files.getFileStore(directory).supportsFileAttributeView("posix")) Files.setPosixFilePermissions(directory,
                 java.nio.file.attribute.PosixFilePermissions.fromString("rwx------"));
@@ -48,6 +63,7 @@ public class DiscoveryQueryLedger {
     }
 
     public DiscoveryDatasetVersion begin(Path path) {
+        if (!enabled) return null;
         try {
             Path real = checkedPath(path);
             if (!supportedDataset(real.getFileName().toString())) throw new DiscoveryDisclosureBlockedException();
@@ -76,7 +92,7 @@ public class DiscoveryQueryLedger {
     }
 
     private void preservePath(Path path, Path destination) throws IOException {
-        if (!path.toAbsolutePath().normalize().startsWith(datasets)) return;
+        if (!enabled || !path.toAbsolutePath().normalize().startsWith(datasets)) return;
         Path real = checkedPath(path);
         locked(() -> {
             DiscoveryLedgerRegistry registry = readRegistry();
@@ -109,6 +125,10 @@ public class DiscoveryQueryLedger {
     public <T> T release(DiscoveryDatasetVersion version, int rows, BitSet selected, Function<CohortPartition, T> action) {
         // Do not distinguish an absent cohort from a protected one-to-five-record cohort.
         if (selected.cardinality() < org.taniwha.util.AggregateDisclosure.MIN_COUNT) throw new DiscoveryDisclosureBlockedException();
+        if (version == null) {
+            if (enabled) throw new DiscoveryDisclosureBlockedException();
+            return action.apply(checkCohort(new int[rows], selected));
+        }
         try {
             return locked(() -> {
                 DiscoveryLedgerRegistry registry = readRegistry();
@@ -124,8 +144,7 @@ public class DiscoveryQueryLedger {
                     if (registry.initialised().contains(version.contentKey())) throw new DiscoveryDisclosureBlockedException();
                     labels = new int[rows];
                 }
-                CohortPartition partition = new CohortPartition(labels);
-                if (!partition.allow(List.of(selected))) throw new DiscoveryDisclosureBlockedException();
+                CohortPartition partition = checkCohort(labels, selected);
                 T response = action.apply(partition);
                 // Detect in-place changes during calculation, before writing or returning any response.
                 if (!digest(version.path()).equals(version.contentKey())) throw new DiscoveryDisclosureBlockedException();
@@ -134,6 +153,12 @@ public class DiscoveryQueryLedger {
                 return response;
             });
         } catch (IOException | IllegalArgumentException e) { throw new DiscoveryDisclosureBlockedException(); }
+    }
+
+    private CohortPartition checkCohort(int[] labels, BitSet selected) {
+        CohortPartition partition = new CohortPartition(labels);
+        if (!partition.allow(List.of(selected))) throw new DiscoveryDisclosureBlockedException();
+        return partition;
     }
 
     private int[] decode(DiscoveryLedgerState state) {

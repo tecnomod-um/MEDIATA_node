@@ -17,11 +17,14 @@ class DiscoveryDisclosureIntegrationTest {
     AnalyticsProcessingJobs jobs;
     @AfterEach void close() { if (analytics != null) analytics.shutdown(); }
     private void initialise(String csv) throws Exception {
+        initialise(csv, true);
+    }
+    private void initialise(String csv, boolean historyEnabled) throws Exception {
         Path path = base.resolve("datasets/cohort.csv"); Files.createDirectories(path.getParent()); Files.writeString(path, csv);
         FileService files = mock(FileService.class); when(files.getDatasetFilePath("cohort.csv")).thenReturn(path.toString());
         jobs = new AnalyticsProcessingJobs();
         analytics = new AnalyticsService(new DataProcessingService(new FileFilter()), files, jobs,
-                new DiscoveryDisclosureService(new DiscoveryQueryLedger(base.toString())));
+                new DiscoveryDisclosureService(new DiscoveryQueryLedger(base.toString(), historyEnabled)));
     }
     private Map<String, Object> less(int value) {
         return Map.of("operator", "AND", "conditions", Map.of("Age", Map.of("conditions", List.of(Map.of("filterType", "continuous", "type", "less", "value", value)), "operators", List.of())));
@@ -44,6 +47,23 @@ class DiscoveryDisclosureIntegrationTest {
         assertThat(first.getContinuousFeatures()).anySatisfy(feature -> assertThat(feature.getCount()).isEqualTo(12));
         blocked(analytics.filterDataByName("cohort.csv", less(31)));
         blocked(analytics.filterDataByName("cohort.csv", less(43)));
+    }
+
+    @Test void disabledHistoryAllowsIndependentFiltersAndDatasetUpdatesWithoutTouchingTheLedger() throws Exception {
+        Path registry = base.resolve("discovery-privacy/registry.json");
+        Files.createDirectories(registry.getParent());
+        Files.writeString(registry, "invalid ledger");
+        initialise(csv(), false);
+
+        assertThat(analytics.filterDataByName("cohort.csv", less(32)).getContinuousFeatures())
+                .anySatisfy(feature -> assertThat(feature.getCount()).isEqualTo(12));
+        Files.writeString(base.resolve("datasets/cohort.csv"), csv().replace("20,A", "21,A"));
+        var filtered = analytics.filterDataByName("cohort.csv", less(31));
+        assertThat(filtered.getContinuousFeatures())
+                .anySatisfy(feature -> assertThat(feature.getCount()).isEqualTo(11));
+        assertThat(filtered.getDisclosurePolicyVersion()).isEqualTo(2);
+        blocked(analytics.filterDataByName("cohort.csv", less(25)));
+        assertThat(Files.readString(registry)).isEqualTo("invalid ledger");
     }
 
     @Test void reportedQuantilesAndCategoryPercentagesUseTheObservedCohortConsistently() throws Exception {
