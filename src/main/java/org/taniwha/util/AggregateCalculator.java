@@ -1,5 +1,6 @@
 package org.taniwha.util;
 
+import org.apache.commons.math3.special.Gamma;
 import org.apache.commons.math3.stat.correlation.Covariance;
 import org.apache.commons.math3.stat.correlation.PearsonsCorrelation;
 import org.apache.commons.math3.stat.correlation.SpearmansCorrelation;
@@ -176,7 +177,10 @@ public class AggregateCalculator {
                 if (xs.size() >= 2 && ys.size() >= 2) {
                     long[][] table = new long[xs.size()][ys.size()];
                     summary.frequencies().forEach(cell -> table[xs.indexOf(cell.x())][ys.indexOf(cell.y())] += cell.count());
-                    pValue = new ChiSquareTest().chiSquareTest(table);
+                    double statistic = new ChiSquareTest().chiSquare(table);
+                    double degreesOfFreedom = (xs.size() - 1.0) * (ys.size() - 1.0);
+                    // Evaluate the survival probability directly to preserve small p-values.
+                    pValue = Gamma.regularizedGammaQ(degreesOfFreedom / 2, statistic / 2);
                 }
             }
             results.add(new ChiSquaredTestResult(x, y, pValue));
