@@ -297,7 +297,7 @@ public class AnalyticsService {
 
     private AnalyticsResponseDTO blockedResponse(String fileName, Exception failure) {
         AnalyticsResponseDTO safe = new AnalyticsResponseDTO(failure instanceof DiscoveryQueryLedger.Blocked
-                ? DiscoveryQueryLedger.BLOCKED : failure instanceof InvalidNumericConversion
+                ? failure.getMessage() : failure instanceof InvalidNumericConversion
                 ? "This field cannot be converted to continuous without an explicit numerical mapping." : "Error processing statistics.");
         safe.setFileName(fileName);
         return safe;
