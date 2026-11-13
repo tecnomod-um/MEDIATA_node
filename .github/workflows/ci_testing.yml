@@ -43,35 +43,3 @@ jobs:
           git add badges/coverage.svg
           git diff --cached --quiet || git commit -m "ci: update coverage badge"
           git push
-
-  update-parent:
-    name: Bump node in umbrella repo
-    needs: test
-    if: github.ref == 'refs/heads/main'
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout combined repo (@main)
-        uses: actions/checkout@v7.0.1
-        with:
-          repository: tecnomod-um/MEDIATA_project
-          token: ${{ secrets.PARENT_REPO_TOKEN }}
-          ref: main
-          path: monorepo
-          fetch-depth: 0
-          submodules: recursive
-          persist-credentials: true
-
-      - name: Bump MEDIATA_node submodule
-        working-directory: monorepo
-        run: |
-          git config user.name  "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git -C MEDIATA_node fetch origin "${{ github.sha }}"
-          git -C MEDIATA_node checkout "${{ github.sha }}"
-          git add MEDIATA_node
-          if ! git diff --cached --quiet; then
-            git commit -m "ci: bump MEDIATA_node to ${{ github.sha }}"
-            git push origin main
-          else
-            echo "No changes to submodule"
-          fi
