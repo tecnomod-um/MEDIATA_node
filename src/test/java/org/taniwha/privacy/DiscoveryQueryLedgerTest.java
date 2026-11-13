@@ -46,27 +46,38 @@ class DiscoveryQueryLedgerTest {
         assertThatThrownBy(() -> release(restarted, copy, cohort(0, 11))).isInstanceOf(DiscoveryQueryLedger.Blocked.class);
         assertThat(release(restarted, copy, cohort(0, 12))).isEqualTo(12);
     }
-    @Test void changedAndUnapprovedDatasetsAreBlockedIncludingNewAliases() throws Exception {
+    @Test void changedDatasetsStayBlockedWhenRenamedThroughTheNode() throws Exception {
         Path file = dataset(); var ledger = new DiscoveryQueryLedger(base.toString()); release(ledger, file, cohort(0, 24));
         Files.writeString(file, "Age\n900\n");
         assertThatThrownBy(() -> ledger.begin(file)).isInstanceOf(DiscoveryQueryLedger.Blocked.class);
-        Path alias = file.resolveSibling("new-name.csv"); Files.copy(file, alias);
+        Path alias = file.resolveSibling("new-name.csv");
+        ledger.beforeDatasetRename(file, alias);
+        Files.move(file, alias);
         assertThatThrownBy(() -> ledger.begin(alias)).isInstanceOf(DiscoveryQueryLedger.Blocked.class);
-        assertThatThrownBy(() -> ledger.registerDataset("cohort.csv")).isInstanceOf(DiscoveryQueryLedger.Blocked.class);
     }
-    @Test void operatorCanRegisterANewDatasetWithoutResettingExistingOrAliasedHistory() throws Exception {
+    @Test void newFilesAreAdmittedOnFirstUseWithoutResettingExistingOrAliasedHistory() throws Exception {
         Path existing = dataset(); var ledger = new DiscoveryQueryLedger(base.toString());
         release(ledger, existing, cohort(0, 12));
         Path added = existing.resolveSibling("scenario2.csv");
         Files.writeString(added, "Age\n" + "34\n".repeat(24));
-        assertThatThrownBy(() -> ledger.begin(added)).hasMessage(DiscoveryQueryLedger.UNREGISTERED);
-        var operator = DiscoveryQueryLedger.openExisting(base.toString());
-        operator.registerDataset("scenario2.csv");
         assertThat(release(ledger, added, cohort(0, 24))).isEqualTo(24);
         Path alias = existing.resolveSibling("copy.csv"); Files.copy(existing, alias);
-        operator.registerDataset("copy.csv");
         assertThatThrownBy(() -> release(ledger, alias, cohort(0, 11))).isInstanceOf(DiscoveryQueryLedger.Blocked.class);
         assertThatThrownBy(() -> release(ledger, existing, cohort(0, 11))).isInstanceOf(DiscoveryQueryLedger.Blocked.class);
+    }
+    @Test void editsBeforeFirstReadAndDerivedOutputsCannotStartNewHistories() throws Exception {
+        var ledger = new DiscoveryQueryLedger(base.toString());
+        Path input = dataset();
+        ledger.beforeDatasetEdit(input);
+        Files.writeString(input, "Age\n900\n");
+        assertThatThrownBy(() -> ledger.begin(input)).isInstanceOf(DiscoveryQueryLedger.Blocked.class);
+        for (String name : List.of("parsed_cohort.csv", "cohort_cleaned.csv")) {
+            Path derived = Files.writeString(input.resolveSibling(name), "Age\n800\n");
+            Path renamed = input.resolveSibling(name + "-renamed.csv");
+            ledger.beforeDatasetRename(derived, renamed);
+            Files.move(derived, renamed);
+            assertThatThrownBy(() -> ledger.begin(renamed)).isInstanceOf(DiscoveryQueryLedger.Blocked.class);
+        }
     }
     @Test void cannotResetHistoryByDeletingAStateOrRegistryFile() throws Exception {
         Path file = dataset(); var ledger = new DiscoveryQueryLedger(base.toString());

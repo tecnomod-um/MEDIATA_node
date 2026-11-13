@@ -6,7 +6,6 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.context.ConfigurableApplicationContext;
-import org.taniwha.privacy.DiscoveryDatasetRegistration;
 import org.taniwha.service.NodeSyncService;
 import org.taniwha.view.Gui;
 
@@ -28,10 +27,6 @@ public class Application {
     private long heartbeatInterval;
 
     public static void main(String[] args) {
-        if (DiscoveryDatasetRegistration.requested(args)) {
-            System.exit(DiscoveryDatasetRegistration.run(args));
-            return;
-        }
         boolean forceCli = Arrays.stream(args).anyMatch(a -> a.equalsIgnoreCase("--cli") || a.equalsIgnoreCase("--nogui")) || "cli".equalsIgnoreCase(System.getenv("TANIWHA_MODE"));
         boolean canShowGui = !GraphicsEnvironment.isHeadless();
 
