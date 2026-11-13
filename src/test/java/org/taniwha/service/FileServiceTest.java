@@ -686,6 +686,23 @@ class FileServiceTest {
     }
 
     @Test
+    void disabledProvenanceLeavesExistingRecordsAndOutboxUntouched() {
+        var original = fileService.registerHarmonizationProvenance(
+                "parsed_source.csv", List.of("source.csv"), new MappingSpecDTO());
+        var disabled = new FileService(fileFilter, tempBase.toString(), "", null, false);
+
+        disabled.registerHarmonizationProvenance(
+                "parsed_other.csv", List.of("other.csv"), new MappingSpecDTO());
+        assertThat(disabled.readPendingHarmonizationProvenance(100)).isEmpty();
+        assertThat(disabled.readHarmonizationProvenanceManifest().records()).isEmpty();
+        assertThat(disabled.readMappingSpecification(original.mappingSpecId())).isNull();
+        disabled.acknowledgeHarmonizationProvenance(List.of(original.activityId()));
+
+        assertThat(fileService.readPendingHarmonizationProvenance(100)).containsExactly(original);
+        assertThat(fileService.readHarmonizationProvenanceManifest().records()).containsExactly(original);
+    }
+
+    @Test
     void provenanceOutboxKeepsEventUntilItIsAcknowledged() {
         MappingSpecDTO mappingSpec = new MappingSpecDTO();
 

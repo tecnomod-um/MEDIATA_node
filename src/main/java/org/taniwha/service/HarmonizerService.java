@@ -519,7 +519,6 @@ public class HarmonizerService {
     }
 
     private void registerGeneratedDataset(String sourceFileName, Path outputPath, MappingSpecDTO mappingSpec) {
-        // TODO: Keep the current file output and provenance path until connector-backed harmonization is in scope.
         String outputFileName = outputPath.getFileName().toString();
         fileService.registerDerivedDatasetShareability(sourceFileName, outputFileName);
         fileService.registerHarmonizationProvenance(outputFileName, List.of(sourceFileName), mappingSpec);

@@ -77,22 +77,25 @@ public class FileService {
     private final Path mappingSpecsDir;
     private final Path sharedDatasetsDir;
     private final DiscoveryQueryLedger discoveryLedger;
+    private final boolean harmonizationProvenanceEnabled;
 
     public FileService(FileFilter fileFilter, String basePath) {
         this(fileFilter, basePath, "");
     }
 
     public FileService(FileFilter fileFilter, String basePath, String downloadableDatasets) {
-        this(fileFilter, basePath, downloadableDatasets, null);
+        this(fileFilter, basePath, downloadableDatasets, null, true);
     }
 
     @Autowired
     public FileService(FileFilter fileFilter,
                        @Value("${app.path}") String basePath,
                        @Value("${datasets.downloadable:}") String downloadableDatasets,
-                       DiscoveryQueryLedger discoveryLedger) {
+                       DiscoveryQueryLedger discoveryLedger,
+                       @Value("${harmonization.provenance.enabled:true}") boolean harmonizationProvenanceEnabled) {
         this.fileFilter = fileFilter;
         this.discoveryLedger = discoveryLedger;
+        this.harmonizationProvenanceEnabled = harmonizationProvenanceEnabled;
         this.downloadableDatasetSelectors = parseDownloadableDatasetSelectors(downloadableDatasets);
 
         this.datasetsFolder = basePath + "/datasets";
@@ -320,6 +323,7 @@ public class FileService {
             String outputFileName,
             List<String> sourceFileNames,
             MappingSpecDTO mappingSpec) {
+        if (!harmonizationProvenanceEnabled) return null;
         try {
             byte[] mappingSpecContent = objectMapper.writerWithDefaultPrettyPrinter().writeValueAsBytes(mappingSpec);
             String mappingSpecId = sha256(mappingSpecContent);
@@ -357,6 +361,7 @@ public class FileService {
     }
 
     public HarmonizationProvenanceManifest readHarmonizationProvenanceManifest() {
+        if (!harmonizationProvenanceEnabled) return new HarmonizationProvenanceManifest(List.of());
         try {
             if (!Files.exists(harmonizationProvenancePath) || !Files.isRegularFile(harmonizationProvenancePath)) {
                 return new HarmonizationProvenanceManifest(List.of());
@@ -375,6 +380,7 @@ public class FileService {
     }
 
     public synchronized List<HarmonizationProvenanceRecord> readPendingHarmonizationProvenance(int limit) {
+        if (!harmonizationProvenanceEnabled) return List.of();
         int safeLimit = Math.max(1, Math.min(limit, 100));
         return readHarmonizationProvenanceOutbox().records().stream()
                 .filter(record -> record != null && record.activityId() != null && !record.activityId().isBlank())
@@ -383,7 +389,7 @@ public class FileService {
     }
 
     public synchronized void acknowledgeHarmonizationProvenance(List<String> activityIds) {
-        if (activityIds == null || activityIds.isEmpty()) {
+        if (!harmonizationProvenanceEnabled || activityIds == null || activityIds.isEmpty()) {
             return;
         }
         Set<String> acknowledged = activityIds.stream()
@@ -427,7 +433,7 @@ public class FileService {
     }
 
     public String readMappingSpecification(String mappingSpecId) {
-        if (mappingSpecId == null || !mappingSpecId.matches("[a-f0-9]{64}")) {
+        if (!harmonizationProvenanceEnabled || mappingSpecId == null || !mappingSpecId.matches("[a-f0-9]{64}")) {
             return null;
         }
         Path path = mappingSpecsDir.resolve(mappingSpecId + ".json").normalize();
