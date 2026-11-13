@@ -22,9 +22,7 @@ class MappingSpecAdapterTest {
         adapter = new MappingSpecAdapter();
     }
 
-    // -----------------------------------------------------------------------
     // sourceFileName
-    // -----------------------------------------------------------------------
 
     @Nested
     @DisplayName("sourceFileName")
@@ -52,9 +50,7 @@ class MappingSpecAdapterTest {
         }
     }
 
-    // -----------------------------------------------------------------------
     // toLegacyConfigs – null / empty inputs
-    // -----------------------------------------------------------------------
 
     @Nested
     @DisplayName("toLegacyConfigs – null/empty guard clauses")
@@ -87,9 +83,7 @@ class MappingSpecAdapterTest {
         }
     }
 
-    // -----------------------------------------------------------------------
     // toLegacyConfigs – standard mapping
-    // -----------------------------------------------------------------------
 
     @Nested
     @DisplayName("toLegacyConfigs – standard mapping")
@@ -286,9 +280,7 @@ class MappingSpecAdapterTest {
         }
     }
 
-    // -----------------------------------------------------------------------
     // toLegacyConfigs – one-hot mapping
-    // -----------------------------------------------------------------------
 
     @Nested
     @DisplayName("toLegacyConfigs – one-hot mapping")
@@ -429,9 +421,7 @@ class MappingSpecAdapterTest {
         }
     }
 
-    // -----------------------------------------------------------------------
     // Logic parsing – exact matcher (==)
-    // -----------------------------------------------------------------------
 
     @Nested
     @DisplayName("logic parsing – exact matcher ==")
@@ -508,9 +498,7 @@ class MappingSpecAdapterTest {
         }
     }
 
-    // -----------------------------------------------------------------------
     // Logic parsing – in matcher
-    // -----------------------------------------------------------------------
 
     @Nested
     @DisplayName("logic parsing – in matcher")
@@ -550,9 +538,7 @@ class MappingSpecAdapterTest {
         }
     }
 
-    // -----------------------------------------------------------------------
     // Logic parsing – type matcher
-    // -----------------------------------------------------------------------
 
     @Nested
     @DisplayName("logic parsing – type matchers")
@@ -656,9 +642,7 @@ class MappingSpecAdapterTest {
         }
     }
 
-    // -----------------------------------------------------------------------
     // Logic parsing – OR combinator
-    // -----------------------------------------------------------------------
 
     @Nested
     @DisplayName("logic parsing – OR combinator")
@@ -684,9 +668,7 @@ class MappingSpecAdapterTest {
         }
     }
 
-    // -----------------------------------------------------------------------
     // Logic parsing – AND combinator / range
-    // -----------------------------------------------------------------------
 
     @Nested
     @DisplayName("logic parsing – AND / range")
@@ -791,9 +773,7 @@ class MappingSpecAdapterTest {
         }
     }
 
-    // -----------------------------------------------------------------------
     // Logic parsing – to_number / to_date / to_string wrappers
-    // -----------------------------------------------------------------------
 
     @Nested
     @DisplayName("logic parsing – conversion wrappers")
@@ -832,9 +812,7 @@ class MappingSpecAdapterTest {
         }
     }
 
-    // -----------------------------------------------------------------------
     // Logic parsing – fallback type matcher (source-value with type op)
-    // -----------------------------------------------------------------------
 
     @Nested
     @DisplayName("logic parsing – source-value fallback type matcher")
@@ -902,9 +880,7 @@ class MappingSpecAdapterTest {
         }
     }
 
-    // -----------------------------------------------------------------------
     // Edge cases – empty / null logic
-    // -----------------------------------------------------------------------
 
     @Nested
     @DisplayName("logic parsing – empty/null logic edge cases")
@@ -930,9 +906,7 @@ class MappingSpecAdapterTest {
         }
     }
 
-    // -----------------------------------------------------------------------
     // parseSourceColumnRef – var with list value
-    // -----------------------------------------------------------------------
 
     @Test
     @DisplayName("var with list value resolves first element as ref")
@@ -954,9 +928,7 @@ class MappingSpecAdapterTest {
         assertThat(matchers).isEmpty();
     }
 
-    // -----------------------------------------------------------------------
     // Rule metadata
-    // -----------------------------------------------------------------------
 
     @Test
     @DisplayName("rule metadata terminology and description are propagated")
@@ -1008,9 +980,7 @@ class MappingSpecAdapterTest {
         assertThat(values).isEmpty();
     }
 
-    // -----------------------------------------------------------------------
     // Helpers
-    // -----------------------------------------------------------------------
 
     private MappingSpecDTO specWith(MappingDefinitionDTO... mappings) {
         MappingSpecDTO spec = new MappingSpecDTO();

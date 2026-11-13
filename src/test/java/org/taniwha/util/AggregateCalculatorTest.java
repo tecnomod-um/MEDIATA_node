@@ -11,6 +11,66 @@ import static org.assertj.core.api.Assertions.*;
 
 class AggregateCalculatorTest {
 
+    @Test
+    void pairedSummariesUseCompleteCasesAndDoNotReleaseSparseJointFrequencies() {
+        var data = Map.of("x", Arrays.asList(null, 2., 3., 4., 5., 6., 7., 8., 9., 10.),
+                "y", Arrays.asList(2., null, 6., 8., 10., 12., 14., 16., 18., 20.));
+        var pair = new AggregateCalculator(6).numericPairSummaries(data).stream()
+                .filter(summary -> summary.featureX().equals("x") && summary.featureY().equals("y")).findFirst().orElseThrow();
+        assertThat(pair.count()).isEqualTo(8);
+        assertThat(pair.meanX()).isEqualTo(6.5);
+        assertThat(pair.meanY()).isEqualTo(13);
+        assertThat(pair.m2X()).isEqualTo(42);
+        assertThat(pair.crossMoment()).isEqualTo(84);
+        assertThat(pair.frequencies()).isEmpty();
+    }
+
+    @Test
+    void releasesOnlyCompleteFrequencyTablesWhosePositiveCellsMeetDisclosureCount() {
+        var x = new ArrayList<Double>(); var y = new ArrayList<Double>();
+        for (int i = 0; i < 6; i++) { x.add(1.); y.add(10.); }
+        for (int i = 0; i < 6; i++) { x.add(2.); y.add(20.); }
+        var summaries = new AggregateCalculator(6).numericPairSummaries(Map.of("x", x, "y", y));
+        var pair = summaries.stream().filter(summary -> !summary.featureX().equals(summary.featureY())).findFirst().orElseThrow();
+        assertThat(pair.frequencies()).hasSize(2).allSatisfy(cell -> assertThat(cell.count()).isGreaterThanOrEqualTo(6));
+        assertThat(AggregateDisclosure.numericFrequencies(x)).hasSize(2);
+        x.add(3.); y.add(30.);
+        pair = new AggregateCalculator(6).numericPairSummaries(Map.of("x", x, "y", y)).stream()
+                .filter(summary -> !summary.featureX().equals(summary.featureY())).findFirst().orElseThrow();
+        assertThat(pair.count()).isEqualTo(13);
+        assertThat(pair.frequencies()).isEmpty();
+        assertThat(AggregateDisclosure.numericFrequencies(x)).isEmpty();
+    }
+
+    @Test
+    void contingencySummariesPreservePairOrientationAndSuppressSmallCells() {
+        var categories = Map.of("a", Map.of("A", 30, "B", 30), "b", Map.of("U", 30, "V", 30));
+        var cells = Map.of(Pair.create("U", "A"), 24, Pair.create("V", "A"), 6,
+                Pair.create("U", "B"), 6, Pair.create("V", "B"), 24);
+        var calc = new AggregateCalculator(6);
+        var summary = calc.categoricalPairSummaries(categories, Map.of(Pair.create("b", "a"), cells)).get(0);
+        assertThat(summary.featureX()).isEqualTo("a");
+        assertThat(summary.count()).isEqualTo(60);
+        assertThat(summary.frequencies()).anySatisfy(cell -> {
+            assertThat(cell.x()).isEqualTo("A"); assertThat(cell.y()).isEqualTo("U"); assertThat(cell.count()).isEqualTo(24);
+        });
+        var sparse = Map.of(Pair.create("A", "U"), 29, Pair.create("A", "V"), 1,
+                Pair.create("B", "U"), 1, Pair.create("B", "V"), 29);
+        assertThat(calc.categoricalPairSummaries(categories, Map.of(Pair.create("a", "b"), sparse))).isEmpty();
+        assertThat(calc.calculateChiSquaredTest(categories, Map.of(Pair.create("a", "b"), sparse)).get(0).getPValue()).isNaN();
+    }
+
+    @Test
+    void relationshipsSkipInsufficientPairedRecordsAndNonFiniteValues() {
+        var small = Map.of("x", Arrays.asList(1.0, null), "y", List.of(2.0, 4.0));
+        assertThat(new AggregateCalculator().calculateCovariances(small)).isEmpty();
+        assertThat(new AggregateCalculator().calculatePearsonCorrelations(small)).isEmpty();
+        var nonFinite = Map.of("x", List.of(1.0, Double.POSITIVE_INFINITY, 3.0), "y", List.of(2.0, 99.0, 6.0));
+        assertThat(new AggregateCalculator().calculatePearsonCorrelations(nonFinite).get("x").get("y"))
+                .isCloseTo(1.0, within(1e-12));
+        assertThat(new AggregateCalculator(3).calculatePearsonCorrelations(nonFinite)).isEmpty();
+    }
+
     private AggregateCalculator calc;
 
     @BeforeEach
@@ -84,6 +144,18 @@ class AggregateCalculatorTest {
         assertThat(r.getCategory1()).isEqualTo("f1");
         assertThat(r.getCategory2()).isEqualTo("f2");
         assertThat(r.getPValue()).isCloseTo(1.0, within(1e-12));
+    }
+
+    @Test
+    void calculateChiSquared_preservesSmallUpperTailProbability() {
+        var categories = Map.of("f1", Map.of("A", 102, "B", 102), "f2", Map.of("X", 102, "Y", 102));
+        var cells = Map.of(Pair.create("A", "X"), 96, Pair.create("A", "Y"), 6,
+                Pair.create("B", "X"), 6, Pair.create("B", "Y"), 96);
+
+        double probability = new AggregateCalculator(6)
+                .calculateChiSquaredTest(categories, Map.of(Pair.create("f1", "f2"), cells)).get(0).getPValue();
+
+        assertThat(probability).isCloseTo(2.045025584206429e-36, within(1e-46));
     }
 
     @Test

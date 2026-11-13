@@ -121,7 +121,6 @@ class FileFilterTest {
 
     @Test
     void isFileInvalid_multipartFile_withValidXlsxFile_shouldReturnFalse() {
-        // Create a minimal XLSX file header (PK zip signature)
         byte[] xlsxHeader = new byte[]{0x50, 0x4B, 0x03, 0x04};
         MultipartFile file = new MockMultipartFile(
                 "file",
@@ -139,6 +138,26 @@ class FileFilterTest {
         Files.writeString(ttlFile, "@prefix ex: <http://example.org/> .", StandardCharsets.UTF_8);
 
         assertThat(fileFilter.isFileInvalid(ttlFile)).isFalse();
+    }
+
+    @Test
+    void isFileInvalid_path_withValidJsonFile_shouldReturnFalse() throws IOException {
+        Path jsonFile = tempDir.resolve("composition.json");
+        Files.writeString(jsonFile, "{\"ctx/template_id\":\"Example\"}", StandardCharsets.UTF_8);
+
+        assertThat(fileFilter.isFileInvalid(jsonFile)).isFalse();
+    }
+
+    @Test
+    void isFileInvalid_multipartFile_withDangerousJsonContent_shouldReturnTrue() {
+        MultipartFile file = new MockMultipartFile(
+                "file",
+                "composition.json",
+                "application/json",
+                "{\"payload\":\"<script>\"}".getBytes(StandardCharsets.UTF_8)
+        );
+
+        assertThat(fileFilter.isFileInvalid(file)).isTrue();
     }
 
     @Test
@@ -166,4 +185,3 @@ class FileFilterTest {
         assertThat(fileFilter.isFileInvalid(file)).isTrue();
     }
 }
-

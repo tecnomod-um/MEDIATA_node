@@ -11,6 +11,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 import org.springframework.web.util.UriUtils;
 import org.taniwha.model.MetadataDocument;
+import org.taniwha.model.HarmonizationProvenanceRecord;
 import org.taniwha.service.FileService;
 
 import java.io.StringWriter;
@@ -24,6 +25,10 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Objects;
+import java.util.Set;
+import java.util.function.Function;
+import java.util.stream.Collectors;
 import java.util.regex.Pattern;
 
 @Component
@@ -35,6 +40,7 @@ public class FairDataPointMetadataUtil {
     private static final String DCT = "http://purl.org/dc/terms/";
     private static final String FOAF = "http://xmlns.com/foaf/0.1/";
     private static final String VCARD = "http://www.w3.org/2006/vcard/ns#";
+    private static final String PROV = "http://www.w3.org/ns/prov#";
     private static final String HEALTH_THEME = "http://publications.europa.eu/resource/authority/data-theme/HEAL";
     private static final String RIGHTS = "http://purl.org/dc/terms/RightsStatement";
     private static final String DEFAULT_LICENSE = "http://purl.org/NET/rdflicense/allrightsreserved";
@@ -82,6 +88,7 @@ public class FairDataPointMetadataUtil {
         model.setNsPrefix("dcat", DCAT);
         model.setNsPrefix("dct", DCT);
         model.setNsPrefix("foaf", FOAF);
+        model.setNsPrefix("prov", PROV);
 
         String nodeBaseUrl = resolveNodeBaseUrl();
         Resource catalog = model.createResource(nodeBaseUrl + "/fdp/catalog/node-catalog");
@@ -105,6 +112,16 @@ public class FairDataPointMetadataUtil {
 
         List<String> datasetFiles = new ArrayList<>(fileService.listDatasetFiles());
         datasetFiles.sort(String.CASE_INSENSITIVE_ORDER);
+        Map<String, HarmonizationProvenanceRecord> provenanceByOutput = fileService
+                .readHarmonizationProvenanceManifest()
+                .records()
+                .stream()
+                .collect(Collectors.toMap(
+                        HarmonizationProvenanceRecord::outputFileName,
+                        Function.identity(),
+                        (first, ignored) -> first,
+                        LinkedHashMap::new
+                ));
 
         for (DatasetGroup group : groupDatasetFiles(datasetFiles)) {
             String datasetSlug = slugify(group.logicalStem());
@@ -126,6 +143,14 @@ public class FairDataPointMetadataUtil {
             dataset.addProperty(model.createProperty(DCT + "license"), model.createResource(licenseUri));
             addContactPoint(model, dataset);
             addTemporalMetadata(model, dataset, group.datasetFiles());
+            addHarmonizationProvenance(
+                    model,
+                    dataset,
+                    group,
+                    datasetFiles,
+                    provenanceByOutput,
+                    nodeBaseUrl
+            );
             catalog.addProperty(datasetProperty, dataset);
 
             for (String datasetFile : group.datasetFiles()) {
@@ -357,15 +382,7 @@ public class FairDataPointMetadataUtil {
     }
 
     private String logicalDatasetStem(String stem) {
-        String normalized = stem == null ? "" : stem.trim();
-        String lower = normalized.toLowerCase(Locale.ROOT);
-        if (lower.startsWith("parsed_") && normalized.length() > 7) {
-            return normalized.substring(7);
-        }
-        if (lower.startsWith("parsed-") && normalized.length() > 7) {
-            return normalized.substring(7);
-        }
-        return normalized;
+        return stem == null ? "" : stem.trim();
     }
 
     private int distributionOrder(String fileName) {
@@ -374,11 +391,108 @@ public class FairDataPointMetadataUtil {
     }
 
     private String describeDatasetGroup(DatasetGroup group) {
+        if (isHarmonizedGroup(group)) {
+            return "Harmonized dataset derived at the " + nodeName + " node.";
+        }
         if (group.datasetFiles().size() == 1) {
             return "Dataset file exposed by the " + nodeName + " node.";
         }
         return "Logical dataset exposed by the " + nodeName + " node with "
                 + group.datasetFiles().size() + " available distributions.";
+    }
+
+    private void addHarmonizationProvenance(Model model,
+                                            Resource dataset,
+                                            DatasetGroup group,
+                                            List<String> allDatasetFiles,
+                                            Map<String, HarmonizationProvenanceRecord> provenanceByOutput,
+                                            String nodeBaseUrl) {
+        if (!isHarmonizedGroup(group)) {
+            return;
+        }
+
+        HarmonizationProvenanceRecord record = group.datasetFiles().stream()
+                .map(provenanceByOutput::get)
+                .filter(Objects::nonNull)
+                .findFirst()
+                .orElse(null);
+        List<String> sourceFiles = resolveSourceFiles(group, allDatasetFiles, record);
+        if (sourceFiles.isEmpty()) {
+            return;
+        }
+
+        Property wasDerivedFrom = model.createProperty(PROV + "wasDerivedFrom");
+        Property wasGeneratedBy = model.createProperty(PROV + "wasGeneratedBy");
+        Property used = model.createProperty(PROV + "used");
+        Resource activity = model.createResource();
+
+        dataset.addProperty(RDF.type, model.createResource(PROV + "Entity"));
+        activity.addProperty(RDF.type, model.createResource(PROV + "Activity"));
+        activity.addProperty(model.createProperty(DCT + "title"), "MEDIATA harmonization");
+
+        for (String sourceFile : sourceFiles) {
+            String sourceStem = logicalDatasetStem(stripExtension(sourceFile));
+            Resource sourceDataset = model.createResource(nodeBaseUrl + "/fdp/dataset/" + slugify(sourceStem));
+            dataset.addProperty(wasDerivedFrom, sourceDataset);
+            activity.addProperty(used, sourceDataset);
+        }
+
+        if (record != null && !isBlank(record.mappingSpecId())) {
+            Resource mappingPlan = model.createResource();
+            mappingPlan.addProperty(RDF.type, model.createResource(PROV + "Plan"));
+            mappingPlan.addProperty(model.createProperty(DCT + "identifier"), record.mappingSpecId());
+            mappingPlan.addProperty(model.createProperty(DCT + "title"), "MEDIATA mapping specification");
+            mappingPlan.addProperty(model.createProperty(DCT + "format"), "application/json");
+            mappingPlan.addProperty(
+                    model.createProperty(DCAT + "accessURL"),
+                    model.createResource(nodeBaseUrl + "/fdp/mapping-spec/" + record.mappingSpecId())
+            );
+            activity.addProperty(used, mappingPlan);
+        }
+
+        if (record != null && !isBlank(record.generatedAt())) {
+            dataset.addLiteral(
+                    model.createProperty(PROV + "generatedAtTime"),
+                    ResourceFactory.createTypedLiteral(record.generatedAt(), XSDDatatype.XSDdateTime)
+            );
+        }
+        dataset.addProperty(wasGeneratedBy, activity);
+    }
+
+    private List<String> resolveSourceFiles(DatasetGroup group,
+                                            List<String> allDatasetFiles,
+                                            HarmonizationProvenanceRecord record) {
+        if (record != null && record.sourceFileNames() != null && !record.sourceFileNames().isEmpty()) {
+            return record.sourceFileNames();
+        }
+
+        Set<String> harmonizedStems = group.datasetFiles().stream()
+                .map(this::stripExtension)
+                .map(this::stripParsedPrefix)
+                .map(value -> value.toLowerCase(Locale.ROOT))
+                .collect(Collectors.toSet());
+        return allDatasetFiles.stream()
+                .filter(fileName -> !isHarmonizedFile(fileName))
+                .filter(fileName -> harmonizedStems.contains(stripExtension(fileName).toLowerCase(Locale.ROOT)))
+                .toList();
+    }
+
+    private boolean isHarmonizedGroup(DatasetGroup group) {
+        return group.datasetFiles().stream().allMatch(this::isHarmonizedFile);
+    }
+
+    private boolean isHarmonizedFile(String fileName) {
+        String lower = fileName == null ? "" : fileName.toLowerCase(Locale.ROOT);
+        return lower.startsWith("parsed_") || lower.startsWith("parsed-");
+    }
+
+    private String stripParsedPrefix(String stem) {
+        String normalized = stem == null ? "" : stem.trim();
+        String lower = normalized.toLowerCase(Locale.ROOT);
+        if ((lower.startsWith("parsed_") || lower.startsWith("parsed-")) && normalized.length() > 7) {
+            return normalized.substring(7);
+        }
+        return normalized;
     }
 
     private boolean isBlank(String value) {

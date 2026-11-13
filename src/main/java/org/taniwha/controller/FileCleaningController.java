@@ -1,11 +1,18 @@
 package org.taniwha.controller;
 
+import org.taniwha.service.jobs.CleaningJobState;
+
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.tags.Tag;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import org.taniwha.dto.DataCleaningOptionsDTO;
+import org.taniwha.dto.CleaningValidationResponseDTO;
+import org.taniwha.dto.NormalizationStatsRequestDTO;
+import org.taniwha.dto.NormalizationStatsResponseDTO;
 import org.taniwha.model.FileCategory;
 import org.taniwha.service.DataCleaningService;
 import org.taniwha.service.jobs.CleaningProcessingJobs;
@@ -14,6 +21,7 @@ import java.util.Map;
 
 @RestController
 @RequestMapping("/api/files")
+@Tag(name = "Data cleaning", description = "Validate, normalize, and clean files stored at the node.")
 public class FileCleaningController {
 
     private static final Logger logger = LoggerFactory.getLogger(FileCleaningController.class);
@@ -27,6 +35,7 @@ public class FileCleaningController {
         this.cleaningJobs = cleaningJobs;
     }
 
+    @Operation(summary = "Clean a file synchronously")
     @PostMapping("/clean")
     public ResponseEntity<Void> cleanFile(
             @RequestParam FileCategory category,
@@ -38,6 +47,7 @@ public class FileCleaningController {
         return ResponseEntity.ok().build();
     }
 
+    @Operation(summary = "Start an asynchronous cleaning job")
     @PostMapping("/clean/start")
     public ResponseEntity<Map<String, Object>> startCleanFile(
             @RequestParam FileCategory category,
@@ -55,9 +65,38 @@ public class FileCleaningController {
         ));
     }
 
+    @Operation(summary = "Validate cleaning options")
+    @PostMapping("/clean/validate")
+    public ResponseEntity<CleaningValidationResponseDTO> validateCleanFile(
+            @RequestParam FileCategory category,
+            @RequestParam String name,
+            @RequestBody(required = false) DataCleaningOptionsDTO options
+    ) {
+        return ResponseEntity.ok(dataCleaningService.validateCleaning(category, name, options));
+    }
+
+    @Operation(summary = "Calculate normalization bounds")
+    @PostMapping("/clean/normalization-stats")
+    public ResponseEntity<NormalizationStatsResponseDTO> getNormalizationStats(
+            @RequestParam FileCategory category,
+            @RequestParam String name,
+            @RequestBody NormalizationStatsRequestDTO request
+    ) {
+        boolean allNumeric = request != null
+                && request.getCleaningOptions() != null
+                && "all_numeric".equalsIgnoreCase(request.getCleaningOptions().getNormalizationColumnMode());
+        if (request == null || ((request.getColumns() == null || request.getColumns().isEmpty()) && !allNumeric)) {
+            throw new IllegalArgumentException("At least one normalization column is required.");
+        }
+        return ResponseEntity.ok(dataCleaningService.getNormalizationStats(
+                category, name, request.getColumns(), request.getCleaningOptions()
+        ));
+    }
+
+    @Operation(summary = "Get cleaning job status")
     @GetMapping("/clean/status/{jobId}")
     public ResponseEntity<Map<String, Object>> getCleanStatus(@PathVariable String jobId) {
-        CleaningProcessingJobs.JobState s = cleaningJobs.getJob(jobId);
+        CleaningJobState s = cleaningJobs.getJob(jobId);
         if (s == null) {
             return ResponseEntity.notFound().build();
         }
@@ -71,9 +110,10 @@ public class FileCleaningController {
         ));
     }
 
+    @Operation(summary = "Get cleaning job results")
     @GetMapping("/clean/result/{jobId}")
     public ResponseEntity<Map<String, Object>> getCleanResult(@PathVariable String jobId) {
-        CleaningProcessingJobs.JobState s = cleaningJobs.getJob(jobId);
+        CleaningJobState s = cleaningJobs.getJob(jobId);
         if (s == null) {
             return ResponseEntity.notFound().build();
         }

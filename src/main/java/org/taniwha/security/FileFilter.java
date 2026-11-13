@@ -130,6 +130,6 @@ public class FileFilter {
     }
 
     private boolean isTextExtension(String ext) {
-        return "csv".equals(ext) || "txt".equals(ext) || "log".equals(ext);
+        return "csv".equals(ext) || "json".equals(ext) || "txt".equals(ext) || "log".equals(ext);
     }
 }

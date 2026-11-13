@@ -56,6 +56,7 @@ WORKDIRS="
 /taniwha/fhir_mappings
 /taniwha/dataset_elements
 /taniwha/dataset_metadata
+/taniwha/semantic-cde
 /taniwha/fairdatapoint
 ${FDP_MONGO_DBPATH}
 ${FDP_NATIVE_DIR}
@@ -71,12 +72,14 @@ for d in $WORKDIRS; do
   fi
 done
 
-chmod 777 \
+chmod 750 \
+  /taniwha \
   /taniwha/datasets \
   /taniwha/mapped_datasets \
   /taniwha/fhir_mappings \
   /taniwha/dataset_elements \
-  /taniwha/dataset_metadata || true
+  /taniwha/dataset_metadata \
+  /taniwha/semantic-cde
 
 shutdown_all() {
   set +e

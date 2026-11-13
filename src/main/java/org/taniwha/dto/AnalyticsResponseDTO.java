@@ -6,6 +6,8 @@ import org.taniwha.statistics.ChiSquaredTestResult;
 import org.taniwha.statistics.DateFeatureStatistics;
 import org.taniwha.statistics.FeatureStatistics;
 import org.taniwha.statistics.OmittedFeatureStatistics;
+import org.taniwha.statistics.NumericPairSummary;
+import org.taniwha.statistics.CategoricalPairSummary;
 
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -26,6 +28,15 @@ public class AnalyticsResponseDTO {
     private Map<String, Map<String, Double>> pearsonCorrelations;
     private Map<String, Map<String, Double>> spearmanCorrelations;
     private List<ChiSquaredTestResult> chiSquareTest;
+    private final int relationshipSummaryVersion = 1;
+    // Population SD, R7/linear quantiles, category percentages over observed values.
+    private final int statisticsConventionVersion = 1;
+    private int disclosurePolicyVersion;
+    private final String disclosureMode = "COHORT_AGGREGATES";
+    private int featureTypeSummaryVersion;
+    private Map<String, String> featureTypes = new HashMap<>();
+    private List<NumericPairSummary> numericPairSummaries = new ArrayList<>();
+    private List<CategoricalPairSummary> categoricalPairSummaries = new ArrayList<>();
 
     public AnalyticsResponseDTO() {
         this.continuousFeatures = new ArrayList<>();

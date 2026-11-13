@@ -9,13 +9,17 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.taniwha.dto.FileInfoDto;
+import org.taniwha.dto.mapping.MappingSpecDTO;
 import org.taniwha.model.DatasetDownloadPolicyManifest;
 import org.taniwha.model.FileCategory;
 import org.taniwha.model.FairDataPointPublishedManifest;
+import org.taniwha.model.HarmonizationProvenanceManifest;
+import org.taniwha.model.HarmonizationProvenanceRecord;
 import org.taniwha.model.MetadataDocument;
 import org.taniwha.model.NodeMetadata;
 import org.taniwha.model.SharedDatasetFile;
 import org.taniwha.security.AllowedExtensions;
+import org.taniwha.privacy.DiscoveryQueryLedger;
 import org.taniwha.security.FileFilter;
 import org.taniwha.util.DCatUtil;
 import org.taniwha.util.FairDataPointMetadataUtil;
@@ -26,6 +30,7 @@ import java.nio.file.*;
 import java.nio.file.attribute.BasicFileAttributes;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.Collections;
@@ -33,6 +38,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Set;
+import java.util.UUID;
 import java.util.regex.Pattern;
 
 @Service
@@ -41,6 +47,8 @@ public class FileService {
     private static final Logger logger = LoggerFactory.getLogger(FileService.class);
     private static final String FDP_MANIFEST_FILE_NAME = "published-manifest.json";
     private static final String DATASET_DOWNLOAD_POLICY_FILE_NAME = "dataset-download-policy.json";
+    private static final String HARMONIZATION_PROVENANCE_FILE_NAME = "harmonization-provenance.json";
+    private static final String HARMONIZATION_PROVENANCE_OUTBOX_FILE_NAME = "harmonization-provenance-outbox.json";
     private static final Pattern NON_SLUG = Pattern.compile("[^a-z0-9]+");
 
     private final FileFilter fileFilter;
@@ -64,17 +72,30 @@ public class FileService {
     private final Path fairDataPointDir;
     private final Path fairDataPointManifestPath;
     private final Path datasetDownloadPolicyPath;
+    private final Path harmonizationProvenancePath;
+    private final Path harmonizationProvenanceOutboxPath;
+    private final Path mappingSpecsDir;
     private final Path sharedDatasetsDir;
+    private final DiscoveryQueryLedger discoveryLedger;
+    private final boolean harmonizationProvenanceEnabled;
 
     public FileService(FileFilter fileFilter, String basePath) {
         this(fileFilter, basePath, "");
     }
 
+    public FileService(FileFilter fileFilter, String basePath, String downloadableDatasets) {
+        this(fileFilter, basePath, downloadableDatasets, null, true);
+    }
+
     @Autowired
     public FileService(FileFilter fileFilter,
                        @Value("${app.path}") String basePath,
-                       @Value("${datasets.downloadable:}") String downloadableDatasets) {
+                       @Value("${datasets.downloadable:}") String downloadableDatasets,
+                       DiscoveryQueryLedger discoveryLedger,
+                       @Value("${harmonization.provenance.enabled:true}") boolean harmonizationProvenanceEnabled) {
         this.fileFilter = fileFilter;
+        this.discoveryLedger = discoveryLedger;
+        this.harmonizationProvenanceEnabled = harmonizationProvenanceEnabled;
         this.downloadableDatasetSelectors = parseDownloadableDatasetSelectors(downloadableDatasets);
 
         this.datasetsFolder = basePath + "/datasets";
@@ -93,6 +114,10 @@ public class FileService {
         this.fairDataPointDir = base.resolve("fairdatapoint").normalize();
         this.fairDataPointManifestPath = fairDataPointDir.resolve(FDP_MANIFEST_FILE_NAME).normalize();
         this.datasetDownloadPolicyPath = fairDataPointDir.resolve(DATASET_DOWNLOAD_POLICY_FILE_NAME).normalize();
+        this.harmonizationProvenancePath = fairDataPointDir.resolve(HARMONIZATION_PROVENANCE_FILE_NAME).normalize();
+        this.harmonizationProvenanceOutboxPath = fairDataPointDir
+                .resolve(HARMONIZATION_PROVENANCE_OUTBOX_FILE_NAME).normalize();
+        this.mappingSpecsDir = fairDataPointDir.resolve("mapping-specs").normalize();
         this.sharedDatasetsDir = fairDataPointDir.resolve("datasets").normalize();
     }
 
@@ -294,6 +319,159 @@ public class FileService {
         ));
     }
 
+    public synchronized HarmonizationProvenanceRecord registerHarmonizationProvenance(
+            String outputFileName,
+            List<String> sourceFileNames,
+            MappingSpecDTO mappingSpec) {
+        if (!harmonizationProvenanceEnabled) return null;
+        try {
+            byte[] mappingSpecContent = objectMapper.writerWithDefaultPrettyPrinter().writeValueAsBytes(mappingSpec);
+            String mappingSpecId = sha256(mappingSpecContent);
+
+            Files.createDirectories(mappingSpecsDir);
+            Path mappingSpecPath = mappingSpecsDir.resolve(mappingSpecId + ".json").normalize();
+            if (!mappingSpecPath.startsWith(mappingSpecsDir)) {
+                throw new IllegalArgumentException("Invalid mapping specification identifier");
+            }
+            Files.write(
+                    mappingSpecPath,
+                    mappingSpecContent,
+                    StandardOpenOption.CREATE,
+                    StandardOpenOption.TRUNCATE_EXISTING,
+                    StandardOpenOption.WRITE
+            );
+
+            HarmonizationProvenanceRecord record = new HarmonizationProvenanceRecord(
+                    UUID.randomUUID().toString(),
+                    outputFileName,
+                    List.copyOf(sourceFileNames),
+                    mappingSpecId,
+                    Instant.now().toString()
+            );
+            appendHarmonizationProvenanceOutbox(record);
+            List<HarmonizationProvenanceRecord> records = new ArrayList<>(readHarmonizationProvenanceManifest().records());
+            records.removeIf(existing -> outputFileName.equals(existing.outputFileName()));
+            records.add(record);
+            records.sort(Comparator.comparing(HarmonizationProvenanceRecord::outputFileName, String.CASE_INSENSITIVE_ORDER));
+            writeHarmonizationProvenanceManifest(new HarmonizationProvenanceManifest(List.copyOf(records)));
+            return record;
+        } catch (IOException e) {
+            throw new UncheckedIOException("Failed to record harmonization provenance for " + outputFileName, e);
+        }
+    }
+
+    public HarmonizationProvenanceManifest readHarmonizationProvenanceManifest() {
+        if (!harmonizationProvenanceEnabled) return new HarmonizationProvenanceManifest(List.of());
+        try {
+            if (!Files.exists(harmonizationProvenancePath) || !Files.isRegularFile(harmonizationProvenancePath)) {
+                return new HarmonizationProvenanceManifest(List.of());
+            }
+            HarmonizationProvenanceManifest manifest = objectMapper.readValue(
+                    harmonizationProvenancePath.toFile(),
+                    HarmonizationProvenanceManifest.class
+            );
+            return manifest == null || manifest.records() == null
+                    ? new HarmonizationProvenanceManifest(List.of())
+                    : manifest;
+        } catch (IOException e) {
+            logger.warn("Failed to read harmonization provenance manifest", e);
+            return new HarmonizationProvenanceManifest(List.of());
+        }
+    }
+
+    public synchronized List<HarmonizationProvenanceRecord> readPendingHarmonizationProvenance(int limit) {
+        if (!harmonizationProvenanceEnabled) return List.of();
+        int safeLimit = Math.max(1, Math.min(limit, 100));
+        return readHarmonizationProvenanceOutbox().records().stream()
+                .filter(record -> record != null && record.activityId() != null && !record.activityId().isBlank())
+                .limit(safeLimit)
+                .toList();
+    }
+
+    public synchronized void acknowledgeHarmonizationProvenance(List<String> activityIds) {
+        if (!harmonizationProvenanceEnabled || activityIds == null || activityIds.isEmpty()) {
+            return;
+        }
+        Set<String> acknowledged = activityIds.stream()
+                .filter(id -> id != null && !id.isBlank())
+                .collect(java.util.stream.Collectors.toSet());
+        if (acknowledged.isEmpty()) {
+            return;
+        }
+        List<HarmonizationProvenanceRecord> pending = new ArrayList<>(
+                readHarmonizationProvenanceOutbox().records());
+        if (pending.removeIf(record -> record != null && acknowledged.contains(record.activityId()))) {
+            writeHarmonizationProvenanceOutbox(new HarmonizationProvenanceManifest(List.copyOf(pending)));
+        }
+    }
+
+    private HarmonizationProvenanceManifest readHarmonizationProvenanceOutbox() {
+        try {
+            if (!Files.isRegularFile(harmonizationProvenanceOutboxPath)) {
+                return new HarmonizationProvenanceManifest(List.of());
+            }
+            HarmonizationProvenanceManifest outbox = objectMapper.readValue(
+                    harmonizationProvenanceOutboxPath.toFile(), HarmonizationProvenanceManifest.class);
+            return outbox == null || outbox.records() == null
+                    ? new HarmonizationProvenanceManifest(List.of())
+                    : outbox;
+        } catch (IOException e) {
+            throw new UncheckedIOException("Failed to read harmonization provenance outbox", e);
+        }
+    }
+
+    private void appendHarmonizationProvenanceOutbox(HarmonizationProvenanceRecord record) {
+        List<HarmonizationProvenanceRecord> pending = new ArrayList<>(
+                readHarmonizationProvenanceOutbox().records());
+        pending.add(record);
+        writeHarmonizationProvenanceOutbox(new HarmonizationProvenanceManifest(List.copyOf(pending)));
+    }
+
+    private void writeHarmonizationProvenanceOutbox(HarmonizationProvenanceManifest outbox) {
+        writeJsonAtomically(harmonizationProvenanceOutboxPath, outbox,
+                "harmonization provenance outbox");
+    }
+
+    public String readMappingSpecification(String mappingSpecId) {
+        if (!harmonizationProvenanceEnabled || mappingSpecId == null || !mappingSpecId.matches("[a-f0-9]{64}")) {
+            return null;
+        }
+        Path path = mappingSpecsDir.resolve(mappingSpecId + ".json").normalize();
+        if (!path.startsWith(mappingSpecsDir) || !Files.isRegularFile(path)) {
+            return null;
+        }
+        try {
+            return Files.readString(path);
+        } catch (IOException e) {
+            throw new UncheckedIOException("Failed to read mapping specification " + mappingSpecId, e);
+        }
+    }
+
+    private void writeHarmonizationProvenanceManifest(HarmonizationProvenanceManifest manifest) {
+        writeJsonAtomically(harmonizationProvenancePath, manifest,
+                "harmonization provenance manifest");
+    }
+
+    private void writeJsonAtomically(Path target, Object value, String description) {
+        try {
+            Files.createDirectories(fairDataPointDir);
+            Path temporary = Files.createTempFile(fairDataPointDir, target.getFileName().toString(), ".tmp");
+            try {
+                objectMapper.writerWithDefaultPrettyPrinter().writeValue(temporary.toFile(), value);
+                try {
+                    Files.move(temporary, target, StandardCopyOption.ATOMIC_MOVE,
+                            StandardCopyOption.REPLACE_EXISTING);
+                } catch (AtomicMoveNotSupportedException ignored) {
+                    Files.move(temporary, target, StandardCopyOption.REPLACE_EXISTING);
+                }
+            } finally {
+                Files.deleteIfExists(temporary);
+            }
+        } catch (IOException e) {
+            throw new UncheckedIOException("Failed to write " + description, e);
+        }
+    }
+
     public Path resolveElementFilePath(String fileName) {
         return resolveExistingFilePath(FileCategory.DATASET_ELEMENTS, fileName);
     }
@@ -307,6 +485,8 @@ public class FileService {
     }
 
     public List<String> listDatasetFiles() {
+        // TODO: Incorporate additional file extensions via the file connector.
+        // Combine this list with configured database sources in the Discovery catalog, keeping file-only callers separate.
         return listFilesInFolder(datasetsFolder);
     }
 
@@ -641,6 +821,19 @@ public class FileService {
         }
     }
 
+    private String sha256(byte[] content) {
+        try {
+            byte[] hash = MessageDigest.getInstance("SHA-256").digest(content);
+            StringBuilder sb = new StringBuilder(hash.length * 2);
+            for (byte b : hash) {
+                sb.append(String.format("%02x", b));
+            }
+            return sb.toString();
+        } catch (NoSuchAlgorithmException e) {
+            throw new IllegalStateException("SHA-256 is not available", e);
+        }
+    }
+
     private SharedFileMatch findSharedFileMatch(DatasetDownloadPolicyManifest manifest, String fingerprint) {
         if (manifest.files() == null) {
             return null;
@@ -768,6 +961,7 @@ public class FileService {
                 throw new IllegalArgumentException("Destination already exists");
             }
 
+            if (discoveryLedger != null) discoveryLedger.beforeDatasetRename(src, dst);
             moveFile(src, dst);
             if (category == FileCategory.DATASETS && fingerprint != null) {
                 DatasetDownloadPolicyManifest manifest = readDatasetDownloadPolicyManifest();
@@ -784,6 +978,14 @@ public class FileService {
             }
         } catch (IOException e) {
             throw new UncheckedIOException("Rename failed", e);
+        }
+    }
+
+    void beforeDatasetEdit(Path source) {
+        try {
+            if (discoveryLedger != null) discoveryLedger.beforeDatasetEdit(source);
+        } catch (IOException e) {
+            throw new UncheckedIOException("Could not preserve the dataset version before editing", e);
         }
     }
 

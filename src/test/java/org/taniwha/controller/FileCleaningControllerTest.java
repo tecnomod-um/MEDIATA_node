@@ -1,5 +1,7 @@
 package org.taniwha.controller;
 
+import org.taniwha.service.jobs.CleaningJobState;
+
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -7,9 +9,14 @@ import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 import org.taniwha.dto.DataCleaningOptionsDTO;
+import org.taniwha.dto.CleaningValidationResponseDTO;
+import org.taniwha.dto.NormalizationColumnStatsDTO;
+import org.taniwha.dto.NormalizationStatsResponseDTO;
 import org.taniwha.model.FileCategory;
 import org.taniwha.service.DataCleaningService;
 import org.taniwha.service.jobs.CleaningProcessingJobs;
+
+import java.util.Map;
 
 import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
@@ -74,6 +81,54 @@ class FileCleaningControllerTest {
 
         verify(dataCleaningService, times(1))
                 .startCleanJob(anyString(), eq(FileCategory.DATASETS), eq("file.csv"), any());
+    }
+
+    @Test
+    void getNormalizationStats_returnsOnlyColumnAggregates() throws Exception {
+        when(dataCleaningService.getNormalizationStats(any(), anyString(), anyList(), any()))
+                .thenReturn(new NormalizationStatsResponseDTO(Map.of(
+                        "score", new NormalizationColumnStatsDTO(true, 1.0, 9.0, 3, 0)
+                )));
+
+        mvc.perform(post("/api/files/clean/normalization-stats")
+                        .param("category", "DATASETS")
+                        .param("name", "file.csv")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"columns\":[\"score\"]}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.columns.score.min").value(1.0))
+                .andExpect(jsonPath("$.columns.score.max").value(9.0))
+                .andExpect(jsonPath("$.columns.score.validCount").value(3));
+    }
+
+    @Test
+    void getNormalizationStats_allNumericModeAllowsAutomaticColumnDiscovery() throws Exception {
+        when(dataCleaningService.getNormalizationStats(any(), anyString(), anyList(), any()))
+                .thenReturn(new NormalizationStatsResponseDTO(Map.of()));
+
+        mvc.perform(post("/api/files/clean/normalization-stats")
+                        .param("category", "DATASETS")
+                        .param("name", "file.csv")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"columns\":[],\"cleaningOptions\":{\"normalizationColumnMode\":\"all_numeric\"}}"))
+                .andExpect(status().isOk());
+    }
+
+    @Test
+    void validateCleanFile_returnsDryRunSummary() throws Exception {
+        when(dataCleaningService.validateCleaning(any(), anyString(), any()))
+                .thenReturn(new CleaningValidationResponseDTO(true, 4, 3, 2));
+
+        mvc.perform(post("/api/files/clean/validate")
+                        .param("category", "DATASETS")
+                        .param("name", "file.csv")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"removeDuplicates\":true}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.valid").value(true))
+                .andExpect(jsonPath("$.inputRows").value(4))
+                .andExpect(jsonPath("$.outputRows").value(3))
+                .andExpect(jsonPath("$.outputColumns").value(2));
     }
 
     @Test
@@ -154,7 +209,7 @@ class FileCleaningControllerTest {
     @Test
     void getCleanResult_doneStateNullResult_returnsDefaultMessage() throws Exception {
         String jobId = cleaningJobs.createJob();
-        CleaningProcessingJobs.JobState s = cleaningJobs.getJob(jobId);
+        CleaningJobState s = cleaningJobs.getJob(jobId);
         s.setState(CleaningProcessingJobs.State.DONE);
         s.setResult(null);
 

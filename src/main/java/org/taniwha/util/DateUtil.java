@@ -5,6 +5,8 @@ import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.time.format.DateTimeParseException;
 import java.util.Optional;
+import java.text.ParsePosition;
+import java.util.Arrays;
 
 public class DateUtil {
 
@@ -27,25 +29,25 @@ public class DateUtil {
             "yyyy-MM-dd'T'HH:mm:ss.SSS'Z'"
     };
 
-    private DateUtil() {
-    }
+    private static final DateTimeFormatter[] FORMATTERS = Arrays.stream(DATE_TIME_FORMATS)
+            .map(DateTimeFormatter::ofPattern).toArray(DateTimeFormatter[]::new);
+
+    private DateUtil() {}
 
     public static Optional<LocalDateTime> parseDate(String value) {
-        if (value == null || value.isEmpty()) {
-            return Optional.empty();
-        }
-        for (String pattern : DATE_TIME_FORMATS) {
-            DateTimeFormatter formatter = DateTimeFormatter.ofPattern(pattern);
+        if (value == null || value.isEmpty()) return Optional.empty();
+        for (int i = 0; i < FORMATTERS.length; i++) {
+            DateTimeFormatter formatter = FORMATTERS[i];
+            // Most discovery values are numbers/categories. Reject syntax mismatches
+            // without constructing exceptions or rebuilding formatters per cell.
+            ParsePosition position = new ParsePosition(0);
+            if (formatter.parseUnresolved(value, position) == null || position.getIndex() != value.length()) continue;
             try {
-                LocalDateTime dateTime = LocalDateTime.parse(value, formatter);
-                return Optional.of(dateTime);
+                return Optional.of(DATE_TIME_FORMATS[i].contains("HH")
+                        ? LocalDateTime.parse(value, formatter)
+                        : LocalDate.parse(value, formatter).atStartOfDay());
             } catch (DateTimeParseException ignored) {
-                try {
-                    LocalDate date = LocalDate.parse(value, formatter);
-                    return Optional.of(date.atStartOfDay());
-                } catch (DateTimeParseException ignored2) {
-                    // Parsing failed for LocalDate, move to the next pattern.
-                }
+                // Syntactically valid fields may still contain an invalid date/time.
             }
         }
         return Optional.empty();

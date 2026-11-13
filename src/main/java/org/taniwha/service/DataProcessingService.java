@@ -13,11 +13,11 @@ import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
 import org.taniwha.security.FileFilter;
 import org.taniwha.util.DateUtil;
+import org.taniwha.util.NumberUtil;
 
 import java.io.*;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.text.NumberFormat;
 import java.text.ParseException;
 import java.time.LocalDateTime;
 import java.util.*;
@@ -30,7 +30,6 @@ public class DataProcessingService {
     private final FileFilter fileFilter;
     private static final Logger logger = LoggerFactory.getLogger(DataProcessingService.class);
     private static final Locale LOCALE = Locale.GERMANY;
-    private static final NumberFormat NUMBER_FORMAT = NumberFormat.getInstance(LOCALE);
     private static final String XLSX_EXTENSION = ".xlsx";
     private static final String VALUE_KEY = "value";
 
@@ -39,6 +38,7 @@ public class DataProcessingService {
     }
 
     public void streamRows(Path path, Consumer<Map<String,String>> rowConsumer) throws IOException {
+        // TODO: Reuse the CSV/XLSX readers in a file connector. Database connectors should emit the same row shape.
         fileFilter.validate(path);
         String name = path.getFileName().toString().toLowerCase();
         if (name.endsWith(".csv")) {
@@ -74,7 +74,7 @@ public class DataProcessingService {
     }
 
     private void streamCsv(BufferedReader reader, Consumer<Map<String,String>> rowConsumer) throws IOException {
-        // auto-detect delimiter (as in your existing code)
+        // auto-detect delimiter
         char delim = autoDetectDelimiter(reader);
 
         CSVFormat fmt = CSVFormat.newFormat(delim)
@@ -84,7 +84,6 @@ public class DataProcessingService {
                 .withQuote('"')
                 .withIgnoreEmptyLines();
 
-        // rewind and parse
         reader.reset();
         try (CSVParser parser = new CSVParser(reader, fmt)) {
             List<String> headers = parser.getHeaderNames();
@@ -213,7 +212,7 @@ public class DataProcessingService {
                     .withQuote('"')
                     .withIgnoreEmptyLines(true);
 
-            // After detecting, re-open the stream
+            // Re-open the stream because charset detection consumes the first reader.
             try (BufferedReader secondReader = new BufferedReader(new InputStreamReader(file.getInputStream()));
                  CSVParser csvParser = new CSVParser(secondReader, csvFormat)) {
 
@@ -338,7 +337,7 @@ public class DataProcessingService {
                 rowData.put(headerValue, cellValue);
             }
 
-            // Apply filters if present
+            // apply filters if present
             if (filters == null || applyFilters(rowData, filters))
                 records.add(rowData);
         }
@@ -355,9 +354,12 @@ public class DataProcessingService {
         return true;
     }
 
-    // -------------------------------------------------------------------------
-    // Filtering logic
-    // -------------------------------------------------------------------------
+    // filtering logic
+
+    public boolean matchesDiscoveryFilters(Map<String, String> rowData, Map<String, Object> filters) {
+        // TODO: Verify filter parity across connectors for missing values, dates, numbers and category codes.
+        return filters == null || filters.isEmpty() || applyFilters(rowData, filters);
+    }
 
     private boolean applyFilters(Map<String, String> rowData, Map<String, Object> filters) {
         // If there's no operator or no conditions, just accept everything
@@ -429,7 +431,7 @@ public class DataProcessingService {
     private boolean applyComplexCondition(Map<String, String> rowData,
                                           String feature,
                                           Map<?, ?> criteriaWithOperators) {
-        // We expect "conditions" to be a List<?> and "operators" to be a List<String>
+        // "conditions" = List<?>, "operators" = List<String>
         Object conditionsObj = criteriaWithOperators.get("conditions");
         Object operatorsObj = criteriaWithOperators.get("operators");
         if (!(conditionsObj instanceof List<?> criteriaList) || criteriaList.isEmpty()) {
@@ -439,10 +441,10 @@ public class DataProcessingService {
             return false;
         }
 
-        // Evaluate the first condition
+        // evaluate the first condition
         boolean featureResult = evaluateCondition(rowData, feature, criteriaList.get(0));
 
-        // Combine with subsequent conditions
+        // combine with subsequent conditions
         for (int i = 1; i < criteriaList.size(); i++) {
             boolean conditionResult = evaluateCondition(rowData, feature, criteriaList.get(i));
             // operators list is of size (criteriaList.size() - 1)
@@ -456,7 +458,6 @@ public class DataProcessingService {
         }
         return featureResult;
     }
-
 
     private boolean evaluateCondition(Map<String, String> rowData, String feature, Object criteria) {
         if (!(criteria instanceof Map<?, ?> criteriaMap)) {
@@ -479,13 +480,12 @@ public class DataProcessingService {
                 default -> throw new IllegalArgumentException("Unknown filter type: " + filterType);
             };
         } catch (Exception e) {
-            logger.debug("Cannot evaluate condition: {} and {}", featureValue, criteriaMap.get(VALUE_KEY));
+            logger.debug("Cannot evaluate a discovery filter condition");
             return false;
         }
     }
 
     private boolean evaluateCategorical(String type, String featureValue, Object val) {
-        // For “categorical”: we generally only check equality
         if ("equal".equals(type) && val != null) {
             return featureValue.equals(val.toString());
         }
@@ -513,20 +513,21 @@ public class DataProcessingService {
     }
 
     private int compareValues(String featureValue, String criteriaValue) {
-        // Try parse as dates first
+        // try parse as dates
         Optional<LocalDateTime> featureDateOpt = DateUtil.parseDate(featureValue);
         Optional<LocalDateTime> criteriaDateOpt = DateUtil.parseDate(criteriaValue);
 
         if (featureDateOpt.isPresent() && criteriaDateOpt.isPresent())
             return featureDateOpt.get().compareTo(criteriaDateOpt.get());
 
-        // Fall back to numeric comparison
+        // fall back to numeric comparison
         try {
-            double featureNum = NUMBER_FORMAT.parse(featureValue.trim()).doubleValue();
-            double criteriaNum = NUMBER_FORMAT.parse(criteriaValue.trim()).doubleValue();
+            // Filters and statistics must interpret decimal/grouping separators identically.
+            double featureNum = NumberUtil.parseDouble(featureValue);
+            double criteriaNum = NumberUtil.parseDouble(criteriaValue);
             return Double.compare(featureNum, criteriaNum);
         } catch (ParseException e) {
-            logger.debug("Cannot compare values: {} and {}", featureValue, criteriaValue);
+            logger.debug("Discovery filter values could not be compared");
             throw new IllegalArgumentException("Cannot compare values: " + featureValue + " and " + criteriaValue, e);
         }
     }

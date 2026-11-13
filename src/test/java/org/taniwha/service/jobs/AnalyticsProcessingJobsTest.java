@@ -34,7 +34,7 @@ class AnalyticsProcessingJobsTest {
     void getJob_withValidJobId_shouldReturnJobState() {
         String jobId = jobs.createJob();
 
-        AnalyticsProcessingJobs.JobState state = jobs.getJob(jobId);
+        AnalyticsJobState state = jobs.getJob(jobId);
 
         assertThat(state).isNotNull();
         assertThat(state.getJobId()).isEqualTo(jobId);
@@ -44,7 +44,7 @@ class AnalyticsProcessingJobsTest {
 
     @Test
     void getJob_withInvalidJobId_shouldReturnNull() {
-        AnalyticsProcessingJobs.JobState state = jobs.getJob("non-existent");
+        AnalyticsJobState state = jobs.getJob("non-existent");
         assertThat(state).isNull();
     }
 
@@ -54,7 +54,7 @@ class AnalyticsProcessingJobsTest {
 
         jobs.update(jobId, 50, "test-file.csv");
 
-        AnalyticsProcessingJobs.JobState state = jobs.getJob(jobId);
+        AnalyticsJobState state = jobs.getJob(jobId);
         assertThat(state.getPercent().get()).isEqualTo(50);
         assertThat(state.getCurrentFile()).isEqualTo("test-file.csv");
     }
@@ -83,7 +83,7 @@ class AnalyticsProcessingJobsTest {
 
         jobs.fail(jobId, "Test error message");
 
-        AnalyticsProcessingJobs.JobState state = jobs.getJob(jobId);
+        AnalyticsJobState state = jobs.getJob(jobId);
         assertThat(state.getState()).isEqualTo(ProcessingStatusDTO.State.ERROR);
         assertThat(state.getMessage()).isEqualTo("Test error message");
         assertThat(state.getPercent().get()).isEqualTo(50);
@@ -105,7 +105,7 @@ class AnalyticsProcessingJobsTest {
 
         jobs.complete(jobId, results);
 
-        AnalyticsProcessingJobs.JobState state = jobs.getJob(jobId);
+        AnalyticsJobState state = jobs.getJob(jobId);
         assertThat(state.getState()).isEqualTo(ProcessingStatusDTO.State.DONE);
         assertThat(state.getResults()).isEqualTo(results);
         assertThat(state.getPercent().get()).isEqualTo(100);
@@ -130,7 +130,7 @@ class AnalyticsProcessingJobsTest {
     void toDto_withValidJobState_shouldConvertToDTO() {
         String jobId = jobs.createJob();
         jobs.update(jobId, 75, "file.csv");
-        AnalyticsProcessingJobs.JobState state = jobs.getJob(jobId);
+        AnalyticsJobState state = jobs.getJob(jobId);
 
         ProcessingStatusDTO dto = jobs.toDto(state, false);
 
@@ -147,7 +147,7 @@ class AnalyticsProcessingJobsTest {
         String jobId = jobs.createJob();
         List<AnalyticsResponseDTO> results = Arrays.asList(new AnalyticsResponseDTO());
         jobs.complete(jobId, results);
-        AnalyticsProcessingJobs.JobState state = jobs.getJob(jobId);
+        AnalyticsJobState state = jobs.getJob(jobId);
 
         ProcessingStatusDTO dto = jobs.toDto(state, true);
 
@@ -181,9 +181,7 @@ class AnalyticsProcessingJobsTest {
 
     }
 
-    // -----------------------------------------------------------------------
     // cancel / attachFuture / isCanceled
-    // -----------------------------------------------------------------------
 
     @Test
     void cancel_withRunningJob_setsCanceledState() {
@@ -191,7 +189,7 @@ class AnalyticsProcessingJobsTest {
 
         jobs.cancel(jobId, "User canceled");
 
-        AnalyticsProcessingJobs.JobState state = jobs.getJob(jobId);
+        AnalyticsJobState state = jobs.getJob(jobId);
         assertThat(state.getState()).isEqualTo(ProcessingStatusDTO.State.CANCELED);
         assertThat(state.getMessage()).isEqualTo("User canceled");
     }

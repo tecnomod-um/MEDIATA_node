@@ -161,7 +161,7 @@ public class HarmonizerService {
                         } catch (IOException e) {
                             throw new UncheckedIOException(e);
                         }
-                        fileService.registerDerivedDatasetShareability(datasetName, out.getFileName().toString());
+                        registerGeneratedDataset(datasetName, out, mappingSpec);
 
                         processedDatasets++;
                         int afterPercent = (int) Math.round((processedDatasets * 100.0) / totalDatasets);
@@ -288,7 +288,7 @@ public class HarmonizerService {
                         throw new UncheckedIOException(e);
                     }
 
-                    fileService.registerDerivedDatasetShareability(datasetName, out.getFileName().toString());
+                    registerGeneratedDataset(datasetName, out, mappingSpec);
                     processedDatasets++;
                     int afterPercent = (int) Math.round((processedDatasets * 100.0) / totalDatasets);
                     jobs.update(
@@ -387,7 +387,7 @@ public class HarmonizerService {
                                              .withHeader())) {
                             // write only the empty header row, no data rows
                         }
-                        fileService.registerDerivedDatasetShareability(datasetName, out.getFileName().toString());
+                        registerGeneratedDataset(datasetName, out, mappingSpec);
                         logger.info("[parseFiles] Finished writing {} -> {}", datasetName, out);
                         continue;
                     }
@@ -508,7 +508,7 @@ public class HarmonizerService {
                             }
                         });
                     }
-                    fileService.registerDerivedDatasetShareability(datasetName, out.getFileName().toString());
+                    registerGeneratedDataset(datasetName, out, mappingSpec);
                     logger.info("[parseFiles] Finished writing {} -> {}", datasetName, out);
                 }
             }
@@ -516,6 +516,12 @@ public class HarmonizerService {
         } catch (Exception ex) {
             throw new IllegalStateException("Error processing files", ex);
         }
+    }
+
+    private void registerGeneratedDataset(String sourceFileName, Path outputPath, MappingSpecDTO mappingSpec) {
+        String outputFileName = outputPath.getFileName().toString();
+        fileService.registerDerivedDatasetShareability(sourceFileName, outputFileName);
+        fileService.registerHarmonizationProvenance(outputFileName, List.of(sourceFileName), mappingSpec);
     }
 
 
@@ -675,7 +681,8 @@ public class HarmonizerService {
                     Object mv = mapping.get("value");
 
                     // typed passthrough -> write the raw source value
-                    if (mv instanceof String s && isTypeMarker(s)) {
+                    if (mv instanceof String s && isTypeMarker(s)
+                            && !"constant".equalsIgnoreCase(Objects.toString(valueObj.get("outputMode"), ""))) {
                         return raw;
                     }
 
@@ -686,7 +693,7 @@ public class HarmonizerService {
     private boolean isTypeMarker(String s) {
         if (s == null) return false;
         String t = s.trim().toLowerCase();
-        return "integer".equals(t) || "double".equals(t) || "date".equals(t);
+        return "integer".equals(t) || "double".equals(t) || "date".equals(t) || "natural language".equals(t);
     }
 
     private boolean matchesDeclaredType(String raw, String declaredType) {
@@ -705,6 +712,7 @@ public class HarmonizerService {
                     yield true;
                 }
                 case "date" -> DateUtil.parseDate(raw).isPresent();
+                case "natural language" -> true;
                 default -> false;
             };
         } catch (Exception ex) {

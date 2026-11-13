@@ -56,7 +56,6 @@ class ProcessingStatusDTOTest {
         assertThat(State.DONE).isNotNull();
         assertThat(State.ERROR).isNotNull();
         
-        // Verify valueOf works
         assertThat(State.valueOf("RUNNING")).isEqualTo(State.RUNNING);
         assertThat(State.valueOf("DONE")).isEqualTo(State.DONE);
         assertThat(State.valueOf("ERROR")).isEqualTo(State.ERROR);
@@ -157,7 +156,6 @@ class ProcessingStatusDTOTest {
                 null
         );
 
-        // Simulate processing progression
         dto.setPercent(25);
         assertThat(dto.getPercent()).isEqualTo(25);
         

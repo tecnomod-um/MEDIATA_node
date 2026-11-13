@@ -56,9 +56,7 @@ class DataCleaningServiceIntegrationTest {
         }
     }
 
-    // -----------------------------------------------------------------------
     // startCleanJob – async path
-    // -----------------------------------------------------------------------
 
     @Test
     void startCleanJob_removeDuplicates_completesWithDoneState() throws Exception {
@@ -138,9 +136,7 @@ class DataCleaningServiceIntegrationTest {
         assertThat(jobs.getJob(jobId).getState()).isEqualTo(CleaningProcessingJobs.State.DONE);
     }
 
-    // -----------------------------------------------------------------------
     // cleanInPlaceWithProgress – direct call (synchronous)
-    // -----------------------------------------------------------------------
 
     @Test
     void cleanInPlaceWithProgress_nullCategory_throwsNullPointer() {

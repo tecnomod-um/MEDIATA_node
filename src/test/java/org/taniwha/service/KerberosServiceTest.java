@@ -8,6 +8,9 @@ import org.apache.kerby.kerberos.kerb.type.base.EncryptedData;
 import org.apache.kerby.kerberos.kerb.type.base.EncryptionKey;
 import org.apache.kerby.kerberos.kerb.type.base.EncryptionType;
 import org.apache.kerby.kerberos.kerb.type.base.KeyUsage;
+import org.apache.kerby.kerberos.kerb.type.base.PrincipalName;
+import org.apache.kerby.kerberos.kerb.type.KerberosTime;
+import org.apache.kerby.kerberos.kerb.type.ap.Authenticator;
 import org.apache.kerby.kerberos.kerb.type.ticket.Ticket;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -20,6 +23,8 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
@@ -109,5 +114,19 @@ class KerberosServiceTest {
             KrbException exception = assertThrows(KrbException.class, () -> service.decryptServiceTicket(ticket, null));
             assertEquals("decrypt error", exception.getMessage());
         }
+    }
+
+    @Test
+    void verifyAuthenticator_usesRealKerberosEncryptionAndAuthenticatedIdentity() throws Exception {
+        EncryptionKey sessionKey = new EncryptionKey(EncryptionType.AES128_CTS_HMAC_SHA1_96, new byte[16]);
+        Authenticator authenticator = new Authenticator();
+        authenticator.setAuthenticatorVno(5);
+        authenticator.setCrealm("REALM");
+        authenticator.setCname(new PrincipalName("alice"));
+        authenticator.setCtime(KerberosTime.now());
+        EncryptedData encryptedAuthenticator = EncryptionHandler.encrypt(
+                authenticator.encode(), sessionKey, KeyUsage.AP_REQ_AUTH);
+        assertTrue(service.verifyAuthenticator(encryptedAuthenticator, sessionKey, "alice", "REALM"));
+        assertFalse(service.verifyAuthenticator(encryptedAuthenticator, sessionKey, "mallory", "REALM"));
     }
 }

@@ -105,7 +105,6 @@ class ErrorLogDTOTest {
     void setTimestamp_withDifferentFormats_shouldStoreAsProvided() {
         ErrorLogDTO dto = new ErrorLogDTO();
         
-        // Test various timestamp formats
         dto.setTimestamp("2024-01-13 12:00:00");
         assertThat(dto.getTimestamp()).isEqualTo("2024-01-13 12:00:00");
         

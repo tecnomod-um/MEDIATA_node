@@ -3,6 +3,8 @@ package org.taniwha.service;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.taniwha.dto.DataCleaningOptionsDTO;
+import org.taniwha.dto.NormalizationBoundsDTO;
 import org.taniwha.security.FileFilter;
 import org.taniwha.service.jobs.CleaningProcessingJobs;
 
@@ -13,20 +15,24 @@ import java.util.*;
 import java.util.stream.Collectors;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.doNothing;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 class DataCleaningServiceTest {
 
     private DataCleaningService svc;
+    private FileService fileService;
+    private DataProcessingService dataProcessingService;
 
     @BeforeEach
     void setUp() {
         FileFilter fileFilter = mock(FileFilter.class);
         doNothing().when(fileFilter).validate(any(Path.class));
-        FileService fileService = mock(FileService.class);
-        DataProcessingService dataProcessingService = mock(DataProcessingService.class);
+        fileService = mock(FileService.class);
+        dataProcessingService = mock(DataProcessingService.class);
         CleaningProcessingJobs cleaningJobs = new CleaningProcessingJobs();
 
         svc = new DataCleaningService(fileService, dataProcessingService, cleaningJobs);
@@ -465,7 +471,6 @@ class DataCleaningServiceTest {
             .filter(v -> v.equalsIgnoreCase("boston"))
             .count();
         
-        // Should merge to just 1 Boston variant + Los Angeles = 2 total unique values
         assertThat(uniqueValues).hasSize(2);
         assertThat(bostonVariants).isEqualTo(1);
     }
@@ -480,11 +485,10 @@ class DataCleaningServiceTest {
         var input = new ArrayList<>(List.of(row1, row2, row3));
         var result = svc.mergeSimilarValues(input, Set.of("code"), "levenshtein", 0.65, false, false, "shortest");
         
-        // Should merge similar values, and "USA" should win as shortest
         Set<String> uniqueValues = result.stream()
             .map(r -> r.get("code"))
             .collect(Collectors.toSet());
-        assertThat(uniqueValues).hasSizeLessThanOrEqualTo(2); // Should have some merging
+        assertThat(uniqueValues).hasSizeLessThanOrEqualTo(2);
         // If merged to 1, it should be USA
         if (uniqueValues.size() == 1) {
             assertThat(uniqueValues.iterator().next()).isEqualTo("USA");
@@ -504,7 +508,7 @@ class DataCleaningServiceTest {
         Set<String> uniqueValues = result.stream()
             .map(r -> r.get("abbr"))
             .collect(Collectors.toSet());
-        assertThat(uniqueValues).hasSizeLessThanOrEqualTo(2); // Should have some merging
+        assertThat(uniqueValues).hasSizeLessThanOrEqualTo(2);
         // If merged to 1, longest should win
         if (uniqueValues.size() == 1) {
             assertThat(uniqueValues.iterator().next().length()).isGreaterThanOrEqualTo(3);
@@ -567,7 +571,6 @@ class DataCleaningServiceTest {
         var input = new ArrayList<>(List.of(row1, row2, row3, row4));
         var result = svc.mergeSimilarValues(input, Set.of("status"), "levenshtein", 0.85, false, false, "most_frequent");
         
-        // Should handle nulls/empties gracefully
         assertThat(result).hasSize(4);
         long activeCount = result.stream()
             .filter(r -> "Active".equals(r.get("status")))
@@ -674,6 +677,44 @@ class DataCleaningServiceTest {
         var result = svc.roundDecimals(new ArrayList<>(List.of(row)), 0);
         // Rounding to 0 decimals might return "11" or "11.0" depending on implementation
         assertThat(result.get(0).get("price")).matches("11(\\.0)?");
+    }
+
+    @Test
+    @DisplayName("cleanInPlace preserves configured CSV and decimal separators")
+    void cleanInPlace_appliesConfiguredCsvFormatting() throws Exception {
+        FileFilter fileFilter = mock(FileFilter.class);
+        doNothing().when(fileFilter).validate(any(Path.class));
+
+        Path tempDir = java.nio.file.Files.createTempDirectory("clean-formatting");
+        Path datasetFile = tempDir.resolve("prices.csv");
+        java.nio.file.Files.writeString(datasetFile, "id;amount\n1;1.50\n2;2,75\n");
+
+        FileService fileService = mock(FileService.class);
+        org.mockito.Mockito.when(fileService.resolveExistingFilePath(org.taniwha.model.FileCategory.DATASETS, "prices.csv"))
+                .thenReturn(datasetFile);
+
+        DataProcessingService dataProcessingService = mock(DataProcessingService.class);
+        List<Map<String, String>> rows = new ArrayList<>();
+        rows.add(new LinkedHashMap<>(Map.of("id", "1", "amount", "1.50")));
+        rows.add(new LinkedHashMap<>(Map.of("id", "2", "amount", "2,75")));
+        org.mockito.Mockito.when(dataProcessingService.extractDataFromPath(datasetFile)).thenReturn(rows);
+
+        svc = new DataCleaningService(fileService, dataProcessingService, new CleaningProcessingJobs());
+
+        DataCleaningOptionsDTO opts = new DataCleaningOptionsDTO();
+        opts.setStandardizeCsvFormat(true);
+        opts.setCsvDelimiter(",");
+        opts.setDecimalSeparator(",");
+
+        svc.cleanInPlace(org.taniwha.model.FileCategory.DATASETS, "prices.csv", opts);
+
+        List<String> lines = java.nio.file.Files.readAllLines(datasetFile);
+        assertThat(lines).hasSize(3);
+        assertThat(lines.get(0).split(",")).containsExactlyInAnyOrder("id", "amount");
+        assertThat(lines.get(1)).contains("\"1,50\"");
+        assertThat(lines.get(1)).contains("1");
+        assertThat(lines.get(2)).contains("\"2,75\"");
+        assertThat(lines.get(2)).contains("2");
     }
 
     // ========== String Replacement Tests ==========
@@ -866,7 +907,6 @@ class DataCleaningServiceTest {
         // URL normalization behavior - check that it processes the URL
         assertThat(result.get(0).get("url")).isNotNull();
         String normalized = result.get(0).get("url");
-        // Should at least contain the domain
         assertThat(normalized.toLowerCase()).contains("example.com");
     }
 
@@ -1017,6 +1057,136 @@ class DataCleaningServiceTest {
         
         var result = svc.normalizeData(new ArrayList<>(List.of(row)), Set.of("val"));
         assertThat(result).hasSize(1);
+        assertThat(result.get(0).get("val")).isEqualTo("0.0");
+    }
+
+    @Test
+    void normalizeData_usesSharedBoundsAcrossFiles() {
+        Map<String, String> row = new HashMap<>();
+        row.put("score", "50");
+
+        var result = svc.normalizeData(
+                new ArrayList<>(List.of(row)),
+                Set.of("score"),
+                Map.of("score", new NormalizationBoundsDTO(0, 100)),
+                "selection",
+                "fail"
+        );
+
+        assertThat(result.get(0).get("score")).isEqualTo("0.5");
+    }
+
+    @Test
+    void normalizeData_rejectsInvalidValuesByDefault() {
+        Map<String, String> numeric = new HashMap<>(Map.of("score", "10"));
+        Map<String, String> invalid = new HashMap<>(Map.of("score", "unknown"));
+
+        assertThatThrownBy(() -> svc.normalizeData(
+                new ArrayList<>(List.of(numeric, invalid)), Set.of("score")
+        )).isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("non-numeric");
+    }
+
+    @Test
+    void normalizeData_canKeepInvalidValuesWhenExplicitlyRequested() {
+        Map<String, String> low = new HashMap<>(Map.of("score", "0"));
+        Map<String, String> high = new HashMap<>(Map.of("score", "10"));
+        Map<String, String> invalid = new HashMap<>(Map.of("score", "unknown"));
+
+        var result = svc.normalizeData(
+                new ArrayList<>(List.of(low, high, invalid)),
+                Set.of("score"),
+                Collections.emptyMap(),
+                "per_file",
+                "keep"
+        );
+
+        assertThat(result).extracting(row -> row.get("score"))
+                .containsExactly("0.0", "1.0", "unknown");
+    }
+
+    @Test
+    void getNormalizationStats_returnsAggregatesWithoutRows() throws Exception {
+        Path source = Path.of("stats.csv");
+        when(fileService.resolveExistingFilePath(org.taniwha.model.FileCategory.DATASETS, "stats.csv"))
+                .thenReturn(source);
+        when(dataProcessingService.extractDataFromPath(source)).thenReturn(new ArrayList<>(List.of(
+                new HashMap<>(Map.of("score", "1,5")),
+                new HashMap<>(Map.of("score", "3.5")),
+                new HashMap<>(Map.of("score", "bad"))
+        )));
+
+        var response = svc.getNormalizationStats(
+                org.taniwha.model.FileCategory.DATASETS, "stats.csv", List.of("score"), null
+        );
+        var stats = response.getColumns().get("score");
+
+        assertThat(stats.isPresent()).isTrue();
+        assertThat(stats.getMin()).isEqualTo(1.5);
+        assertThat(stats.getMax()).isEqualTo(3.5);
+        assertThat(stats.getValidCount()).isEqualTo(2);
+        assertThat(stats.getInvalidCount()).isEqualTo(1);
+    }
+
+    @Test
+    void getNormalizationStats_allNumericModeDiscoversEveryColumn() throws Exception {
+        Path source = Path.of("all-stats.csv");
+        when(fileService.resolveExistingFilePath(org.taniwha.model.FileCategory.DATASETS, "all-stats.csv"))
+                .thenReturn(source);
+        when(dataProcessingService.extractDataFromPath(source)).thenReturn(new ArrayList<>(List.of(
+                new HashMap<>(Map.of("age", "20", "name", "Ana")),
+                new HashMap<>(Map.of("age", "40", "name", "Luis"))
+        )));
+        DataCleaningOptionsDTO options = new DataCleaningOptionsDTO();
+        options.setNormalizationColumnMode("all_numeric");
+
+        var response = svc.getNormalizationStats(
+                org.taniwha.model.FileCategory.DATASETS, "all-stats.csv", List.of(), options
+        );
+
+        assertThat(response.getColumns()).containsOnlyKeys("age", "name");
+        assertThat(response.getColumns().get("age").getValidCount()).isEqualTo(2);
+        assertThat(response.getColumns().get("name").getInvalidCount()).isEqualTo(2);
+    }
+
+    @Test
+    void validateCleaning_dryRunsTheCompletePipeline() throws Exception {
+        Path source = Path.of("validate.csv");
+        when(fileService.resolveExistingFilePath(org.taniwha.model.FileCategory.DATASETS, "validate.csv"))
+                .thenReturn(source);
+        when(dataProcessingService.extractDataFromPath(source)).thenReturn(new ArrayList<>(List.of(
+                new LinkedHashMap<>(Map.of("age", "20")),
+                new LinkedHashMap<>(Map.of("age", "20"))
+        )));
+        DataCleaningOptionsDTO options = new DataCleaningOptionsDTO();
+        options.setRemoveDuplicates(true);
+
+        var response = svc.validateCleaning(
+                org.taniwha.model.FileCategory.DATASETS, "validate.csv", options
+        );
+
+        assertThat(response.isValid()).isTrue();
+        assertThat(response.getInputRows()).isEqualTo(2);
+        assertThat(response.getOutputRows()).isEqualTo(1);
+        assertThat(response.getOutputColumns()).isEqualTo(1);
+    }
+
+    @Test
+    void validateCleaning_rejectsInvalidOutputSettingsBeforeWriting() throws Exception {
+        Path source = Path.of("validate.csv");
+        when(fileService.resolveExistingFilePath(org.taniwha.model.FileCategory.DATASETS, "validate.csv"))
+                .thenReturn(source);
+        when(dataProcessingService.extractDataFromPath(source)).thenReturn(new ArrayList<>(List.of(
+                new LinkedHashMap<>(Map.of("age", "20"))
+        )));
+        DataCleaningOptionsDTO options = new DataCleaningOptionsDTO();
+        options.setStandardizeCsvFormat(true);
+        options.setCsvDelimiter("::");
+
+        assertThatThrownBy(() -> svc.validateCleaning(
+                org.taniwha.model.FileCategory.DATASETS, "validate.csv", options
+        )).isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("single character");
     }
 
     @Test

@@ -1,6 +1,7 @@
 package org.taniwha.util;
 
 import org.apache.jena.rdf.model.Model;
+import org.apache.jena.rdf.model.Resource;
 import org.apache.jena.vocabulary.RDF;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -8,6 +9,7 @@ import org.junit.jupiter.api.io.TempDir;
 import org.mockito.Mock;
 import org.mockito.MockitoAnnotations;
 import org.taniwha.model.MetadataDocument;
+import org.taniwha.dto.mapping.MappingSpecDTO;
 import org.taniwha.security.FileFilter;
 import org.taniwha.service.FileService;
 
@@ -108,10 +110,18 @@ class FairDataPointMetadataUtilTest {
     }
 
     @Test
-    void generateManagedMetadataDocument_groupsParsedAndRawFilesIntoOneDatasetWithTwoDistributions() throws Exception {
+    void generateManagedMetadataDocument_modelsHarmonizedOutputAsDerivedDataset() throws Exception {
         Files.createDirectories(tempBase.resolve("datasets"));
         Files.writeString(tempBase.resolve("datasets/fimbartheltodos.xlsx"), "placeholder");
         Files.writeString(tempBase.resolve("datasets/parsed_fimbartheltodos.csv"), "score\n100\n");
+        MappingSpecDTO mappingSpec = new MappingSpecDTO();
+        mappingSpec.setSpecVersion("2.0.0");
+        mappingSpec.setRuleLanguage("json-logic");
+        var provenance = fileService.registerHarmonizationProvenance(
+                "parsed_fimbartheltodos.csv",
+                java.util.List.of("fimbartheltodos.xlsx"),
+                mappingSpec
+        );
 
         FairDataPointMetadataUtil util = new FairDataPointMetadataUtil(
                 fileService,
@@ -131,12 +141,28 @@ class FairDataPointMetadataUtilTest {
         Model model = DCatUtil.readModel(document.content(), document.fileName());
 
         assertThat(model.listResourcesWithProperty(RDF.type, model.createResource("http://www.w3.org/ns/dcat#Dataset")).toList())
-                .hasSize(1);
+                .hasSize(2);
         assertThat(model.listResourcesWithProperty(RDF.type, model.createResource("http://www.w3.org/ns/dcat#Distribution")).toList())
                 .hasSize(2);
         assertThat(document.content()).contains("/fdp/dataset/fimbartheltodos");
+        assertThat(document.content()).contains("/fdp/dataset/parsed-fimbartheltodos");
         assertThat(document.content()).contains("/fdp/distribution/fimbartheltodos");
         assertThat(document.content()).contains("/fdp/distribution/parsed-fimbartheltodos");
-        assertThat(document.content()).contains("Logical dataset exposed by the Guttmann node with 2 available distributions.");
+        assertThat(document.content()).contains("Harmonized dataset derived at the Guttmann node.");
+        assertThat(document.content()).contains("/fdp/mapping-spec/" + provenance.mappingSpecId());
+
+        Resource source = model.createResource("https://stratif.guttmann.tech/taniwha/fdp/dataset/fimbartheltodos");
+        Resource derived = model.createResource("https://stratif.guttmann.tech/taniwha/fdp/dataset/parsed-fimbartheltodos");
+        assertThat(model.contains(
+                derived,
+                model.createProperty("http://www.w3.org/ns/prov#wasDerivedFrom"),
+                source
+        )).isTrue();
+        assertThat(model.listObjectsOfProperty(
+                derived,
+                model.createProperty("http://www.w3.org/ns/prov#wasGeneratedBy")
+        ).toList()).hasSize(1);
+        assertThat(fileService.readMappingSpecification(provenance.mappingSpecId()))
+                .contains("\"specVersion\" : \"2.0.0\"");
     }
 }

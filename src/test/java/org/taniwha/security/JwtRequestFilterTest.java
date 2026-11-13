@@ -11,7 +11,9 @@ import org.mockito.Mock;
 import org.mockito.MockitoAnnotations;
 import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.mock.web.MockHttpServletResponse;
+import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.context.SecurityContextHolder;
+import org.taniwha.service.TrustedProxySecurityService;
 import org.taniwha.util.JwtTokenUtil;
 
 import java.io.IOException;
@@ -58,12 +60,31 @@ class JwtRequestFilterTest {
         request.setContextPath("/taniwha");
         request.addHeader("Authorization", "Bearer validToken123");
         when(jwtTokenUtil.validateToken("validToken123")).thenReturn(true);
+        when(jwtTokenUtil.isNodeAccessToken("validToken123")).thenReturn(true);
 
         jwtRequestFilter.doFilterInternal(request, response, filterChain);
 
         verify(jwtTokenUtil).validateToken("validToken123");
         verify(filterChain).doFilter(request, response);
         assertThat(SecurityContextHolder.getContext().getAuthentication()).isNotNull();
+    }
+
+    @Test
+    void doFilterInternal_verifiedTrustedProxyRequest_shouldBypassJwt() throws ServletException, IOException {
+        request.setRequestURI("/taniwha/api/semantic-cde/datasets/blood_pressure.csv/registry-matches");
+        request.setContextPath("/taniwha");
+        request.setAttribute(
+                TrustedProxySecurityService.SIGNED_PROXY_CONTEXT_ATTRIBUTE,
+                new TrustedProxySecurityService.SignedRequestContext("GET", request.getRequestURI(), "nonce")
+        );
+        SecurityContextHolder.getContext().setAuthentication(
+                new UsernamePasswordAuthenticationToken("trusted-proxy", null, null)
+        );
+
+        jwtRequestFilter.doFilterInternal(request, response, filterChain);
+
+        verify(filterChain).doFilter(request, response);
+        verifyNoInteractions(jwtTokenUtil);
     }
 
     @Test
@@ -164,17 +185,34 @@ class JwtRequestFilterTest {
     }
 
     @Test
+    void doFilterInternal_fileEndpoint_requiresNodeAccessToken() throws ServletException, IOException {
+        request.setRequestURI("/taniwha/api/files/datasets");
+        request.setContextPath("/taniwha");
+        request.addHeader("Authorization", "Bearer userToken");
+        when(jwtTokenUtil.validateToken(anyString())).thenReturn(true);
+        when(jwtTokenUtil.isNodeAccessToken(anyString())).thenReturn(false);
+        request = new MockHttpServletRequest();
+        request.setRequestURI("/taniwha/api/files/datasets");
+        request.setContextPath("/taniwha");
+        request.addHeader("Authorization", "Bearer " + "userToken");
+
+        jwtRequestFilter.doFilterInternal(request, response, filterChain);
+
+        assertThat(response.getStatus()).isEqualTo(401);
+        verify(jwtTokenUtil).isNodeAccessToken(anyString());
+        verify(filterChain, never()).doFilter(any(), any());
+    }
+
+    @Test
     void isExemptedEndpoint_nodeEndpoints_shouldBeExempted() {
         request.setRequestURI("/taniwha/node/status");
         request.setContextPath("/taniwha");
         
-        // Access the filter to test - this would normally be tested via doFilterInternal
-        // but we can verify behavior through the main method
         try {
             jwtRequestFilter.doFilterInternal(request, response, filterChain);
             verify(filterChain).doFilter(request, response);
         } catch (Exception e) {
-            fail("Should not throw exception");
+            fail("exempted status path raised an exception", e);
         }
     }
 
@@ -185,7 +223,11 @@ class JwtRequestFilterTest {
             "/taniwha/node/heartbeat",
             "/taniwha/node/status",
             "/taniwha/fdp",
-            "/taniwha/fdp/catalog/node-catalog"
+            "/taniwha/fdp/catalog/node-catalog",
+            "/taniwha/v3/api-docs",
+            "/taniwha/v3/api-docs.yaml",
+            "/taniwha/swagger-ui.html",
+            "/taniwha/swagger-ui/index.html"
         };
 
         for (String path : exemptedPaths) {

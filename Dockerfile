@@ -37,15 +37,18 @@ RUN sed -i 's/\r$//' /app/entrypoint.sh \
         /taniwha/fhir_mappings \
         /taniwha/dataset_elements \
         /taniwha/dataset_metadata \
+        /taniwha/semantic-cde \
         /taniwha/fairdatapoint/mongo \
         /taniwha/fairdatapoint/rdf-store \
         /var/log/taniwha \
-    && chmod 777 \
+    && chmod 750 \
+        /taniwha \
         /taniwha/datasets \
         /taniwha/mapped_datasets \
         /taniwha/fhir_mappings \
         /taniwha/dataset_elements \
-        /taniwha/dataset_metadata
+        /taniwha/dataset_metadata \
+        /taniwha/semantic-cde
 
 VOLUME /taniwha
 

@@ -12,6 +12,7 @@ import org.taniwha.model.MetadataDocument;
 import org.taniwha.model.NodeMetadata;
 import org.taniwha.security.FileFilter;
 import org.taniwha.dto.FileInfoDto;
+import org.taniwha.dto.mapping.MappingSpecDTO;
 
 import java.io.IOException;
 import java.nio.file.Files;
@@ -367,9 +368,7 @@ class FileServiceTest {
                 .isEqualTo("Fallback title");
     }
 
-    // -----------------------------------------------------------------------
     // resolveXxxFilePath delegates
-    // -----------------------------------------------------------------------
 
     @Test
     void resolveDatasetFilePath_existingFile_returnsPath() throws IOException {
@@ -407,7 +406,7 @@ class FileServiceTest {
         Path sharedParsed = fileService.resolveSharedDatasetFilePath("parsed_fimbartheltodos.csv");
         assertThat(sharedRaw).exists();
         assertThat(sharedParsed).exists();
-        assertThat(sharedRaw.toString()).contains("/fairdatapoint/datasets/fimbartheltodos/");
+        assertThat(sharedRaw.getParent()).isEqualTo(tempBase.resolve("fairdatapoint/datasets/fimbartheltodos"));
         assertThat(Files.readString(sharedRaw)).isEqualTo("raw");
 
         fileService.renameFile(FileCategory.DATASETS, "fimbartheltodos.xlsx", "renamed.xlsx");
@@ -512,9 +511,7 @@ class FileServiceTest {
         assertThat(p.getFileName().toString()).isEqualTo("meta.ttl");
     }
 
-    // -----------------------------------------------------------------------
     // resolveExistingFilePath – error cases (dirFor coverage for all categories)
-    // -----------------------------------------------------------------------
 
     @Test
     void resolveExistingFilePath_fhirMappings_existingFile() throws IOException {
@@ -572,9 +569,7 @@ class FileServiceTest {
                 .isInstanceOf(IllegalArgumentException.class);
     }
 
-    // -----------------------------------------------------------------------
     // listFilesWithInfo
-    // -----------------------------------------------------------------------
 
     @Test
     void listFilesWithInfo_returnsFileMetadata() throws IOException {
@@ -619,9 +614,7 @@ class FileServiceTest {
         assertThat(infos).hasSize(1).extracting(FileInfoDto::getName).containsExactly("real.csv");
     }
 
-    // -----------------------------------------------------------------------
     // deleteFile
-    // -----------------------------------------------------------------------
 
     @Test
     void deleteFile_existingFile_deletesIt() throws IOException {
@@ -644,9 +637,7 @@ class FileServiceTest {
                 .doesNotThrowAnyException();
     }
 
-    // -----------------------------------------------------------------------
     // renameFile
-    // -----------------------------------------------------------------------
 
     @Test
     void renameFile_renamesSuccessfully() throws IOException {
@@ -692,5 +683,41 @@ class FileServiceTest {
 
         assertThatThrownBy(() -> fileService.renameFile(FileCategory.DATASETS, "src.csv", ""))
                 .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void disabledProvenanceLeavesExistingRecordsAndOutboxUntouched() {
+        var original = fileService.registerHarmonizationProvenance(
+                "parsed_source.csv", List.of("source.csv"), new MappingSpecDTO());
+        var disabled = new FileService(fileFilter, tempBase.toString(), "", null, false);
+
+        disabled.registerHarmonizationProvenance(
+                "parsed_other.csv", List.of("other.csv"), new MappingSpecDTO());
+        assertThat(disabled.readPendingHarmonizationProvenance(100)).isEmpty();
+        assertThat(disabled.readHarmonizationProvenanceManifest().records()).isEmpty();
+        assertThat(disabled.readMappingSpecification(original.mappingSpecId())).isNull();
+        disabled.acknowledgeHarmonizationProvenance(List.of(original.activityId()));
+
+        assertThat(fileService.readPendingHarmonizationProvenance(100)).containsExactly(original);
+        assertThat(fileService.readHarmonizationProvenanceManifest().records()).containsExactly(original);
+    }
+
+    @Test
+    void provenanceOutboxKeepsEventUntilItIsAcknowledged() {
+        MappingSpecDTO mappingSpec = new MappingSpecDTO();
+
+        var record = fileService.registerHarmonizationProvenance(
+                "parsed_source.csv", List.of("source.csv"), mappingSpec);
+
+        assertThat(fileService.readPendingHarmonizationProvenance(100))
+                .extracting(org.taniwha.model.HarmonizationProvenanceRecord::activityId)
+                .containsExactly(record.activityId());
+
+        fileService.acknowledgeHarmonizationProvenance(List.of(record.activityId()));
+
+        assertThat(fileService.readPendingHarmonizationProvenance(100)).isEmpty();
+        assertThat(fileService.readHarmonizationProvenanceManifest().records())
+                .extracting(org.taniwha.model.HarmonizationProvenanceRecord::activityId)
+                .containsExactly(record.activityId());
     }
 }

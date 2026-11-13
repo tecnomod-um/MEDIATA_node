@@ -1,7 +1,5 @@
 package org.taniwha.service.jobs;
 
-import lombok.Getter;
-import lombok.Setter;
 import org.springframework.stereotype.Service;
 import org.taniwha.dto.AnalyticsResponseDTO;
 import org.taniwha.dto.ProcessingStatusDTO;
@@ -11,47 +9,31 @@ import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Future;
-import java.util.concurrent.atomic.AtomicInteger;
 
 @Service
 public class AnalyticsProcessingJobs {
 
-    @Getter
-    @Setter
-    public static class JobState {
-        private final String jobId;
-        private volatile ProcessingStatusDTO.State state = ProcessingStatusDTO.State.RUNNING;
-        private final AtomicInteger percent = new AtomicInteger(0);
-        private volatile String currentFile = null;
-        private volatile String message = null;
-        private volatile List<AnalyticsResponseDTO> results = null;
-        private volatile Future<?> future;
-
-        JobState(String jobId) {
-            this.jobId = jobId;
-        }
-    }
-
-    private final Map<String, JobState> jobs = new ConcurrentHashMap<>();
+    private final Map<String, AnalyticsJobState> jobs = new ConcurrentHashMap<>();
 
     public String createJob() {
         String id = UUID.randomUUID().toString();
-        jobs.put(id, new JobState(id));
+        jobs.put(id, new AnalyticsJobState(id));
         return id;
     }
 
-    public JobState getJob(String jobId) {
+    public AnalyticsJobState getJob(String jobId) {
         return jobs.get(jobId);
     }
 
-    public void attachFuture(String jobId, Future<?> future) {
-        JobState s = jobs.get(jobId);
+    public synchronized void attachFuture(String jobId, Future<?> future) {
+        AnalyticsJobState s = jobs.get(jobId);
         if (s == null) return;
         s.setFuture(future);
+        if (s.getState() == ProcessingStatusDTO.State.CANCELED) future.cancel(true);
     }
 
-    public void cancel(String jobId, String message) {
-        JobState s = jobs.get(jobId);
+    public synchronized void cancel(String jobId, String message) {
+        AnalyticsJobState s = jobs.get(jobId);
         if (s == null) return;
 
         if (s.getState() == ProcessingStatusDTO.State.DONE
@@ -70,12 +52,12 @@ public class AnalyticsProcessingJobs {
     }
 
     public boolean isCanceled(String jobId) {
-        JobState s = jobs.get(jobId);
+        AnalyticsJobState s = jobs.get(jobId);
         if (s == null) return true;
         return s.getState() == ProcessingStatusDTO.State.CANCELED;
     }
 
-    public ProcessingStatusDTO toDto(JobState s, boolean includeResults) {
+    public ProcessingStatusDTO toDto(AnalyticsJobState s, boolean includeResults) {
         if (s == null) return null;
         return new ProcessingStatusDTO(
                 s.getJobId(),
@@ -87,12 +69,12 @@ public class AnalyticsProcessingJobs {
         );
     }
 
-    public void clear(String jobId) {
+    public synchronized void clear(String jobId) {
         jobs.remove(jobId);
     }
 
-    public void update(String jobId, int percent, String currentFile) {
-        JobState s = jobs.get(jobId);
+    public synchronized void update(String jobId, int percent, String currentFile) {
+        AnalyticsJobState s = jobs.get(jobId);
         if (s == null) return;
         if (s.getState() == ProcessingStatusDTO.State.CANCELED) return;
 
@@ -100,8 +82,8 @@ public class AnalyticsProcessingJobs {
         s.getPercent().set(Math.max(0, Math.min(100, percent)));
     }
 
-    public void fail(String jobId, String message) {
-        JobState s = jobs.get(jobId);
+    public synchronized void fail(String jobId, String message) {
+        AnalyticsJobState s = jobs.get(jobId);
         if (s == null) return;
         if (s.getState() == ProcessingStatusDTO.State.CANCELED) return;
 
@@ -110,13 +92,13 @@ public class AnalyticsProcessingJobs {
         s.getPercent().set(Math.max(s.getPercent().get(), 0));
     }
 
-    public void complete(String jobId, List<AnalyticsResponseDTO> results) {
-        JobState s = jobs.get(jobId);
+    public synchronized void complete(String jobId, List<AnalyticsResponseDTO> results) {
+        AnalyticsJobState s = jobs.get(jobId);
         if (s == null) return;
         if (s.getState() == ProcessingStatusDTO.State.CANCELED) return;
 
-        s.setState(ProcessingStatusDTO.State.DONE);
         s.setResults(results);
+        s.setState(ProcessingStatusDTO.State.DONE);
         s.getPercent().set(100);
         s.setCurrentFile(null);
     }

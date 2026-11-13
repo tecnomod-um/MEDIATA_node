@@ -28,6 +28,28 @@ import static org.mockito.Mockito.doNothing;
 
 class DataProcessingServiceTest {
 
+    @Test
+    void concurrentNumericFiltersUseIndependentNumberParsers() {
+        var filters = Map.<String, Object>of("operator", "AND", "conditions", Map.of("Age",
+                Map.of("conditions", List.of(Map.of("type", "between", "filterType", "continuous",
+                        "value", List.of("15,5", "25,5"))), "operators", List.of())));
+        java.util.stream.IntStream.range(0, 2000).parallel().forEach(index -> {
+            assertThat(service.matchesDiscoveryFilters(Map.of("Age", "20,5"), filters)).isTrue();
+            assertThat(service.matchesDiscoveryFilters(Map.of("Age", "30,5"), filters)).isFalse();
+        });
+    }
+
+    @Test
+    void decimalFiltersUseTheSameStrictParserAsStatisticalCalculations() {
+        var filters = Map.<String, Object>of("operator", "AND", "conditions", Map.of("Age",
+                Map.of("conditions", List.of(Map.of("type", "less", "filterType", "continuous", "value", "1")),
+                        "operators", List.of())));
+        assertThat(service.matchesDiscoveryFilters(Map.of("Age", "0.5"), filters)).isTrue();
+        assertThat(service.matchesDiscoveryFilters(Map.of("Age", "0,5"), filters)).isTrue();
+        assertThat(service.matchesDiscoveryFilters(Map.of("Age", "2.0"), filters)).isFalse();
+        assertThat(service.matchesDiscoveryFilters(Map.of("Age", "0.5junk"), filters)).isFalse();
+    }
+
     @Mock
     private FileFilter fileFilter;
 
@@ -415,7 +437,6 @@ class DataProcessingServiceTest {
 
         var out = service.extractFilteredDataFromPath(csv, filters);
         
-        // Should match age > 18, which is Alice and Bob
         assertThat(out).hasSize(2)
                 .extracting(m -> m.get("name"))
                 .containsExactlyInAnyOrder("Alice", "Bob");
@@ -449,7 +470,6 @@ class DataProcessingServiceTest {
 
         var out = service.extractFilteredDataFromPath(csv, filters);
         
-        // Should match age > 20 AND salary > 45000, which is Alice and Bob
         assertThat(out).hasSize(2)
                 .extracting(m -> m.get("name"))
                 .containsExactlyInAnyOrder("Alice", "Bob");
@@ -477,7 +497,6 @@ class DataProcessingServiceTest {
 
         var out = service.extractFilteredDataFromPath(csv, filters);
         
-        // Should match category = A
         assertThat(out).hasSize(2)
                 .allSatisfy(m -> assertThat(m.get("category")).isEqualTo("A"));
     }
@@ -505,7 +524,6 @@ class DataProcessingServiceTest {
 
         var out = service.extractFilteredDataFromPath(csv, filters);
         
-        // Should match age > 18
         assertThat(out).hasSize(2)
                 .extracting(m -> m.get("name"))
                 .containsExactlyInAnyOrder("Alice", "Bob");

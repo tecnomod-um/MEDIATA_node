@@ -66,14 +66,12 @@ class DataCleaningIntegrationTest {
 
     @BeforeEach
     void setUp() throws IOException {
-        // Create datasets directory structure in the configured app.path
         Path appPath = Path.of("/tmp/taniwha-integration-test");
         Files.createDirectories(appPath);
         
         datasetsDir = appPath.resolve("datasets");
         Files.createDirectories(datasetsDir);
         
-        // Clean up any existing files
         if (Files.exists(datasetsDir)) {
             try (var stream = Files.list(datasetsDir)) {
                 stream.forEach(file -> {
@@ -280,6 +278,30 @@ class DataCleaningIntegrationTest {
         String header = lines.get(0);
         assertThat(header).contains("FIRST_NAME");
         assertThat(header).contains("LAST_NAME");
+    }
+
+    @Test
+    void csvFormattingWorkflow_appliesConfiguredSeparators() throws Exception {
+        String numericData = """
+            ID;VALUE;ALT
+            1;10.5;1,25
+            2;20.00;2.50
+        """;
+
+        Path testFile = datasetsDir.resolve("formatting.csv");
+        Files.writeString(testFile, numericData);
+
+        DataCleaningOptionsDTO opts = new DataCleaningOptionsDTO();
+        opts.setStandardizeCsvFormat(true);
+        opts.setCsvDelimiter(",");
+        opts.setDecimalSeparator(",");
+
+        dataCleaningService.cleanInPlace(FileCategory.DATASETS, "formatting.csv", opts);
+
+        List<String> lines = Files.readAllLines(testFile);
+        assertThat(lines.get(0)).isEqualTo("ID,VALUE,ALT");
+        assertThat(lines.get(1)).isEqualTo("1,\"10,5\",\"1,25\"");
+        assertThat(lines.get(2)).isEqualTo("2,\"20,00\",\"2,50\"");
     }
 
     @Test

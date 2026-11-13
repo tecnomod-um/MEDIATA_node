@@ -1,10 +1,17 @@
 package org.taniwha.util;
 
 import io.jsonwebtoken.ExpiredJwtException;
+import io.jsonwebtoken.Claims;
+import io.jsonwebtoken.Jwts;
 import io.jsonwebtoken.security.SignatureException;
 import org.junit.jupiter.api.Test;
 import org.springframework.context.annotation.AnnotationConfigApplicationContext;
 import org.springframework.test.context.support.TestPropertySourceUtils;
+import org.springframework.test.util.ReflectionTestUtils;
+
+import java.security.KeyPair;
+import java.security.KeyPairGenerator;
+import java.time.Instant;
 
 import static org.assertj.core.api.Assertions.*;
 
@@ -65,10 +72,9 @@ class JwtTokenUtilTest {
         JwtTokenUtil util = loadWith("myVerySecretKeyThatIsAtLeast32BytesLongForSecurityPurposes", "3600");
 
         String token1 = util.generateToken("alice");
-        Thread.sleep(1100); // Ensure different timestamps (must be > 1 second for iat claim)
+        Thread.sleep(1100); // iat claim resolution is one second.
         String token2 = util.generateToken("alice");
 
-        // Tokens should differ because issuedAt timestamp changes
         assertThat(token1).isNotEqualTo(token2);
     }
 
@@ -144,10 +150,50 @@ class JwtTokenUtilTest {
     @Test
     void generateNodeAccessToken_setsNodeAccessClaim() {
         JwtTokenUtil util = loadWith("myVerySecretKeyThatIsAtLeast32BytesLongForSecurityPurposes", "3600");
+        ReflectionTestUtils.setField(util, "nodeId", "node-1");
 
         String token = util.generateNodeAccessToken("alice");
 
         assertThat(util.isNodeAccessToken(token)).isTrue();
         assertThat(util.getClaimAsString(token, "token_use")).isEqualTo("node_access");
+        assertThat(util.getClaimAsString(token, "node_id")).isEqualTo("node-1");
+        assertThat(util.getClaimAsString(token, "iss")).isEqualTo("mediata-node");
+    }
+
+    @Test
+    void nodeAccessToken_withDifferentNodeScope_isRejected() {
+        JwtTokenUtil util = loadWith("myVerySecretKeyThatIsAtLeast32BytesLongForSecurityPurposes", "3600");
+        ReflectionTestUtils.setField(util, "nodeId", "node-1");
+        String token = util.generateNodeAccessToken("alice");
+
+        ReflectionTestUtils.setField(util, "nodeId", "node-2");
+
+        assertThat(util.isNodeAccessToken(token)).isFalse();
+    }
+
+    @Test
+    void generateNodeSyncToken_isShortLivedAndBoundToNodeAndEndpoint() throws Exception {
+        JwtTokenUtil util = loadWith(
+                "myVerySecretKeyThatIsAtLeast32BytesLongForSecurityPurposes", "3600");
+        KeyPairGenerator generator = KeyPairGenerator.getInstance("RSA");
+        generator.initialize(2048);
+        KeyPair keyPair = generator.generateKeyPair();
+
+        long before = Instant.now().getEpochSecond();
+        String token = util.generateNodeSyncToken(
+                "node-1", "/nodes/provenance/batch", keyPair.getPrivate());
+        Claims claims = Jwts.parser()
+                .verifyWith(keyPair.getPublic())
+                .build()
+                .parseSignedClaims(token)
+                .getPayload();
+
+        assertThat(claims.getSubject()).isEqualTo("node-1");
+        assertThat(claims.getIssuer()).isEqualTo("mediata-node");
+        assertThat(claims.getAudience()).containsExactly("mediata-orchestrator");
+        assertThat(claims.get("token_use", String.class)).isEqualTo("node_sync");
+        assertThat(claims.get("sync_endpoint", String.class)).isEqualTo("/nodes/provenance/batch");
+        assertThat(claims.getExpiration().toInstant().getEpochSecond())
+                .isBetween(before + 115, before + 125);
     }
 }

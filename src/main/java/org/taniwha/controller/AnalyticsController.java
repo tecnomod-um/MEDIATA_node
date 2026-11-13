@@ -1,5 +1,9 @@
 package org.taniwha.controller;
 
+import org.taniwha.service.jobs.AnalyticsJobState;
+
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.tags.Tag;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
@@ -8,25 +12,33 @@ import org.springframework.web.bind.annotation.*;
 import org.taniwha.dto.*;
 import org.taniwha.service.jobs.AnalyticsProcessingJobs;
 import org.taniwha.service.AnalyticsService;
+import org.taniwha.service.DatasetElementExtractionService;
 
 import java.util.Collections;
 import java.util.List;
-import java.util.concurrent.ExecutionException;
 
 @RestController
 @RequestMapping("/api/data")
+@Tag(name = "Dataset analytics", description = "Profile datasets, inspect columns, and run filtered discovery jobs.")
 public class AnalyticsController {
 
     private static final Logger logger = LoggerFactory.getLogger(AnalyticsController.class);
 
     private final AnalyticsService analyticsService;
     private final AnalyticsProcessingJobs jobs;
+    private final DatasetElementExtractionService datasetElementExtractionService;
 
-    public AnalyticsController(AnalyticsService analyticsService, AnalyticsProcessingJobs jobs) {
+    public AnalyticsController(
+            AnalyticsService analyticsService,
+            AnalyticsProcessingJobs jobs,
+            DatasetElementExtractionService datasetElementExtractionService
+    ) {
         this.analyticsService = analyticsService;
         this.jobs = jobs;
+        this.datasetElementExtractionService = datasetElementExtractionService;
     }
 
+    @Operation(summary = "Start dataset profiling")
     @PostMapping("/processList")
     public ResponseEntity<Object> processList(@RequestBody FileNamesDTO dto) {
         try {
@@ -42,26 +54,43 @@ public class AnalyticsController {
             analyticsService.startDiscoveryJob(jobId, fileNames);
             return ResponseEntity.status(HttpStatus.ACCEPTED).body(new ProcessingStartDTO(jobId, true));
 
+        } catch (java.util.concurrent.RejectedExecutionException busy) {
+            return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
+                    .body(List.of(new AnalyticsResponseDTO("The node is busy. Please retry shortly.")));
         } catch (Exception e) {
-            logger.error("Error processing file list", e);
+            logger.warn("Error processing file list");
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
-                    .body(List.of(new AnalyticsResponseDTO("Error processing files: " + e.getMessage())));
+                    .body(List.of(new AnalyticsResponseDTO("Error processing statistics.")));
         }
     }
 
+    @Operation(summary = "Extract dataset element metadata")
+    @PostMapping("/extractElements")
+    public ResponseEntity<List<DatasetElementsDTO>> extractElements(@RequestBody FileNamesDTO dto) {
+        try {
+            List<String> fileNames = dto == null || dto.getFileNames() == null ? List.of() : dto.getFileNames();
+            return ResponseEntity.ok(datasetElementExtractionService.extractDatasetElements(fileNames));
+        } catch (Exception e) {
+            logger.warn("Error extracting dataset elements");
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(List.of());
+        }
+    }
+
+    @Operation(summary = "Get profiling job status")
     @GetMapping("/processList/status/{jobId}")
     public ResponseEntity<ProcessingStatusDTO> processListStatus(
             @PathVariable String jobId
     ) {
-        AnalyticsProcessingJobs.JobState s = jobs.getJob(jobId);
+        AnalyticsJobState s = jobs.getJob(jobId);
         if (s == null) return ResponseEntity.notFound().build();
         // Do NOT include results in polling response
         return ResponseEntity.ok(jobs.toDto(s, false));
     }
 
+    @Operation(summary = "Cancel a profiling job")
     @PostMapping("/processList/cancel/{jobId}")
     public ResponseEntity<ProcessingStatusDTO> cancelProcessList(@PathVariable String jobId) {
-        AnalyticsProcessingJobs.JobState s = jobs.getJob(jobId);
+        AnalyticsJobState s = jobs.getJob(jobId);
         if (s == null) {
             logger.warn("Received cancel request for unknown discovery jobId={}", jobId);
             return ResponseEntity.notFound().build();
@@ -74,9 +103,10 @@ public class AnalyticsController {
         return ResponseEntity.ok(jobs.toDto(jobs.getJob(jobId), false));
     }
 
+    @Operation(summary = "Get profiling job results")
     @GetMapping("/processList/result/{jobId}")
     public ResponseEntity<List<AnalyticsResponseDTO>> processListResult(@PathVariable String jobId) {
-        AnalyticsProcessingJobs.JobState s = jobs.getJob(jobId);
+        AnalyticsJobState s = jobs.getJob(jobId);
         if (s == null) return ResponseEntity.notFound().build();
 
         if (s.getState() == ProcessingStatusDTO.State.CANCELED) {
@@ -93,43 +123,25 @@ public class AnalyticsController {
         return ResponseEntity.ok(out);
     }
 
-    @PostMapping("/reprocessList")
-    public ResponseEntity<AnalyticsResponseDTO> recalculateFeatureList(
-            @RequestParam("fileName") String fileName,
-            @RequestParam("featureName") String featureName,
-            @RequestParam("featureType") String featureType
-    ) {
-        logger.debug("File reprocessing request: {} as type {} for file: {}", featureName, featureType, fileName);
-        if (!featureType.equalsIgnoreCase("continuous") && !featureType.equalsIgnoreCase("categorical")) {
-            logger.warn("Invalid feature type provided: {}", featureType);
-            return ResponseEntity.badRequest().body(new AnalyticsResponseDTO("Invalid feature type"));
-        }
-        try {
-            AnalyticsResponseDTO response = analyticsService.recalculateFeatureAsTypeFromDisk(fileName, featureName, featureType).get();
-            logger.info("Feature recalculated for file: {}", fileName);
-            return ResponseEntity.ok(response);
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            logger.error("Thread was interrupted while reprocessing field in file: {}", fileName, e);
-            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
-                    .body(new AnalyticsResponseDTO("Thread was interrupted while processing file."));
-        } catch (ExecutionException e) {
-            logger.error("Error recalculating feature for file: {}", fileName, e);
-            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
-                    .body(new AnalyticsResponseDTO("Error processing file: " + e.getMessage()));
-        }
-    }
-
+    @Operation(summary = "Profile records matching a feature filter")
     @PostMapping("/filterByNameList")
-    public ResponseEntity<List<AnalyticsResponseDTO>> filterByNameList(@RequestBody MultiFileFilterRequest payload) {
+    public ResponseEntity<Object> filterByNameList(@RequestBody MultiFileFilterRequest payload) {
         logger.debug("Received multiple-file filter request with {} entries", payload.getMultipleFileFilters().size());
         try {
+            if (analyticsService.isAnyHugeForDiscovery(payload.getMultipleFileFilters().stream().map(FileFilters::getFileName).toList())) {
+                String id = jobs.createJob();
+                analyticsService.startFilteredDiscoveryJob(id, payload.getMultipleFileFilters());
+                return ResponseEntity.status(HttpStatus.ACCEPTED).body(new ProcessingStartDTO(id, true));
+            }
             List<AnalyticsResponseDTO> filteredList = analyticsService.filterMultipleFilesByName(payload.getMultipleFileFilters());
             return ResponseEntity.ok(filteredList);
+        } catch (java.util.concurrent.RejectedExecutionException busy) {
+            return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
+                    .body(List.of(new AnalyticsResponseDTO("The node is busy. Please retry shortly.")));
         } catch (Exception e) {
-            logger.error("Error filtering multiple files", e);
+            logger.warn("Error filtering multiple files");
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
-                    .body(Collections.singletonList(new AnalyticsResponseDTO("Error filtering multiple files: " + e.getMessage())));
+                    .body(Collections.singletonList(new AnalyticsResponseDTO("Error processing statistics.")));
         }
     }
 }

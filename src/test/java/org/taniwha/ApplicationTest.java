@@ -79,15 +79,16 @@ class ApplicationTest {
         Application application = new Application();
         NodeSyncService nodeSyncService = mock(NodeSyncService.class);
         ReflectionTestUtils.setField(application, "heartbeatInterval", 10L);
-
-        ReflectionTestUtils.invokeMethod(application, "startHeartbeatScheduler", nodeSyncService);
-
-        verify(nodeSyncService, timeout(500).atLeastOnce()).sendHeartbeat();
-
-        application.stop();
-        clearInvocations(nodeSyncService);
-        Thread.sleep(40L);
-
-        verifyNoInteractions(nodeSyncService);
+        var sent = new java.util.concurrent.CountDownLatch(1);
+        doAnswer(invocation -> { sent.countDown(); return null; }).when(nodeSyncService).sendHeartbeat();
+        try {
+            ReflectionTestUtils.invokeMethod(application, "startHeartbeatScheduler", nodeSyncService);
+            assertThat(sent.await(10, TimeUnit.SECONDS)).isTrue();
+            application.stop();
+            var scheduler = (ScheduledExecutorService) ReflectionTestUtils.getField(application, "scheduler");
+            assertThat(scheduler.awaitTermination(10, TimeUnit.SECONDS)).isTrue();
+            clearInvocations(nodeSyncService);
+            verifyNoInteractions(nodeSyncService);
+        } finally { application.stop(); }
     }
 }

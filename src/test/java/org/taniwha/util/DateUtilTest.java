@@ -33,4 +33,33 @@ class DateUtilTest {
     void parseDate_unparsable_returnsEmpty() {
         assertThat(DateUtil.parseDate("not a date")).isEmpty();
     }
+
+    @Test
+    void optimizedParserPreservesLegacyFormatsPrecedenceAndInvalidInputs() {
+        String[] patterns = {"dd/MM/yy HH:mm:ss", "dd/MM/yy", "dd.MM.yy HH:mm:ss", "dd.MM.yy",
+                "d/MM/yyyy HH:mm:ss", "d/MM/yyyy", "dd/M/yyyy HH:mm:ss", "dd/M/yyyy",
+                "d.MM.yyyy HH:mm:ss", "d.MM.yyyy", "dd.M.yyyy HH:mm:ss", "dd.M.yyyy",
+                "dd/MM/yyyy HH:mm:ss", "dd/MM/yyyy", "MM/dd/yyyy HH:mm:ss", "MM/dd/yyyy",
+                "yyyy/MM/dd HH:mm:ss", "yyyy/MM/dd", "dd-MM-yyyy HH:mm:ss", "dd-MM-yyyy",
+                "MM-dd-yyyy HH:mm:ss", "MM-dd-yyyy", "yyyy-MM-dd HH:mm:ss", "yyyy-MM-dd",
+                "dd.MM.yyyy HH:mm:ss", "dd.MM.yyyy", "MM.dd.yyyy HH:mm:ss", "MM.dd.yyyy",
+                "yyyy.MM.dd HH:mm:ss", "yyyy.MM.dd", "yyyy-MM-dd'T'HH:mm:ss.SSS'Z'"};
+        java.util.List<String> inputs = new java.util.ArrayList<>(java.util.List.of(
+                "31/02/2020", "2020-01-01 24:00:00", "2020-01-01 25:00:00", "2020-01-01suffix",
+                "1", "12.50", "Female", "", "29/02/19", "2020-13-01", "02/03/2020"));
+        LocalDateTime example = LocalDateTime.of(2020, 2, 29, 12, 34, 56);
+        for (String pattern : patterns) inputs.add(example.format(java.time.format.DateTimeFormatter.ofPattern(pattern)));
+        for (String input : inputs) {
+            Optional<LocalDateTime> legacy = Optional.empty();
+            for (String pattern : patterns) {
+                var formatter = java.time.format.DateTimeFormatter.ofPattern(pattern);
+                try { legacy = Optional.of(LocalDateTime.parse(input, formatter)); break; }
+                catch (java.time.format.DateTimeParseException ignored) {
+                    try { legacy = Optional.of(LocalDate.parse(input, formatter).atStartOfDay()); break; }
+                    catch (java.time.format.DateTimeParseException ignoredAgain) { }
+                }
+            }
+            assertThat(DateUtil.parseDate(input)).as(input).isEqualTo(legacy);
+        }
+    }
 }

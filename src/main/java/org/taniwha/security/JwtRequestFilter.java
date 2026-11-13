@@ -15,6 +15,7 @@ import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.web.authentication.WebAuthenticationDetailsSource;
 import org.springframework.stereotype.Component;
 import org.springframework.web.filter.OncePerRequestFilter;
+import org.taniwha.service.TrustedProxySecurityService;
 import org.taniwha.util.JwtTokenUtil;
 
 import java.io.IOException;
@@ -37,10 +38,15 @@ public class JwtRequestFilter extends OncePerRequestFilter {
             chain.doFilter(request, response);
             return;
         }
+        if (request.getAttribute(TrustedProxySecurityService.SIGNED_PROXY_CONTEXT_ATTRIBUTE) != null
+                && SecurityContextHolder.getContext().getAuthentication() != null) {
+            chain.doFilter(request, response);
+            return;
+        }
 
         String jwtToken = extractJwtToken(request, response);
         if (jwtToken == null) return;
-        if (!validateToken(jwtToken, response)) return;
+        if (!validateToken(jwtToken, request, response)) return;
         setAuthenticationContext(request);
         chain.doFilter(request, response);
     }
@@ -52,7 +58,11 @@ public class JwtRequestFilter extends OncePerRequestFilter {
                 ? requestURI.substring(contextPath.length())
                 : requestURI;
 
-        return applicationPath.startsWith("/node") || applicationPath.startsWith("/fdp");
+        return applicationPath.startsWith("/node")
+                || applicationPath.startsWith("/fdp")
+                || applicationPath.startsWith("/v3/api-docs")
+                || applicationPath.equals("/swagger-ui.html")
+                || applicationPath.startsWith("/swagger-ui/");
     }
 
     private String extractJwtToken(HttpServletRequest request, HttpServletResponse response) throws IOException {
@@ -67,11 +77,16 @@ public class JwtRequestFilter extends OncePerRequestFilter {
         }
     }
 
-    private boolean validateToken(String jwtToken, HttpServletResponse response) throws IOException {
+    private boolean validateToken(String jwtToken, HttpServletRequest request, HttpServletResponse response) throws IOException {
         try {
             if (!jwtTokenUtil.validateToken(jwtToken)) {
                 filterLogger.warn("JWT Token is expired");
                 response.sendError(HttpServletResponse.SC_UNAUTHORIZED, "JWT Token expired");
+                return false;
+            }
+            if (!jwtTokenUtil.isNodeAccessToken(jwtToken)) {
+                filterLogger.warn("JWT Token is not scoped for this node");
+                response.sendError(HttpServletResponse.SC_UNAUTHORIZED, "JWT Token is not a node access token");
                 return false;
             }
             return true;

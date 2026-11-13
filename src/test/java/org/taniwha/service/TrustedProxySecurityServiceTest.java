@@ -7,6 +7,12 @@ import org.springframework.mock.web.MockHttpServletResponse;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.Base64;
+import java.util.Map;
+import java.util.concurrent.Callable;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.stream.IntStream;
+import org.springframework.test.util.ReflectionTestUtils;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -53,6 +59,88 @@ class TrustedProxySecurityServiceTest {
         TrustedProxySecurityService.VerificationResult secondResult = service.verifyRequest(second, body);
         assertFalse(secondResult.valid());
         assertEquals("Trusted proxy nonce has already been used", secondResult.failureReason());
+    }
+
+    @Test
+    void invalidSignaturesDoNotReserveNonces() {
+        TrustedProxySecurityService service = new TrustedProxySecurityService("shared-secret", 300);
+        byte[] body = new byte[0];
+        MockHttpServletRequest invalid = buildSignedRequest("nonce-1", body);
+        invalid.removeHeader(TrustedProxySecurityService.REQUEST_SIGNATURE_HEADER);
+        invalid.addHeader(TrustedProxySecurityService.REQUEST_SIGNATURE_HEADER, "invalid");
+
+        assertFalse(service.verifyRequest(invalid, body).valid());
+        Map<?, ?> state = (Map<?, ?>) ReflectionTestUtils.getField(service, "seenNonces");
+        assertTrue(state.isEmpty());
+        assertTrue(service.verifyRequest(buildSignedRequest("nonce-1", body), body).valid());
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void fullCacheFailsClosedWithoutEvictingLiveNonces() {
+        TrustedProxySecurityService service = new TrustedProxySecurityService("shared-secret", 300);
+        Map<String, Long> state = (Map<String, Long>) ReflectionTestUtils.getField(service, "seenNonces");
+        long now = Instant.now().getEpochSecond();
+        IntStream.range(0, 10_000).forEach(index -> state.put("existing-" + index, now));
+
+        assertFalse(service.verifyRequest(buildSignedRequest("new-nonce", new byte[0]), new byte[0]).valid());
+        assertEquals(10_000, state.size());
+        state.replaceAll((nonce, timestamp) -> now - 600);
+        assertTrue(service.verifyRequest(buildSignedRequest("new-nonce", new byte[0]), new byte[0]).valid());
+        assertEquals(1, state.size());
+    }
+
+    @Test
+    void concurrentReplayHasOnlyOneSuccessfulRequest() throws Exception {
+        TrustedProxySecurityService service = new TrustedProxySecurityService("shared-secret", 300);
+        var executor = Executors.newFixedThreadPool(8);
+        try {
+            var calls = IntStream.range(0, 32)
+                    .<Callable<Boolean>>mapToObj(index -> () -> service.verifyRequest(
+                            buildSignedRequest("concurrent-nonce", new byte[0]), new byte[0]).valid())
+                    .toList();
+            int accepted = 0;
+            for (Future<Boolean> result : executor.invokeAll(calls)) {
+                if (result.get()) accepted++;
+            }
+            assertEquals(1, accepted);
+        } finally {
+            executor.shutdownNow();
+        }
+    }
+
+    @Test
+    void rejectsMissingHeadersAndInvalidTimestampsWithoutRetainingState() {
+        TrustedProxySecurityService service = new TrustedProxySecurityService("shared-secret", 300);
+        assertFalse(service.verifyRequest(new MockHttpServletRequest(), new byte[0]).valid());
+        for (String timestamp : new String[]{"not-a-time",
+                Long.toString(Instant.now().getEpochSecond() - 600),
+                Long.toString(Instant.now().getEpochSecond() + 600)}) {
+            MockHttpServletRequest request = buildSignedRequest("nonce", new byte[0]);
+            request.removeHeader(TrustedProxySecurityService.REQUEST_TIMESTAMP_HEADER);
+            request.addHeader(TrustedProxySecurityService.REQUEST_TIMESTAMP_HEADER, timestamp);
+            assertFalse(service.verifyRequest(request, new byte[0]).valid());
+        }
+        assertTrue(((Map<?, ?>) ReflectionTestUtils.getField(service, "seenNonces")).isEmpty());
+    }
+
+    @Test
+    void rejectsTamperedBodyWithoutReservingNonce() {
+        TrustedProxySecurityService service = new TrustedProxySecurityService("shared-secret", 300);
+        byte[] original = "original".getBytes(StandardCharsets.UTF_8);
+        MockHttpServletRequest request = buildSignedRequest("nonce", original);
+        assertFalse(service.verifyRequest(request, "modified".getBytes(StandardCharsets.UTF_8)).valid());
+        assertTrue(service.verifyRequest(request, original).valid());
+    }
+
+    @Test
+    void signatureBindsQueryParametersToTheRequest() {
+        TrustedProxySecurityService service = new TrustedProxySecurityService("shared-secret", 300);
+        MockHttpServletRequest request = buildSignedRequest("nonce", new byte[0]);
+        request.setQueryString("fileName=another.csv");
+        assertFalse(service.verifyRequest(request, new byte[0]).valid());
+        request.setQueryString(null);
+        assertTrue(service.verifyRequest(request, new byte[0]).valid());
     }
 
     @Test

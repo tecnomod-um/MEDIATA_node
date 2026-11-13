@@ -9,8 +9,8 @@ import java.util.stream.Collectors;
 @Service
 public class MappingSpecAdapter {
 
-    private static final Set<String> TYPE_MARKERS = Set.of("integer", "double", "date");
-    private static final Object UNSET = new Object();
+    private static final Set<String> TYPE_MARKERS = Set.of("integer", "double", "date", "natural language");
+    static final Object UNSET = new Object();
 
     public String sourceFileName(String sourceId) {
         if (sourceId == null) return "";
@@ -105,6 +105,7 @@ public class MappingSpecAdapter {
 
         Map<String, Object> one = new LinkedHashMap<>();
         one.put("name", safe(output.getTrueValue()).isBlank() ? "1" : safe(output.getTrueValue()));
+        one.put("outputMode", "constant");
         one.put("mapping", convertLogicToLegacyMatchers(output.getLogic(), null));
         one.put("terminology", output.getMetadata() != null ? safe(output.getMetadata().getTerminology()) : "");
         one.put("description", output.getMetadata() != null ? safe(output.getMetadata().getDescription()) : "");
@@ -141,6 +142,7 @@ public class MappingSpecAdapter {
             String name = isSourceValueResult(result) ? "" : safe(result != null ? result.getValue() : null);
 
             value.put("name", name);
+            if (!isSourceValueResult(result)) value.put("outputMode", "constant");
             value.put("mapping", convertLogicToLegacyMatchers(rule.getLogic(), result));
             value.put("terminology", rule.getMetadata() != null ? safe(rule.getMetadata().getTerminology()) : "");
             value.put("description", rule.getMetadata() != null ? safe(rule.getMetadata().getDescription()) : "");
@@ -318,6 +320,12 @@ public class MappingSpecAdapter {
             return ref == null ? null : new LegacyMatcher(ref.fileName(), ref.column(), "date");
         }
 
+        if ("isText".equals(op) || "taniwha:isText".equals(op) || "is_text".equals(op)) {
+            if (args.size() != 1) return null;
+            SourceColumnRef ref = parseSourceColumnRef(args.get(0));
+            return ref == null ? null : new LegacyMatcher(ref.fileName(), ref.column(), "natural language");
+        }
+
         return null;
     }
 
@@ -492,6 +500,7 @@ public class MappingSpecAdapter {
         if ("isDouble".equals(op) || "taniwha:isDouble".equals(op) || "is_double".equals(op)) return "double";
         if ("isNumber".equals(op) || "taniwha:isNumber".equals(op) || "is_number".equals(op)) return "double";
         if ("isDate".equals(op) || "taniwha:isDate".equals(op) || "is_date".equals(op)) return "date";
+        if ("isText".equals(op) || "taniwha:isText".equals(op) || "is_text".equals(op)) return "natural language";
 
         return null;
     }
@@ -561,32 +570,8 @@ public class MappingSpecAdapter {
         return s == null ? "" : s;
     }
 
-    private record SourceColumnRef(String sourceId, String fileName, String column) {}
+    record SourceColumnRef(String sourceId, String fileName, String column) {}
 
     private record LegacyMatcher(String fileName, String groupColumn, Object value) {}
 
-    private static final class RangeAccumulator {
-        private SourceColumnRef ref;
-        private Object min = UNSET;
-        private Object max = UNSET;
-        private boolean valid = true;
-
-        void accept(SourceColumnRef nextRef, String op, Object literal) {
-            if (!valid) return;
-
-            if (ref == null) {
-                ref = nextRef;
-            } else if (!Objects.equals(ref.sourceId(), nextRef.sourceId())
-                    || !Objects.equals(ref.column(), nextRef.column())) {
-                valid = false;
-                return;
-            }
-
-            switch (op) {
-                case ">=", ">" -> min = literal;
-                case "<=", "<" -> max = literal;
-                default -> valid = false;
-            }
-        }
-    }
 }
