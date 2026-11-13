@@ -155,7 +155,7 @@ class DiscoveryDisclosureIntegrationTest {
         FileFilters request = new FileFilters(); request.setFileName("cohort.csv"); request.setFilters(less(31));
         blocked(analytics.filterMultipleFilesByName(List.of(request)).get(0));
     }
-    @Test void asynchronousProfilingSharesHistoryAndCannotReleaseChangedData() throws Exception {
+    @Test void asynchronousProfilingSharesHistoryAndOpensStableReplacements() throws Exception {
         initialise(csv());
         analytics.filterDataByName("cohort.csv", less(32));
         String jobId = jobs.createJob();
@@ -169,9 +169,12 @@ class DiscoveryDisclosureIntegrationTest {
         String changedJob = jobs.createJob();
         analytics.startDiscoveryJob(changedJob, List.of("cohort.csv"));
         jobs.getJob(changedJob).getFuture().get(10, java.util.concurrent.TimeUnit.SECONDS);
-        // Per-file failures preserve the batch job contract, but never contain partial summaries.
         assertThat(jobs.getJob(changedJob).getState()).isEqualTo(ProcessingStatusDTO.State.DONE);
-        assertThat(jobs.getJob(changedJob).getResults()).singleElement().satisfies(this::blocked);
+        assertThat(jobs.getJob(changedJob).getResults()).singleElement().satisfies(response -> {
+            assertThat(response.getDisclosurePolicyVersion()).isEqualTo(2);
+            assertThat(response.getContinuousFeatures()).singleElement()
+                    .satisfies(feature -> assertThat(feature.getCount()).isEqualTo(25));
+        });
     }
     @Test void absentAndSmallCohortsHaveTheSameWithheldPayload() throws Exception {
         initialise(csv());

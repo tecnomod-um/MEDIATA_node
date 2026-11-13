@@ -689,7 +689,7 @@ class FileServiceTest {
     void disabledProvenanceLeavesExistingRecordsAndOutboxUntouched() {
         var original = fileService.registerHarmonizationProvenance(
                 "parsed_source.csv", List.of("source.csv"), new MappingSpecDTO());
-        var disabled = new FileService(fileFilter, tempBase.toString(), "", null, false);
+        var disabled = new FileService(fileFilter, tempBase.toString(), "", false);
 
         disabled.registerHarmonizationProvenance(
                 "parsed_other.csv", List.of("other.csv"), new MappingSpecDTO());

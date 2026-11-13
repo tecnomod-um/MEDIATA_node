@@ -19,7 +19,6 @@ import org.taniwha.model.MetadataDocument;
 import org.taniwha.model.NodeMetadata;
 import org.taniwha.model.SharedDatasetFile;
 import org.taniwha.security.AllowedExtensions;
-import org.taniwha.privacy.DiscoveryQueryLedger;
 import org.taniwha.security.FileFilter;
 import org.taniwha.util.DCatUtil;
 import org.taniwha.util.FairDataPointMetadataUtil;
@@ -76,7 +75,6 @@ public class FileService {
     private final Path harmonizationProvenanceOutboxPath;
     private final Path mappingSpecsDir;
     private final Path sharedDatasetsDir;
-    private final DiscoveryQueryLedger discoveryLedger;
     private final boolean harmonizationProvenanceEnabled;
 
     public FileService(FileFilter fileFilter, String basePath) {
@@ -84,17 +82,15 @@ public class FileService {
     }
 
     public FileService(FileFilter fileFilter, String basePath, String downloadableDatasets) {
-        this(fileFilter, basePath, downloadableDatasets, null, true);
+        this(fileFilter, basePath, downloadableDatasets, true);
     }
 
     @Autowired
     public FileService(FileFilter fileFilter,
                        @Value("${app.path}") String basePath,
                        @Value("${datasets.downloadable:}") String downloadableDatasets,
-                       DiscoveryQueryLedger discoveryLedger,
                        @Value("${harmonization.provenance.enabled:true}") boolean harmonizationProvenanceEnabled) {
         this.fileFilter = fileFilter;
-        this.discoveryLedger = discoveryLedger;
         this.harmonizationProvenanceEnabled = harmonizationProvenanceEnabled;
         this.downloadableDatasetSelectors = parseDownloadableDatasetSelectors(downloadableDatasets);
 
@@ -961,8 +957,8 @@ public class FileService {
                 throw new IllegalArgumentException("Destination already exists");
             }
 
-            if (discoveryLedger != null) discoveryLedger.beforeDatasetRename(src, dst);
             moveFile(src, dst);
+            logger.info("File renamed in {}: {} -> {}", category, src.getFileName(), dst.getFileName());
             if (category == FileCategory.DATASETS && fingerprint != null) {
                 DatasetDownloadPolicyManifest manifest = readDatasetDownloadPolicyManifest();
                 SharedFileMatch match = manifest == null ? null : findSharedFileMatch(manifest, fingerprint);
@@ -978,14 +974,6 @@ public class FileService {
             }
         } catch (IOException e) {
             throw new UncheckedIOException("Rename failed", e);
-        }
-    }
-
-    void beforeDatasetEdit(Path source) {
-        try {
-            if (discoveryLedger != null) discoveryLedger.beforeDatasetEdit(source);
-        } catch (IOException e) {
-            throw new UncheckedIOException("Could not preserve the dataset version before editing", e);
         }
     }
 

@@ -43,6 +43,7 @@ public class AnalyticsController {
     public ResponseEntity<Object> processList(@RequestBody FileNamesDTO dto) {
         try {
             List<String> fileNames = dto.getFileNames();
+            logger.info("Discovery profiling requested for {} dataset(s)", fileNames.size());
             boolean huge = analyticsService.isAnyHugeForDiscovery(fileNames);
 
             if (!huge) {
@@ -126,7 +127,7 @@ public class AnalyticsController {
     @Operation(summary = "Profile records matching a feature filter")
     @PostMapping("/filterByNameList")
     public ResponseEntity<Object> filterByNameList(@RequestBody MultiFileFilterRequest payload) {
-        logger.debug("Received multiple-file filter request with {} entries", payload.getMultipleFileFilters().size());
+        logger.info("Discovery filter requested for {} dataset(s)", payload.getMultipleFileFilters().size());
         try {
             if (analyticsService.isAnyHugeForDiscovery(payload.getMultipleFileFilters().stream().map(FileFilters::getFileName).toList())) {
                 String id = jobs.createJob();
