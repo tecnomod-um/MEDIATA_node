@@ -1,7 +1,6 @@
 package org.taniwha.privacy;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 import java.io.*;
@@ -13,17 +12,12 @@ import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Function;
 
-// Durable, shared release history for one Java node. Lock and commit precede disclosure.
+/** Durable, shared release history for one Java node. Lock and commit precede disclosure. */
 @Component
 public class DiscoveryQueryLedger {
     public static final String BLOCKED = "Statistics withheld by disclosure controls. The query history or dataset requires review.";
-    public static final String UNREGISTERED = "Statistics withheld by disclosure controls. Ask the site operator to register this dataset for Discovery.";
-
-    public static final class Blocked extends RuntimeException {
-        public Blocked() { this(BLOCKED); }
-        private Blocked(String message) { super(message); }
-    }
-
+    public static final class Blocked extends RuntimeException { public Blocked() { super(BLOCKED); } }
+    private static final String DERIVED = "derived";
     public record Version(Path path, String pathKey, String contentKey) {}
     private record Registry(Map<String, String> paths, Set<String> approved, Set<String> initialised) {}
     private record State(int rows, int[] labels) {}
@@ -31,16 +25,7 @@ public class DiscoveryQueryLedger {
     private final ObjectMapper mapper = new ObjectMapper();
     private final Path datasets, directory, registryFile;
 
-    @Autowired
     public DiscoveryQueryLedger(@Value("${app.path}") String basePath) throws IOException {
-        this(basePath, true);
-    }
-
-    static DiscoveryQueryLedger openExisting(String basePath) throws IOException {
-        return new DiscoveryQueryLedger(basePath, false);
-    }
-
-    private DiscoveryQueryLedger(String basePath, boolean initialise) throws IOException {
         Path base = Paths.get(basePath).toAbsolutePath().normalize();
         datasets = base.resolve("datasets"); directory = base.resolve("discovery-privacy");
         registryFile = directory.resolve("registry.json");
@@ -49,15 +34,14 @@ public class DiscoveryQueryLedger {
                 java.nio.file.attribute.PosixFilePermissions.fromString("rwx------"));
         locked(() -> {
             if (!Files.exists(registryFile)) {
-                if (!initialise || Files.exists(directory.resolve("initialised"))) throw new Blocked();
+                if (Files.exists(directory.resolve("initialised"))) throw new Blocked();
                 Registry registry = new Registry(new HashMap<>(), new HashSet<>(), new HashSet<>());
                 try (var files = Files.list(datasets)) {
                     for (Path path : files.filter(Files::isRegularFile).toList()) {
                         if (!supportedDataset(path.getFileName().toString())) continue;
                         Path real = checkedPath(path);
                         String content = digest(real);
-                        registry.paths().put(pathKey(real), content);
-                        registry.approved().add(content);
+                        rememberPath(registry, real, content);
                     }
                 }
                 write(registryFile, registry);
@@ -67,38 +51,63 @@ public class DiscoveryQueryLedger {
         });
     }
 
-    void registerDataset(String fileName) throws IOException {
-        if (fileName.isBlank() || fileName.contains("/") || fileName.contains("\\") || !supportedDataset(fileName)) {
-            throw new IllegalArgumentException("Specify a CSV or XLSX filename from the node's datasets directory.");
-        }
+    public Version begin(Path path) {
+        try {
+            Path real = checkedPath(path);
+            if (!supportedDataset(real.getFileName().toString())) throw new Blocked();
+            String key = pathKey(real), content = digest(real);
+            return locked(() -> {
+                Registry registry = readRegistry();
+                String registered = registry.paths().get(key);
+                if (registered == null) {
+                    registered = rememberPath(registry, real, content);
+                    write(registryFile, registry);
+                }
+                if (!registered.equals(content) || !registry.approved().contains(content)) throw new Blocked();
+                return new Version(real, key, content);
+            });
+        } catch (IOException e) { throw new Blocked(); }
+    }
+
+    /** Remember the original version before the application edits a dataset in place. */
+    public void beforeDatasetEdit(Path path) throws IOException {
+        preservePath(path, null);
+    }
+
+    /** Carry the original version forward when the application renames a file. */
+    public void beforeDatasetRename(Path from, Path to) throws IOException {
+        preservePath(from, to);
+    }
+
+    private void preservePath(Path path, Path destination) throws IOException {
+        if (!path.toAbsolutePath().normalize().startsWith(datasets)) return;
+        Path real = checkedPath(path);
         locked(() -> {
-            Path real = checkedPath(datasets.resolve(fileName));
-            String key = pathKey(real);
-            String content = digest(real);
             Registry registry = readRegistry();
-            String previous = registry.paths().get(key);
-            if (previous != null && !previous.equals(content)) throw new Blocked();
-            if (previous != null && registry.approved().contains(content)) return null;
-            registry.paths().put(key, content);
-            registry.approved().add(content);
+            String registered = registry.paths().get(pathKey(real));
+            if (registered == null) {
+                String name = real.getFileName().toString();
+                registered = supportedDataset(name) ? rememberPath(registry, real, digest(real)) : DERIVED;
+            }
+            if (destination != null) {
+                Path parent = destination.toAbsolutePath().normalize().getParent().toRealPath();
+                if (!parent.equals(datasets.toRealPath())) throw new Blocked();
+                Path target = parent.resolve(destination.getFileName());
+                registry.paths().putIfAbsent(pathKey(target), registered);
+            }
             write(registryFile, registry);
             return null;
         });
     }
 
-    public Version begin(Path path) {
-        try {
-            Path real = checkedPath(path);
-            String pathKey = pathKey(real), content = digest(real);
-            return locked(() -> {
-                Registry registry = readRegistry();
-                String old = registry.paths().get(pathKey);
-                if (old != null && !old.equals(content)) throw new Blocked();
-                if (!registry.approved().contains(content)) throw new Blocked(UNREGISTERED);
-                if (old == null) { registry.paths().put(pathKey, content); write(registryFile, registry); }
-                return new Version(real, pathKey, content);
-            });
-        } catch (IOException e) { throw new Blocked(); }
+    private String rememberPath(Registry registry, Path path, String content) {
+        // The application's harmonization and Excel cleaning outputs may contain the same people.
+        String name = path.getFileName().toString().toLowerCase(Locale.ROOT);
+        String version = !registry.approved().contains(content)
+                && (name.startsWith("parsed_") || name.endsWith("_cleaned.csv")) ? DERIVED : content;
+        registry.paths().put(pathKey(path), version);
+        if (version.equals(content)) registry.approved().add(content);
+        return version;
     }
 
     public <T> T release(Version version, int rows, BitSet selected, Function<CohortPartition, T> action) {
@@ -147,22 +156,18 @@ public class DiscoveryQueryLedger {
         if (value.paths() == null || value.approved() == null || value.initialised() == null) throw new Blocked();
         return value;
     }
-
     private Path checkedPath(Path path) throws IOException {
         Path real = path.toRealPath();
         if (!real.startsWith(datasets.toRealPath()) || !Files.isRegularFile(real)) throw new Blocked();
         return real;
     }
-
     private static boolean supportedDataset(String name) {
         String lower = name.toLowerCase(Locale.ROOT);
         return lower.endsWith(".csv") || lower.endsWith(".xlsx");
     }
-
     private String pathKey(Path path) {
         return hash(path.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8));
     }
-
     private String digest(Path path) throws IOException {
         try (InputStream input = Files.newInputStream(path)) {
             MessageDigest digest = MessageDigest.getInstance("SHA-256"); byte[] buffer = new byte[65536]; int n;
@@ -170,12 +175,10 @@ public class DiscoveryQueryLedger {
             return HexFormat.of().formatHex(digest.digest());
         } catch (NoSuchAlgorithmException e) { throw new IllegalStateException(e); }
     }
-
     private String hash(byte[] value) {
         try { return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(value)); }
         catch (NoSuchAlgorithmException e) { throw new IllegalStateException(e); }
     }
-
     private void write(Path destination, Object value) throws IOException {
         Path temporary = Files.createTempFile(directory, "commit-", ".tmp");
         try {
@@ -186,7 +189,6 @@ public class DiscoveryQueryLedger {
             Files.move(temporary, destination, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
         } finally { Files.deleteIfExists(temporary); }
     }
-
     private interface IOAction<T> { T run() throws IOException; }
     private <T> T locked(IOAction<T> action) throws IOException {
         synchronized (LOCKS.computeIfAbsent(directory, ignored -> new Object())) {

@@ -452,6 +452,7 @@ public class DataCleaningService {
 
     private void writeCleanedData(Path file, String lowerFileName, List<Map<String, String>> cleaned, DataCleaningOptionsDTO opts) {
         if (lowerFileName.endsWith(".csv")) {
+            fileService.beforeDatasetEdit(file);
             writeCsvAtomically(file, cleaned, opts);
             return;
         }

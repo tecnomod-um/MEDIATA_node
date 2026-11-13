@@ -147,6 +147,18 @@ class AggregateCalculatorTest {
     }
 
     @Test
+    void calculateChiSquared_preservesSmallUpperTailProbability() {
+        var categories = Map.of("f1", Map.of("A", 102, "B", 102), "f2", Map.of("X", 102, "Y", 102));
+        var cells = Map.of(Pair.create("A", "X"), 96, Pair.create("A", "Y"), 6,
+                Pair.create("B", "X"), 6, Pair.create("B", "Y"), 96);
+
+        double probability = new AggregateCalculator(6)
+                .calculateChiSquaredTest(categories, Map.of(Pair.create("f1", "f2"), cells)).get(0).getPValue();
+
+        assertThat(probability).isCloseTo(2.045025584206429e-36, within(1e-46));
+    }
+
+    @Test
     void calculateChiSquared_missingCombination_returnsNaN() {
         Map<String, Map<String, Integer>> catData = Map.of(
                 "f1", Map.of("A",1,"B",1),

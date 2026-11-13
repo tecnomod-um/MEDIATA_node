@@ -19,6 +19,7 @@ import org.taniwha.model.MetadataDocument;
 import org.taniwha.model.NodeMetadata;
 import org.taniwha.model.SharedDatasetFile;
 import org.taniwha.security.AllowedExtensions;
+import org.taniwha.privacy.DiscoveryQueryLedger;
 import org.taniwha.security.FileFilter;
 import org.taniwha.util.DCatUtil;
 import org.taniwha.util.FairDataPointMetadataUtil;
@@ -75,16 +76,23 @@ public class FileService {
     private final Path harmonizationProvenanceOutboxPath;
     private final Path mappingSpecsDir;
     private final Path sharedDatasetsDir;
+    private final DiscoveryQueryLedger discoveryLedger;
 
     public FileService(FileFilter fileFilter, String basePath) {
         this(fileFilter, basePath, "");
     }
 
+    public FileService(FileFilter fileFilter, String basePath, String downloadableDatasets) {
+        this(fileFilter, basePath, downloadableDatasets, null);
+    }
+
     @Autowired
     public FileService(FileFilter fileFilter,
                        @Value("${app.path}") String basePath,
-                       @Value("${datasets.downloadable:}") String downloadableDatasets) {
+                       @Value("${datasets.downloadable:}") String downloadableDatasets,
+                       DiscoveryQueryLedger discoveryLedger) {
         this.fileFilter = fileFilter;
+        this.discoveryLedger = discoveryLedger;
         this.downloadableDatasetSelectors = parseDownloadableDatasetSelectors(downloadableDatasets);
 
         this.datasetsFolder = basePath + "/datasets";
@@ -945,6 +953,7 @@ public class FileService {
                 throw new IllegalArgumentException("Destination already exists");
             }
 
+            if (discoveryLedger != null) discoveryLedger.beforeDatasetRename(src, dst);
             moveFile(src, dst);
             if (category == FileCategory.DATASETS && fingerprint != null) {
                 DatasetDownloadPolicyManifest manifest = readDatasetDownloadPolicyManifest();
@@ -961,6 +970,14 @@ public class FileService {
             }
         } catch (IOException e) {
             throw new UncheckedIOException("Rename failed", e);
+        }
+    }
+
+    void beforeDatasetEdit(Path source) {
+        try {
+            if (discoveryLedger != null) discoveryLedger.beforeDatasetEdit(source);
+        } catch (IOException e) {
+            throw new UncheckedIOException("Could not preserve the dataset version before editing", e);
         }
     }
 
