@@ -1,6 +1,8 @@
 package org.taniwha.privacy;
 
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import java.util.Map;
 import java.util.Set;
 
-record DiscoveryLedgerRegistry(Map<String, String> paths, Set<String> approved, Set<String> initialised) {}
+@JsonIgnoreProperties("approved")
+record DiscoveryLedgerRegistry(Map<String, String> paths, Set<String> initialised) {}

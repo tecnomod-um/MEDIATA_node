@@ -1,6 +1,7 @@
 package org.taniwha.privacy;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
@@ -17,8 +18,8 @@ import java.util.function.Function;
 /** Durable, shared release history for one Java node. Lock and commit precede disclosure. */
 @Component
 public class DiscoveryQueryLedger {
-    public static final String BLOCKED = "Statistics withheld by disclosure controls. The query history or dataset requires review.";
-    private static final String DERIVED = "derived";
+    public static final String BLOCKED = "Statistics withheld by disclosure controls.";
+    private static final Logger logger = LoggerFactory.getLogger(DiscoveryQueryLedger.class);
     private static final Map<Path, Object> LOCKS = new ConcurrentHashMap<>();
     private final ObjectMapper mapper = new ObjectMapper();
     private final Path datasets, directory, registryFile;
@@ -36,8 +37,7 @@ public class DiscoveryQueryLedger {
         datasets = base.resolve("datasets"); directory = base.resolve("discovery-privacy");
         registryFile = directory.resolve("registry.json");
         if (!enabled) {
-            LoggerFactory.getLogger(DiscoveryQueryLedger.class)
-                    .warn("Discovery query history is disabled. Use only isolated nodes with synthetic data.");
+            logger.warn("Discovery query history is disabled. Use only isolated nodes with synthetic data.");
             return;
         }
         Files.createDirectories(datasets); Files.createDirectories(directory);
@@ -46,16 +46,7 @@ public class DiscoveryQueryLedger {
         locked(() -> {
             if (!Files.exists(registryFile)) {
                 if (Files.exists(directory.resolve("initialised"))) throw new DiscoveryDisclosureBlockedException();
-                DiscoveryLedgerRegistry registry = new DiscoveryLedgerRegistry(new HashMap<>(), new HashSet<>(), new HashSet<>());
-                try (var files = Files.list(datasets)) {
-                    for (Path path : files.filter(Files::isRegularFile).toList()) {
-                        if (!supportedDataset(path.getFileName().toString())) continue;
-                        Path real = checkedPath(path);
-                        String content = digest(real);
-                        rememberPath(registry, real, content);
-                    }
-                }
-                write(registryFile, registry);
+                write(registryFile, new DiscoveryLedgerRegistry(new HashMap<>(), new HashSet<>()));
                 Files.writeString(directory.resolve("initialised"), "1", StandardOpenOption.CREATE_NEW);
             } else readRegistry();
             return null;
@@ -70,56 +61,14 @@ public class DiscoveryQueryLedger {
             String key = pathKey(real), content = digest(real);
             return locked(() -> {
                 DiscoveryLedgerRegistry registry = readRegistry();
-                String registered = registry.paths().get(key);
-                if (registered == null) {
-                    registered = rememberPath(registry, real, content);
+                String previous = registry.paths().put(key, content);
+                if (!content.equals(previous)) {
                     write(registryFile, registry);
+                    logger.info("Discovery dataset version recorded: pathId={} previous={} current={}", key, previous, content);
                 }
-                if (!registered.equals(content) || !registry.approved().contains(content)) throw new DiscoveryDisclosureBlockedException();
                 return new DiscoveryDatasetVersion(real, key, content);
             });
         } catch (IOException e) { throw new DiscoveryDisclosureBlockedException(); }
-    }
-
-    /** Remember the original version before the application edits a dataset in place. */
-    public void beforeDatasetEdit(Path path) throws IOException {
-        preservePath(path, null);
-    }
-
-    /** Carry the original version forward when the application renames a file. */
-    public void beforeDatasetRename(Path from, Path to) throws IOException {
-        preservePath(from, to);
-    }
-
-    private void preservePath(Path path, Path destination) throws IOException {
-        if (!enabled || !path.toAbsolutePath().normalize().startsWith(datasets)) return;
-        Path real = checkedPath(path);
-        locked(() -> {
-            DiscoveryLedgerRegistry registry = readRegistry();
-            String registered = registry.paths().get(pathKey(real));
-            if (registered == null) {
-                String name = real.getFileName().toString();
-                registered = supportedDataset(name) ? rememberPath(registry, real, digest(real)) : DERIVED;
-            }
-            if (destination != null) {
-                Path parent = destination.toAbsolutePath().normalize().getParent().toRealPath();
-                if (!parent.equals(datasets.toRealPath())) throw new DiscoveryDisclosureBlockedException();
-                Path target = parent.resolve(destination.getFileName());
-                registry.paths().putIfAbsent(pathKey(target), registered);
-            }
-            write(registryFile, registry);
-            return null;
-        });
-    }
-
-    private String rememberPath(DiscoveryLedgerRegistry registry, Path path, String content) {
-        // The application's harmonization and Excel cleaning outputs may contain the same people.
-        String name = path.getFileName().toString().toLowerCase(Locale.ROOT);
-        String version = !registry.approved().contains(content)
-                && (name.startsWith("parsed_") || name.endsWith("_cleaned.csv")) ? DERIVED : content;
-        registry.paths().put(pathKey(path), version);
-        if (version.equals(content)) registry.approved().add(content);
-        return version;
     }
 
     public <T> T release(DiscoveryDatasetVersion version, int rows, BitSet selected, Function<CohortPartition, T> action) {
@@ -174,7 +123,7 @@ public class DiscoveryQueryLedger {
 
     private DiscoveryLedgerRegistry readRegistry() throws IOException {
         DiscoveryLedgerRegistry value = mapper.readValue(registryFile.toFile(), DiscoveryLedgerRegistry.class);
-        if (value.paths() == null || value.approved() == null || value.initialised() == null) throw new DiscoveryDisclosureBlockedException();
+        if (value.paths() == null || value.initialised() == null) throw new DiscoveryDisclosureBlockedException();
         return value;
     }
     private Path checkedPath(Path path) throws IOException {

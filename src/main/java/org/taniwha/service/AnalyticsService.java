@@ -588,6 +588,7 @@ public class AnalyticsService {
             response.setFeatureTypeSummaryVersion(1);
             response.setFeatureTypes(overrides);
             Path path = Paths.get(fileService.getDatasetFilePath(fileName));
+            logger.info("Discovery profiling started for dataset {}", path.getFileName());
             DisclosureObservation observation = disclosure.begin(path);
             DiscoveryAccumulator buffer = new DiscoveryAccumulator();
             long[] scanned = {0};
@@ -610,7 +611,9 @@ public class AnalyticsService {
         } catch (CancellationException canceled) {
             throw canceled;
         } catch (Exception failure) {
-            logger.warn("Discovery statistics processing failed");
+            if (!(failure instanceof DiscoveryDisclosureBlockedException)) {
+                logger.warn("Discovery statistics processing failed: {}", failure.getClass().getSimpleName());
+            }
             return blockedResponse(fileName, failure);
         }
     }
