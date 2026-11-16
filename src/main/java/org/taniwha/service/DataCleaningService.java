@@ -451,7 +451,8 @@ public class DataCleaningService {
     }
 
     private void writeCleanedData(Path file, String lowerFileName, List<Map<String, String>> cleaned, DataCleaningOptionsDTO opts) {
-        // TODO: Route cleaning output through connector write support. Read-only sources can export to a writable target.
+        // TODO: Save cleaned rows through a writable connector, using a separate destination for read-only sources.
+        // This method replaces a CSV in place or writes a separate cleaned CSV beside an Excel file.
         if (lowerFileName.endsWith(".csv")) {
             writeCsvAtomically(file, cleaned, opts);
             logger.info("Dataset cleaned in place: {}", file.getFileName());

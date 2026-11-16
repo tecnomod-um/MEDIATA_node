@@ -40,7 +40,8 @@ public class FileController {
     @Operation(summary = "List source dataset files")
     @GetMapping("/datasets")
     public ResponseEntity<List<String>> listDatasetFiles() {
-        // TODO: Use the connector catalog for Discovery so files and configured database datasets can be selected here.
+        // TODO: List datasets from the connector catalog so Discovery can offer both files and configured database sources.
+        // This endpoint currently returns the names of local dataset files listed by FileService.
         logger.debug("Request to list files in datasets folder");
 
         try {
