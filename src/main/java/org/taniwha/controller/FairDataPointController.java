@@ -55,6 +55,7 @@ public class FairDataPointController {
             "/fdp/distribution/{distributionId}/spec",
             "/fdp/shapes/{shapeId}"
     })
+
     public ResponseEntity<String> metadata(@RequestHeader(value = "Accept", required = false) String acceptHeader,
                                            HttpServletRequest request) {
         FairDataPointInstanceService.FetchResult result = fairDataPointInstanceService.fetchMetadata(
@@ -62,13 +63,16 @@ public class FairDataPointController {
                 acceptHeader,
                 resolveFdpBaseUrl(request)
         );
+
         if (result == null || result.status() == FairDataPointInstanceService.FetchStatus.UNAVAILABLE
                 || result.status() == FairDataPointInstanceService.FetchStatus.DISABLED) {
             return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE).body("FAIR Data Point instance is unavailable.");
         }
+
         if (result.status() == FairDataPointInstanceService.FetchStatus.NOT_FOUND) {
             return ResponseEntity.notFound().build();
         }
+
         return result.response();
     }
 
@@ -114,6 +118,7 @@ public class FairDataPointController {
 
     private String resolveFdpBaseUrl(HttpServletRequest request) {
         String configuredPublicBaseUrl = resolveConfiguredPublicFdpBaseUrl(request);
+
         if (configuredPublicBaseUrl != null) {
             return configuredPublicBaseUrl;
         }

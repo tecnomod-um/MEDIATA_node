@@ -28,7 +28,6 @@ public class FileController {
     private static final String ERROR_MSG = "Error listing files";
 
     private static final Logger logger = LoggerFactory.getLogger(FileController.class);
-
     private final FileService fileService;
     private final JwtTokenUtil jwtTokenUtil;
 
@@ -40,7 +39,6 @@ public class FileController {
     @Operation(summary = "List source dataset files")
     @GetMapping("/datasets")
     public ResponseEntity<List<String>> listDatasetFiles() {
-        // TODO: Use the connector catalog for Discovery so files and configured database datasets can be selected here.
         logger.debug("Request to list files in datasets folder");
 
         try {
@@ -210,7 +208,6 @@ public class FileController {
         }
 
         String fileName = fileService.getRawNodeMetadataFileName();
-
         HttpHeaders headers = new HttpHeaders();
         headers.setContentType(new MediaType("text", "plain", StandardCharsets.UTF_8));
 
@@ -235,13 +232,14 @@ public class FileController {
         if (metadata == null) {
             return ResponseEntity.notFound().build();
         }
-
         return ResponseEntity.ok(metadata);
     }
 
     @Operation(summary = "List files in a managed category")
     @GetMapping
     public ResponseEntity<List<FileInfoDto>> listFiles(@RequestParam FileCategory category) {
+        // TODO: Use the connector catalog when Discovery's file picker requests the DATASETS category.
+        // This endpoint currently returns local file metadata for the requested category.
         logger.debug("List files for category={}", category);
         return ResponseEntity.ok(fileService.listFilesWithInfo(category));
     }
@@ -256,7 +254,6 @@ public class FileController {
         logger.debug("Rename file category={} from={} to={}", category, from, to);
 
         fileService.renameFile(category, from, to);
-
         return ResponseEntity.ok().build();
     }
 
@@ -267,9 +264,7 @@ public class FileController {
             @RequestParam String name
     ) {
         logger.debug("Delete file category={} name={}", category, name);
-
         fileService.deleteFile(category, name);
-
         return ResponseEntity.ok().build();
     }
 

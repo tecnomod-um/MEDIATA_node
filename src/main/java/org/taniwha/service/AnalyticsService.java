@@ -583,10 +583,13 @@ public class AnalyticsService {
                                                 Map<String, String> featureTypes, LongConsumer progress) {
         AnalyticsResponseDTO response = new AnalyticsResponseDTO();
         response.setFileName(fileName);
+
         try {
             Map<String, String> overrides = FeatureTypeOverrides.validate(featureTypes);
             response.setFeatureTypeSummaryVersion(1);
             response.setFeatureTypes(overrides);
+            // TODO: Read rows from the selected connector and pass them to the existing filter and statistics code below.
+            // This method currently only reads a local file and calculates statistics for rows matching the filters.
             Path path = Paths.get(fileService.getDatasetFilePath(fileName));
             logger.info("Discovery profiling started for dataset {}", path.getFileName());
             DisclosureObservation observation = disclosure.begin(path);

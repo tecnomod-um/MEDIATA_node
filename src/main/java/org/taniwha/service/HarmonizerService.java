@@ -524,7 +524,6 @@ public class HarmonizerService {
         fileService.registerHarmonizationProvenance(outputFileName, List.of(sourceFileName), mappingSpec);
     }
 
-
     private Map<String, Object> getAllConfigsForFile(String key, List<Map<String, Object>> configList) {
         Map<String, Object> combined = new LinkedHashMap<>();
         for (var cfg : configList) {
