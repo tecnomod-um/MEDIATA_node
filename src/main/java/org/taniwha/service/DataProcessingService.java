@@ -38,7 +38,7 @@ public class DataProcessingService {
     }
 
     public void streamRows(Path path, Consumer<Map<String,String>> rowConsumer) throws IOException {
-        // TODO: Reuse the CSV and XLSX readers in the file connector and have database connectors provide the same row format.
+        // TODO: Extract the CSV and XLSX readers into an adapter and have database connectors provide the same row format.
         // This method validates a local file and passes each row to the caller as a map of column names to string values.
         fileFilter.validate(path);
         String name = path.getFileName().toString().toLowerCase();

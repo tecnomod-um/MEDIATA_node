@@ -28,7 +28,6 @@ public class FileController {
     private static final String ERROR_MSG = "Error listing files";
 
     private static final Logger logger = LoggerFactory.getLogger(FileController.class);
-
     private final FileService fileService;
     private final JwtTokenUtil jwtTokenUtil;
 

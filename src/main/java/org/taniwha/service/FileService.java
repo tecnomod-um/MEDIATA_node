@@ -481,7 +481,7 @@ public class FileService {
     }
 
     public List<String> listDatasetFiles() {
-        // TODO: Add support for new file extensions in the file connector and expose those datasets in the Discovery catalog.
+        // TODO: Add support for databases and add their datasets in the Discovery catalog
         // This method lists the names of regular files in the node's datasets folder that pass file validation.
         return listFilesInFolder(datasetsFolder);
     }
