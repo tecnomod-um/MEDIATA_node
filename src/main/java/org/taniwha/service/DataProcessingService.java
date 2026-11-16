@@ -38,15 +38,22 @@ public class DataProcessingService {
     }
 
     public void streamRows(Path path, Consumer<Map<String,String>> rowConsumer) throws IOException {
+        streamRows(path, headers -> {}, rowConsumer);
+    }
+
+    public void streamRows(Path path, Consumer<List<String>> headerConsumer,
+                           Consumer<Map<String,String>> rowConsumer) throws IOException {
         // TODO: Extract the CSV and XLSX readers into an adapter and have database connectors provide the same row format.
         // This method validates a local file and passes each row to the caller as a map of column names to string values.
         fileFilter.validate(path);
-        String name = path.getFileName().toString().toLowerCase();
+        String name = path.getFileName().toString().toLowerCase(Locale.ROOT);
         if (name.endsWith(".csv")) {
-            streamCsv(path, rowConsumer);
+            try (BufferedReader reader = Files.newBufferedReader(path)) {
+                streamCsv(reader, headerConsumer, rowConsumer);
+            }
         } else if (name.endsWith(XLSX_EXTENSION)) {
             try (InputStream in = Files.newInputStream(path)) {
-                streamXlsx(in, rowConsumer);
+                streamXlsx(in, headerConsumer, rowConsumer);
             }
         } else {
             throw new IllegalArgumentException("Unsupported file type: " + name);
@@ -59,22 +66,17 @@ public class DataProcessingService {
         String name = originalFilename != null ? originalFilename.toLowerCase() : "";
         if (name.endsWith(".csv")) {
             try (BufferedReader reader = new BufferedReader(new InputStreamReader(file.getInputStream()))) {
-                streamCsv(reader, rowConsumer);
+                streamCsv(reader, headers -> {}, rowConsumer);
             }
         } else {
             try (InputStream in = file.getInputStream()) {
-                streamXlsx(in, rowConsumer);
+                streamXlsx(in, headers -> {}, rowConsumer);
             }
         }
     }
 
-    private void streamCsv(Path path, Consumer<Map<String,String>> rowConsumer) throws IOException {
-        try (BufferedReader reader = Files.newBufferedReader(path)) {
-            streamCsv(reader, rowConsumer);
-        }
-    }
-
-    private void streamCsv(BufferedReader reader, Consumer<Map<String,String>> rowConsumer) throws IOException {
+    private void streamCsv(BufferedReader reader, Consumer<List<String>> headerConsumer,
+                           Consumer<Map<String,String>> rowConsumer) throws IOException {
         // auto-detect delimiter
         char delim = autoDetectDelimiter(reader);
 
@@ -88,6 +90,7 @@ public class DataProcessingService {
         reader.reset();
         try (CSVParser parser = new CSVParser(reader, fmt)) {
             List<String> headers = parser.getHeaderNames();
+            headerConsumer.accept(headers);
             for (CSVRecord rec : parser) {
                 Map<String,String> map = new HashMap<>();
                 for (String h : headers) {
@@ -98,7 +101,8 @@ public class DataProcessingService {
         }
     }
 
-    private void streamXlsx(InputStream in, Consumer<Map<String,String>> rowConsumer) {
+    private void streamXlsx(InputStream in, Consumer<List<String>> headerConsumer,
+                            Consumer<Map<String,String>> rowConsumer) {
         DataFormatter fmt = new DataFormatter(LOCALE);
 
         try (Workbook wb = StreamingReader.builder()
@@ -117,6 +121,7 @@ public class DataProcessingService {
                 for (Cell c : header) {
                     headers.add(fmt.formatCellValue(c));
                 }
+                headerConsumer.accept(headers);
 
                 // rows
                 while (rows.hasNext()) {

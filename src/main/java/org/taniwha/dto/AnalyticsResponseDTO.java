@@ -32,6 +32,7 @@ public class AnalyticsResponseDTO {
     // Population SD, R7/linear quantiles, category percentages over observed values.
     private final int statisticsConventionVersion = 1;
     private int disclosurePolicyVersion;
+    private boolean disclosureWithheld;
     private final String disclosureMode = "COHORT_AGGREGATES";
     private int featureTypeSummaryVersion;
     private Map<String, String> featureTypes = new HashMap<>();

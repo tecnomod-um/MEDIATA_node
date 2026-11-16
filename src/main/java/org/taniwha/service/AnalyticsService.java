@@ -296,10 +296,12 @@ public class AnalyticsService {
     }
 
     private AnalyticsResponseDTO blockedResponse(String fileName, Exception failure) {
-        AnalyticsResponseDTO safe = new AnalyticsResponseDTO(failure instanceof DiscoveryDisclosureBlockedException
+        boolean withheld = failure instanceof DiscoveryDisclosureBlockedException;
+        AnalyticsResponseDTO safe = new AnalyticsResponseDTO(withheld
                 ? failure.getMessage() : failure instanceof InvalidNumericConversionException
                 ? "This field cannot be converted to continuous without an explicit numerical mapping." : "Error processing statistics.");
         safe.setFileName(fileName);
+        safe.setDisclosureWithheld(withheld);
         return safe;
     }
 

@@ -57,7 +57,7 @@ public class DiscoveryQueryLedger {
         if (!enabled) return null;
         try {
             Path real = checkedPath(path);
-            if (!supportedDataset(real.getFileName().toString())) throw new DiscoveryDisclosureBlockedException();
+            if (!supportedDataset(real.getFileName().toString())) throw blocked("unsupported-dataset");
             String key = pathKey(real), content = digest(real);
             return locked(() -> {
                 DiscoveryLedgerRegistry registry = readRegistry();
@@ -68,56 +68,61 @@ public class DiscoveryQueryLedger {
                 }
                 return new DiscoveryDatasetVersion(real, key, content);
             });
-        } catch (IOException e) { throw new DiscoveryDisclosureBlockedException(); }
+        } catch (IOException e) { throw blocked("dataset-or-registry-unavailable"); }
     }
 
     public <T> T release(DiscoveryDatasetVersion version, int rows, BitSet selected, Function<CohortPartition, T> action) {
         // Do not distinguish an absent cohort from a protected one-to-five-record cohort.
-        if (selected.cardinality() < org.taniwha.util.AggregateDisclosure.MIN_COUNT) throw new DiscoveryDisclosureBlockedException();
+        if (selected.cardinality() < org.taniwha.util.AggregateDisclosure.MIN_COUNT) throw blocked("cohort-below-minimum");
         if (version == null) {
-            if (enabled) throw new DiscoveryDisclosureBlockedException();
+            if (enabled) throw blocked("missing-dataset-version");
             return action.apply(checkCohort(new int[rows], selected));
         }
         try {
             return locked(() -> {
                 DiscoveryLedgerRegistry registry = readRegistry();
                 if (!Objects.equals(registry.paths().get(version.pathKey()), version.contentKey())
-                        || !digest(version.path()).equals(version.contentKey())) throw new DiscoveryDisclosureBlockedException();
+                        || !digest(version.path()).equals(version.contentKey())) throw blocked("dataset-changed-during-analysis");
                 Path stateFile = directory.resolve(version.contentKey() + ".json");
                 int[] labels;
                 if (Files.exists(stateFile)) {
                     DiscoveryLedgerState state = mapper.readValue(stateFile.toFile(), DiscoveryLedgerState.class);
-                    if (state.rows() != rows) throw new DiscoveryDisclosureBlockedException();
+                    if (state.rows() != rows) throw blocked("query-history-row-count-mismatch");
                     labels = decode(state);
                 } else {
-                    if (registry.initialised().contains(version.contentKey())) throw new DiscoveryDisclosureBlockedException();
+                    if (registry.initialised().contains(version.contentKey())) throw blocked("query-history-missing");
                     labels = new int[rows];
                 }
                 CohortPartition partition = checkCohort(labels, selected);
                 T response = action.apply(partition);
                 // Detect in-place changes during calculation, before writing or returning any response.
-                if (!digest(version.path()).equals(version.contentKey())) throw new DiscoveryDisclosureBlockedException();
+                if (!digest(version.path()).equals(version.contentKey())) throw blocked("dataset-changed-during-analysis");
                 write(stateFile, new DiscoveryLedgerState(rows, partition.labels()));
                 registry.initialised().add(version.contentKey()); write(registryFile, registry);
                 return response;
             });
-        } catch (IOException | IllegalArgumentException e) { throw new DiscoveryDisclosureBlockedException(); }
+        } catch (IOException | IllegalArgumentException e) { throw blocked("query-history-read-or-write-failed"); }
     }
 
     private CohortPartition checkCohort(int[] labels, BitSet selected) {
         CohortPartition partition = new CohortPartition(labels);
-        if (!partition.allow(List.of(selected))) throw new DiscoveryDisclosureBlockedException();
+        if (!partition.allow(List.of(selected))) throw blocked("query-overlaps-protected-history");
         return partition;
     }
 
+    private DiscoveryDisclosureBlockedException blocked(String reason) {
+        logger.info("Discovery release withheld: {}", reason);
+        return new DiscoveryDisclosureBlockedException();
+    }
+
     private int[] decode(DiscoveryLedgerState state) {
-        if (state.labels() == null || state.labels().length != state.rows() || state.rows() < 0) throw new DiscoveryDisclosureBlockedException();
+        if (state.labels() == null || state.labels().length != state.rows() || state.rows() < 0) throw blocked("invalid-query-history");
         Map<Integer, Integer> counts = new HashMap<>();
         for (int label : state.labels()) {
-            if (label < 0) throw new DiscoveryDisclosureBlockedException();
+            if (label < 0) throw blocked("invalid-query-history");
             counts.merge(label, 1, Integer::sum);
         }
-        if (counts.values().stream().anyMatch(count -> count < org.taniwha.util.AggregateDisclosure.MIN_COUNT)) throw new DiscoveryDisclosureBlockedException();
+        if (counts.values().stream().anyMatch(count -> count < org.taniwha.util.AggregateDisclosure.MIN_COUNT)) throw blocked("invalid-query-history");
         return state.labels();
     }
 
