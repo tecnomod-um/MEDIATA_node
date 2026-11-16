@@ -210,7 +210,6 @@ public class FileController {
         }
 
         String fileName = fileService.getRawNodeMetadataFileName();
-
         HttpHeaders headers = new HttpHeaders();
         headers.setContentType(new MediaType("text", "plain", StandardCharsets.UTF_8));
 
@@ -235,7 +234,6 @@ public class FileController {
         if (metadata == null) {
             return ResponseEntity.notFound().build();
         }
-
         return ResponseEntity.ok(metadata);
     }
 
@@ -256,7 +254,6 @@ public class FileController {
         logger.debug("Rename file category={} from={} to={}", category, from, to);
 
         fileService.renameFile(category, from, to);
-
         return ResponseEntity.ok().build();
     }
 
@@ -267,9 +264,7 @@ public class FileController {
             @RequestParam String name
     ) {
         logger.debug("Delete file category={} name={}", category, name);
-
         fileService.deleteFile(category, name);
-
         return ResponseEntity.ok().build();
     }
 
