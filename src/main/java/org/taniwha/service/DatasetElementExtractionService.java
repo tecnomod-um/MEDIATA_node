@@ -36,8 +36,6 @@ public class DatasetElementExtractionService {
     private DatasetElementsDTO extractSingleDataset(String fileName) throws IOException {
         Map<String, ColumnAccumulator> byColumn = new LinkedHashMap<>();
 
-        // TODO: Read non-file datasets through the selected connector and reuse the column summarisation logic below.
-        // This method reads one local dataset and returns column names and summaries that pass the disclosure checks.
         dataProcessingService.streamRows(
                 Paths.get(fileService.getDatasetFilePath(fileName)),
                 row -> row.forEach((column, value) ->

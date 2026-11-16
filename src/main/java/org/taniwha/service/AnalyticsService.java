@@ -587,6 +587,8 @@ public class AnalyticsService {
             Map<String, String> overrides = FeatureTypeOverrides.validate(featureTypes);
             response.setFeatureTypeSummaryVersion(1);
             response.setFeatureTypes(overrides);
+            // TODO: Resolve Discovery datasets through their connectors and keep disclosure checks in this flow.
+            // This method currently reads a local file and calculates statistics for rows matching the filters.
             Path path = Paths.get(fileService.getDatasetFilePath(fileName));
             logger.info("Discovery profiling started for dataset {}", path.getFileName());
             DisclosureObservation observation = disclosure.begin(path);

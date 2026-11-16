@@ -40,8 +40,6 @@ public class FileController {
     @Operation(summary = "List source dataset files")
     @GetMapping("/datasets")
     public ResponseEntity<List<String>> listDatasetFiles() {
-        // TODO: List datasets from the connector catalog so Discovery can offer both files and configured database sources.
-        // This endpoint currently returns the names of local dataset files listed by FileService.
         logger.debug("Request to list files in datasets folder");
 
         try {
@@ -241,6 +239,8 @@ public class FileController {
     @Operation(summary = "List files in a managed category")
     @GetMapping
     public ResponseEntity<List<FileInfoDto>> listFiles(@RequestParam FileCategory category) {
+        // TODO: Use the connector catalog when Discovery's file picker requests the DATASETS category.
+        // This endpoint currently returns local file metadata for the requested category.
         logger.debug("List files for category={}", category);
         return ResponseEntity.ok(fileService.listFilesWithInfo(category));
     }
