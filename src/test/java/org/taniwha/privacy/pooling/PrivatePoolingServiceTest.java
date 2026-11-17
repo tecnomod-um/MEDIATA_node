@@ -63,13 +63,16 @@ class PrivatePoolingServiceTest {
 
     @Test void preservesAnExistingReleaseAndAccountsForItsOriginalCharge() throws Exception {
         Path file = Files.createDirectories(root.resolve("datasets")).resolve("original.csv");
-        Files.writeString(file, "Cluster,Age\n0,32\n");
+        Files.writeString(file, "Cluster,Age,Barthel Total\n0,32,95\n");
         Path next = Files.writeString(file.resolveSibling("new.csv"), "Cluster,Age\n0,47\n");
         String hash = HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(Files.readAllBytes(file)));
         Path store = Files.createDirectories(root.resolve("discovery-privacy/approximate-pooling"));
-        var policy = ClusterProfileSchema.fromHeaders(List.of("Cluster", "Age"), "original.csv", hash);
-        var histogram = new PrivatePoolingHistogram(policy.features().get("Age"), java.util.Collections.nCopies(25, 5L), null);
-        var original = new PrivatePoolingRelease(1, "0", Math.log(2), 4.0, Map.of("Age", histogram));
+        var legacyBarthel = new PrivatePoolingDomain(
+                java.util.stream.IntStream.rangeClosed(0, 20).mapToObj(i -> 5.0 * i).toList(), null);
+        var policy = new PrivatePoolingPolicy("original.csv", hash, "Cluster", "continuous", List.of("0"),
+                Map.of("Barthel Total", legacyBarthel));
+        var histogram = new PrivatePoolingHistogram(legacyBarthel, java.util.Collections.nCopies(21, 5L), null);
+        var original = new PrivatePoolingRelease(1, "0", Math.log(2), 4.0, Map.of("Barthel Total", histogram));
         var mapper = new ObjectMapper();
         mapper.writeValue(store.resolve(hash + ".json").toFile(), new PrivatePoolingSnapshot(policy, Map.of("0", original)));
 
@@ -103,6 +106,17 @@ class PrivatePoolingServiceTest {
         assertThat(numeric.indexOf("20")).isEqualTo(1);
         assertThat(numeric.indexOf("100")).isEqualTo(1);
         assertThat(numeric.indexOf("NULL")).isEqualTo(2);
+    }
+
+    @Test void representsTheEndpointsAndTopScoresSeparatelyInNewProtectedReleases() throws Exception {
+        var policy = ClusterProfileSchema.fromHeaders(List.of("Cluster", "Barthel Total"), "scores.csv", "hash");
+        var domain = policy.features().get("Barthel Total");
+        domain.validate();
+        assertThat(domain.size()).isEqualTo(22);
+        assertThat(List.of("0", "5", "95", "100").stream().map(value -> domain.values().get(domain.indexOf(value))))
+                .containsExactly(0.0, 5.0, 95.0, 100.0);
+        var mapper = new ObjectMapper();
+        assertThat(mapper.readValue(mapper.writeValueAsString(domain), PrivatePoolingDomain.class)).isEqualTo(domain);
     }
 
     private FileFilters request(String fileName, String clusterColumn, String group) {

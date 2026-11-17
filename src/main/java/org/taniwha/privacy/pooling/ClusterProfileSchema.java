@@ -10,7 +10,7 @@ final class ClusterProfileSchema {
     private static final int CLUSTER_LIMIT = 64;
     private static final List<String> GROUPS = IntStream.range(0, CLUSTER_LIMIT).mapToObj(Integer::toString).toList();
     private static final PrivatePoolingDomain AGE = numericalRange(120);
-    private static final PrivatePoolingDomain BARTHEL = numericalRange(100);
+    private static final PrivatePoolingDomain BARTHEL = scoredRange(100);
     private static final PrivatePoolingDomain SEX = new PrivatePoolingDomain(null, List.of("Female", "Male"));
     private static final PrivatePoolingDomain STROKE = new PrivatePoolingDomain(null, List.of("Ischemic", "Non-Ischemic"));
 
@@ -47,5 +47,12 @@ final class ClusterProfileSchema {
 
     private static PrivatePoolingDomain numericalRange(int max) {
         return new PrivatePoolingDomain(IntStream.rangeClosed(0, max / 5).mapToObj(i -> 5.0 * i).toList(), null);
+    }
+
+    private static PrivatePoolingDomain scoredRange(int max) {
+        var values = IntStream.rangeClosed(0, max / 5).mapToObj(i -> 5.0 * i).toList();
+        var boundaries = IntStream.rangeClosed(0, values.size())
+                .mapToObj(i -> Math.max(0, Math.min(max, i * 5.0 - 2.5))).toList();
+        return new PrivatePoolingDomain(boundaries, null, values);
     }
 }

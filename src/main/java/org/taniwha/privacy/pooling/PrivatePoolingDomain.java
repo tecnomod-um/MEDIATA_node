@@ -1,15 +1,24 @@
 package org.taniwha.privacy.pooling;
 
+import com.fasterxml.jackson.annotation.JsonInclude;
 import java.util.Collections;
 import java.util.HashSet;
 import java.util.List;
 import java.text.ParseException;
 import org.taniwha.util.NumberUtil;
 
-public record PrivatePoolingDomain(List<Double> boundaries, List<String> categories) {
+public record PrivatePoolingDomain(List<Double> boundaries, List<String> categories,
+                                   @JsonInclude(JsonInclude.Include.NON_NULL) List<Double> values) {
+    public PrivatePoolingDomain(List<Double> boundaries, List<String> categories) {
+        this(boundaries, categories, null);
+    }
+
     void validate() {
         if ((boundaries == null) == (categories == null)) {
             throw new IllegalArgumentException("Choose numerical boundaries or categorical labels");
+        }
+        if (values != null && (boundaries == null || values.size() != boundaries.size() - 1)) {
+            throw new IllegalArgumentException("Each numerical bin must have one representative value");
         }
         if (boundaries != null) {
             if (boundaries.size() < 2 || boundaries.size() > 65) throw new IllegalArgumentException("Invalid boundaries");
@@ -19,6 +28,13 @@ public record PrivatePoolingDomain(List<Double> boundaries, List<String> categor
                     throw new IllegalArgumentException("Boundaries must be finite and strictly increasing");
                 }
                 previous = limit;
+            }
+            for (int index = 0; values != null && index < values.size(); index++) {
+                Double value = values.get(index);
+                if (value == null || !Double.isFinite(value) || value < boundaries.get(index)
+                        || value > boundaries.get(index + 1)) {
+                    throw new IllegalArgumentException("Representative values must lie inside their bins");
+                }
             }
         } else if (categories.isEmpty() || categories.size() > 64
                 || !categories.stream().allMatch(PrivatePoolingPolicy::validName)
