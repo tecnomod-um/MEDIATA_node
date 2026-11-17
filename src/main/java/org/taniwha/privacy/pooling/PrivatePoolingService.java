@@ -33,7 +33,7 @@ import java.util.stream.LongStream;
 
 @Service
 public class PrivatePoolingService {
-    private static final int VERSION = 1;
+    private static final int VERSION = 2;
     private final Path directory;
     private final Path datasets;
     private final FileService files;
@@ -84,7 +84,7 @@ public class PrivatePoolingService {
             } else {
                 if (alreadyPublished) return Optional.empty();
                 double remaining = maxNodeEpsilon - publishedEpsilon();
-                if (remaining < PrivateHistogramNoise.epsilon(1)) return Optional.empty();
+                if (remaining <= 0) return Optional.empty();
                 snapshot = calculateVersion(path, hash, request, remaining);
                 if (snapshot == null) return Optional.empty();
                 store(state, snapshot);
@@ -92,7 +92,7 @@ public class PrivatePoolingService {
             String group = snapshot.policy().groupFor(request.getFilters(), rows::matchesDiscoveryFilters);
             if (group == null) return Optional.empty();
             if (!alreadyPublished) {
-                double epsilon = PrivateHistogramNoise.epsilon(snapshot.policy().features().size());
+                double epsilon = snapshotEpsilon(snapshot);
                 try (var marker = FileChannel.open(published, StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE)) {
                     var value = ByteBuffer.wrap(Double.toString(epsilon).getBytes(StandardCharsets.UTF_8));
                     while (value.hasRemaining()) marker.write(value);
@@ -126,11 +126,20 @@ public class PrivatePoolingService {
                 if (hash.matches("[0-9a-f]{64}") && counted.add(hash)) {
                     var state = mapper.readValue(snapshot.toFile(), PrivatePoolingSnapshot.class);
                     state.policy().validate();
-                    spent += PrivateHistogramNoise.epsilon(state.policy().features().size());
+                    spent += snapshotEpsilon(state);
                 }
             }
         }
         return spent;
+    }
+
+    private static double snapshotEpsilon(PrivatePoolingSnapshot snapshot) throws IOException {
+        var charges = snapshot.releases().values().stream().mapToDouble(PrivatePoolingRelease::rowEpsilon)
+                .distinct().toArray();
+        if (charges.length != 1 || !Double.isFinite(charges[0]) || charges[0] <= 0) {
+            throw new IOException("Invalid privacy charge in the saved release");
+        }
+        return charges[0];
     }
 
     private PrivatePoolingSnapshot calculateVersion(Path path, String hash, FileFilters request, double remaining) throws IOException {
@@ -151,6 +160,7 @@ public class PrivatePoolingService {
     private PrivatePoolingSnapshot calculate(Path path, String fileName, String hash,
                                              Map<String, Object> filter, double remaining) throws IOException {
         var schema = new AtomicReference<PrivatePoolingPolicy>();
+        var noisePlan = new AtomicReference<PrivatePoolingNoisePlan>();
         var firstHeaders = new AtomicReference<List<String>>();
         Map<String, Map<String, long[]>> histograms = new LinkedHashMap<>();
         rows.streamRows(path, headers -> {
@@ -162,9 +172,11 @@ public class PrivatePoolingService {
             }
             firstHeaders.set(List.copyOf(headers));
             var next = ClusterProfileSchema.fromHeaders(headers, fileName, hash);
-            if (next == null || next.groupFor(filter, rows::matchesDiscoveryFilters) == null
-                    || PrivateHistogramNoise.epsilon(next.features().size()) > remaining) return;
+            if (next == null || next.groupFor(filter, rows::matchesDiscoveryFilters) == null) return;
+            var plan = PrivatePoolingNoisePlan.forFeatures(next.features(), random);
+            if (plan.rowEpsilon() > remaining) return;
             schema.set(next);
+            noisePlan.set(plan);
             for (String group : next.groups()) {
                 var counts = new LinkedHashMap<String, long[]>();
                 next.features().forEach((name, domain) -> counts.put(name, new long[domain.size()]));
@@ -179,15 +191,16 @@ public class PrivatePoolingService {
         });
         var policy = schema.get();
         if (policy == null) return null;
-        int size = policy.features().size();
-        var noise = new PrivateHistogramNoise(random, size);
+        var plan = noisePlan.get();
         var result = new LinkedHashMap<String, PrivatePoolingRelease>();
         histograms.forEach((group, counts) -> {
             var features = new LinkedHashMap<String, PrivatePoolingHistogram>();
-            counts.forEach((name, cells) -> features.put(name,
-                    new PrivatePoolingHistogram(policy.features().get(name),
-                            LongStream.of(cells).map(noise::release).boxed().toList())));
-            result.put(group, new PrivatePoolingRelease(VERSION, group, PrivateHistogramNoise.epsilon(size), noise.variance(), features));
+            counts.forEach((name, cells) -> {
+                var noise = plan.samplers().get(name);
+                features.put(name, new PrivatePoolingHistogram(policy.features().get(name),
+                        LongStream.of(cells).map(noise::release).boxed().toList(), noise.variance()));
+            });
+            result.put(group, new PrivatePoolingRelease(VERSION, group, plan.rowEpsilon(), null, features));
         });
         return new PrivatePoolingSnapshot(policy, result);
     }

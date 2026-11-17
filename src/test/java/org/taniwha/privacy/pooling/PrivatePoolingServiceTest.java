@@ -37,7 +37,10 @@ class PrivatePoolingServiceTest {
         assertThat(service.release(request("sample.csv", "Age", "0"))).isEmpty();
         var first = service.release(request("sample.csv", "Cluster ID", "0")).orElseThrow();
         var empty = service.release(request("sample.csv", "Cluster ID", "1")).orElseThrow();
+        assertThat(first.version()).isEqualTo(2);
         assertThat(first.features().get("Age").counts()).hasSize(25);
+        assertThat(first.features().get("Age").noiseVariance()).isEqualTo(20.0 / 9);
+        assertThat(first.features().get("Sex").noiseVariance()).isEqualTo(80.0 / 9);
         assertThat(empty.features()).containsOnlyKeys("Age", "Sex");
         assertThat(first.rowEpsilon()).isEqualTo(2 * Math.log(2));
         assertThat(service.release(request("sample.csv", "Cluster ID", "1000"))).isEmpty();
@@ -56,6 +59,28 @@ class PrivatePoolingServiceTest {
         Path second = Files.writeString(data.resolveSibling("second.csv"), "Cluster ID,Age,Sex\n0,30,Female\n");
         when(files.getDatasetFilePath("second.csv")).thenReturn(second.toString());
         assertThat(restarted.release(request("second.csv", "Cluster ID", "0"))).isEmpty();
+    }
+
+    @Test void preservesAnExistingReleaseAndAccountsForItsOriginalCharge() throws Exception {
+        Path file = Files.createDirectories(root.resolve("datasets")).resolve("original.csv");
+        Files.writeString(file, "Cluster,Age\n0,32\n");
+        Path next = Files.writeString(file.resolveSibling("new.csv"), "Cluster,Age\n0,47\n");
+        String hash = HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(Files.readAllBytes(file)));
+        Path store = Files.createDirectories(root.resolve("discovery-privacy/approximate-pooling"));
+        var policy = ClusterProfileSchema.fromHeaders(List.of("Cluster", "Age"), "original.csv", hash);
+        var histogram = new PrivatePoolingHistogram(policy.features().get("Age"), java.util.Collections.nCopies(25, 5L), null);
+        var original = new PrivatePoolingRelease(1, "0", Math.log(2), 4.0, Map.of("Age", histogram));
+        var mapper = new ObjectMapper();
+        mapper.writeValue(store.resolve(hash + ".json").toFile(), new PrivatePoolingSnapshot(policy, Map.of("0", original)));
+
+        FileService files = mock(FileService.class);
+        when(files.getDatasetFilePath("original.csv")).thenReturn(file.toString());
+        when(files.getDatasetFilePath("new.csv")).thenReturn(next.toString());
+        var service = new PrivatePoolingService(root.toString(), files, new DataProcessingService(new FileFilter()),
+                mapper, Math.log(2));
+        assertThat(service.release(request("new.csv", "Cluster", "0"))).isEmpty();
+        assertThat(service.release(request("original.csv", "Cluster", "0"))).contains(original);
+        assertThat(Double.parseDouble(Files.readString(store.resolve(hash + ".published")))).isEqualTo(Math.log(2));
     }
 
     @Test void anEmptyAnnotatedCsvStillReleasesThePublicHistogramShape() throws Exception {
