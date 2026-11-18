@@ -16,6 +16,7 @@ import java.util.List;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
@@ -46,6 +47,7 @@ class PrivatePoolingServiceTest {
         var serialized = mapper.readTree(mapper.writeValueAsBytes(first));
         assertThat(serialized.get("privacyUnit").asText()).isEqualTo("one-row-add-remove");
         assertThat(serialized.get("privacyScope").asText()).isEqualTo("protected-histograms-only");
+        assertThat(serialized.get("budgetScope").asText()).isEqualTo("dataset-version");
         assertThat(service.release(request("sample.csv", "Cluster ID", "1000"))).isEmpty();
         var restarted = new PrivatePoolingService(root.toString(), files, processor, mapper, 2 * Math.log(2));
         assertThat(restarted.release(request("sample.csv", "Cluster ID", "0.0"))).contains(first);
@@ -54,17 +56,21 @@ class PrivatePoolingServiceTest {
 
         String contents = Files.readString(data);
         Files.writeString(data, contents + "0,24,Female\n");
-        assertThat(service.release(request("sample.csv", "Cluster ID", "0"))).isEmpty();
+        var updated = service.release(request("sample.csv", "Cluster ID", "0")).orElseThrow();
+        assertThat(restarted.release(request("sample.csv", "Cluster ID", "0"))).contains(updated);
         Files.writeString(data, contents);
+        assertThat(service.release(request("sample.csv", "Cluster ID", "0"))).contains(first);
         Files.delete(store.resolve(hash + ".json"));
-        assertThat(service.release(request("sample.csv", "Cluster ID", "0"))).isEmpty();
+        assertThatThrownBy(() -> service.release(request("sample.csv", "Cluster ID", "0")))
+                .isInstanceOfSatisfying(PrivatePoolingUnavailableException.class,
+                        error -> assertThat(error.getCode()).isEqualTo("saved-release-unavailable"));
 
         Path second = Files.writeString(data.resolveSibling("second.csv"), "Cluster ID,Age,Sex\n0,30,Female\n");
         when(files.getDatasetFilePath("second.csv")).thenReturn(second.toString());
-        assertThat(restarted.release(request("second.csv", "Cluster ID", "0"))).isEmpty();
+        assertThat(restarted.release(request("second.csv", "Cluster ID", "0"))).isPresent();
     }
 
-    @Test void preservesAnExistingReleaseAndAccountsForItsOriginalCharge() throws Exception {
+    @Test void preservesAnExistingReleaseWithoutChargingItAgainstOtherDatasets() throws Exception {
         Path file = Files.createDirectories(root.resolve("datasets")).resolve("original.csv");
         Files.writeString(file, "Cluster,Age,Barthel Total\n0,32,95\n");
         Path next = Files.writeString(file.resolveSibling("new.csv"), "Cluster,Age\n0,47\n");
@@ -84,9 +90,50 @@ class PrivatePoolingServiceTest {
         when(files.getDatasetFilePath("new.csv")).thenReturn(next.toString());
         var service = new PrivatePoolingService(root.toString(), files, new DataProcessingService(new FileFilter()),
                 mapper, Math.log(2));
-        assertThat(service.release(request("new.csv", "Cluster", "0"))).isEmpty();
+        var nextRelease = service.release(request("new.csv", "Cluster", "0")).orElseThrow();
+        assertThat(nextRelease.rowEpsilon()).isEqualTo(Math.log(2));
         assertThat(service.release(request("original.csv", "Cluster", "0"))).contains(original);
         assertThat(Double.parseDouble(Files.readString(store.resolve(hash + ".published")))).isEqualTo(Math.log(2));
+    }
+
+    @Test void permitsNewAnnotatedDatasetsAfterThePreviousDatasetUsedItsFullAllowance() throws Exception {
+        Path folder = Files.createDirectories(root.resolve("datasets"));
+        Path first = Files.writeString(folder.resolve("first.csv"), "Cluster,Age,Sex\n0,31,Female\n");
+        Path second = Files.writeString(folder.resolve("second.csv"), "Cluster,Age,Sex,Outcome\n0,58,Male,Improved\n");
+        FileService files = mock(FileService.class);
+        when(files.getDatasetFilePath("first.csv")).thenReturn(first.toString());
+        when(files.getDatasetFilePath("second.csv")).thenReturn(second.toString());
+        double limit = 2 * Math.log(2);
+        var processor = new DataProcessingService(new FileFilter());
+        var mapper = new ObjectMapper();
+        var service = new PrivatePoolingService(root.toString(), files, processor, mapper, limit);
+        var initial = service.release(request("first.csv", "Cluster", "0")).orElseThrow();
+        assertThat(initial.rowEpsilon()).isEqualTo(limit);
+
+        var restarted = new PrivatePoolingService(root.toString(), files, processor, mapper, limit);
+        var next = restarted.release(request("second.csv", "Cluster", "0")).orElseThrow();
+        assertThat(next.rowEpsilon()).isEqualTo(limit);
+        assertThat(restarted.release(request("first.csv", "Cluster", "0"))).contains(initial);
+        assertThat(restarted.release(request("second.csv", "Cluster", "0"))).contains(next);
+        try (var markers = Files.list(root.resolve("discovery-privacy/approximate-pooling"))) {
+            assertThat(markers.filter(path -> path.toString().endsWith(".published")).count()).isEqualTo(2);
+        }
+    }
+
+    @Test void rejectsAnInsufficientDatasetAllowanceWithoutPublishingPartialState() throws Exception {
+        Path file = Files.createDirectories(root.resolve("datasets")).resolve("sample.csv");
+        Files.writeString(file, "Cluster,Age,Sex\n0,31,Female\n");
+        FileService files = mock(FileService.class);
+        when(files.getDatasetFilePath("sample.csv")).thenReturn(file.toString());
+        var service = new PrivatePoolingService(root.toString(), files, new DataProcessingService(new FileFilter()),
+                new ObjectMapper(), Math.log(2));
+
+        assertThatThrownBy(() -> service.release(request("sample.csv", "Cluster", "0")))
+                .isInstanceOfSatisfying(PrivatePoolingUnavailableException.class,
+                        error -> assertThat(error.getCode()).isEqualTo("dataset-budget-exceeded"));
+        try (var entries = Files.list(root.resolve("discovery-privacy/approximate-pooling"))) {
+            assertThat(entries.map(path -> path.getFileName().toString()).toList()).containsExactly("release.lock");
+        }
     }
 
     @Test void anEmptyAnnotatedCsvStillReleasesThePublicHistogramShape() throws Exception {
