@@ -2,6 +2,7 @@ package org.taniwha.service;
 
 import org.taniwha.util.DateUtil;
 import org.taniwha.util.NumberUtil;
+import org.taniwha.dto.DatasetElementDTO;
 import java.text.ParseException;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
@@ -27,10 +28,18 @@ final class ColumnAccumulator {
     private LocalDateTime earliest = null;
     private LocalDateTime latest = null;
     private final LinkedHashMap<String, Integer> categoricalCounts = new LinkedHashMap<>();
+    private boolean categoricalOverflow;
+    private boolean missingObserved;
+    private Long firstInteger;
+    private long integerStep;
+    private boolean integralValues = true;
 
     void accept(String rawValue) {
         String value = rawValue == null ? "" : rawValue.trim();
-        if (value.isEmpty() || "NULL".equalsIgnoreCase(value)) return;
+        if (value.isEmpty() || "NULL".equalsIgnoreCase(value)) {
+            missingObserved = true;
+            return;
+        }
 
         nonEmptyCount++;
 
@@ -48,12 +57,25 @@ final class ColumnAccumulator {
             if (min == null || parsed < min) min = parsed;
             if (max == null || parsed > max) max = parsed;
             if (!looksInteger(value, parsed)) allInteger = false;
+            if (!Double.isFinite(parsed) || Math.abs(parsed) > 1e9 || parsed != Math.rint(parsed)) integralValues = false;
+            if (integralValues) {
+                long number = (long) parsed;
+                if (firstInteger == null) firstInteger = number;
+                integerStep = gcd(integerStep, Math.abs(number - firstInteger));
+            }
         } catch (ParseException e) {
             allNumeric = false;
             allInteger = false;
+            integralValues = false;
         }
 
-        categoricalCounts.merge(value, 1, Integer::sum);
+        if (!categoricalOverflow) {
+            categoricalCounts.merge(value, 1, Integer::sum);
+            if (categoricalCounts.size() > 200) {
+                categoricalOverflow = true;
+                categoricalCounts.clear();
+            }
+        }
         totalTextLength += value.length();
     }
 
@@ -61,9 +83,28 @@ final class ColumnAccumulator {
         return nonEmptyCount > MIN_DISCLOSURE_COUNT && permittedCategories();
     }
 
+    DatasetElementDTO toElement(String column) {
+        var result = new DatasetElementDTO(column, toElementValues());
+        result.setDataType(allDate ? "date" : allNumeric ? allInteger ? "integer" : "double"
+                : looksLikeNaturalLanguage() ? "text" : "categorical");
+        // These are unfiltered schema facts, published under the same metadata
+        // disclosure policy as limits and labels. They are not DP statistics.
+        result.setMissingAllowed(missingObserved);
+        if (allNumeric && integralValues && firstInteger != null) result.setIntegerStep(Math.max(1, integerStep));
+        if (!allNumeric && !allDate && !looksLikeNaturalLanguage())
+            result.setUnlistedCategoriesAllowed(categoricalCounts.size() > MAX_CATEGORICAL_VALUES
+                    || categoricalCounts.values().stream().anyMatch(count -> count <= MIN_DISCLOSURE_COUNT));
+        return result;
+    }
+
+    private static long gcd(long left, long right) {
+        while (right != 0) { long remainder = left % right; left = right; right = remainder; }
+        return left;
+    }
+
     private boolean permittedCategories() {
         return allNumeric || allDate || looksLikeNaturalLanguage()
-                || categoricalCounts.values().stream().allMatch(count -> count > MIN_DISCLOSURE_COUNT);
+                || categoricalCounts.values().stream().anyMatch(count -> count > MIN_DISCLOSURE_COUNT);
     }
 
     List<String> toElementValues() {
@@ -91,6 +132,7 @@ final class ColumnAccumulator {
 
         List<String> categories = new ArrayList<>();
         categoricalCounts.entrySet().stream()
+                .filter(entry -> entry.getValue() > MIN_DISCLOSURE_COUNT)
                 .sorted((left, right) -> Integer.compare(right.getValue(), left.getValue()))
                 .limit(MAX_CATEGORICAL_VALUES)
                 .forEach(entry -> categories.add(entry.getKey()));
@@ -99,7 +141,7 @@ final class ColumnAccumulator {
     }
 
     private boolean looksLikeNaturalLanguage() {
-        if (categoricalCounts.isEmpty()) return true;
+        if (categoricalOverflow || categoricalCounts.isEmpty()) return true;
 
         double uniquePercentage = (double) categoricalCounts.size() / (double) nonEmptyCount * 100.0;
         double averageLength = (double) totalTextLength / (double) nonEmptyCount;

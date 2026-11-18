@@ -49,7 +49,10 @@ class DatasetElementExtractionServiceTest {
         Files.writeString(datasets.resolve("rare.csv"), "diagnosis\n" + "common\n".repeat(12) + "protected-rare-label\n");
         FileFilter filter = new FileFilter();
         var service = new DatasetElementExtractionService(new FileService(filter, baseDir.toString()), new DataProcessingService(filter));
-        assertThat(service.extractDatasetElements(List.of("rare.csv")).get(0).getElements()).isEmpty();
+        var elements = service.extractDatasetElements(List.of("rare.csv")).get(0).getElements();
+        assertThat(elements).hasSize(1);
+        assertThat(elements.get(0).getValues()).containsExactly("common");
+        assertThat(elements.get(0).getUnlistedCategoriesAllowed()).isTrue();
     }
 
     @Test

@@ -62,7 +62,7 @@ class DiscoveryQueryLedgerTest {
     @Test void newFilesAreAdmittedOnFirstUseWithoutResettingExistingOrAliasedHistory() throws Exception {
         Path existing = dataset(); var ledger = new DiscoveryQueryLedger(base.toString());
         release(ledger, existing, cohort(0, 12));
-        Path added = existing.resolveSibling("scenario2.csv");
+        Path added = existing.resolveSibling("new-dataset.csv");
         Files.writeString(added, "Age\n" + "34\n".repeat(24));
         assertThat(release(ledger, added, cohort(0, 24))).isEqualTo(24);
         Path alias = existing.resolveSibling("copy.csv"); Files.copy(existing, alias);

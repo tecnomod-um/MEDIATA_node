@@ -36,10 +36,27 @@ class DiscoveryDisclosureIntegrationTest {
     }
     private void blocked(AnalyticsResponseDTO response) {
         assertThat(response.getMessage()).isEqualTo(DiscoveryQueryLedger.BLOCKED);
+        assertThat(response.isDisclosureWithheld()).isTrue();
         assertThat(response.getContinuousFeatures()).isEmpty(); assertThat(response.getCategoricalFeatures()).isEmpty();
         assertThat(response.getNumericPairSummaries()).isEmpty(); assertThat(response.getCovariances()).isEmpty();
         assertThat(response.getPearsonCorrelations()).isEmpty(); assertThat(response.getSpearmanCorrelations()).isEmpty();
         assertThat(response.getOmittedFeatures()).isEmpty();
+    }
+
+    @Test void mixedClusterRequestsReturnWithheldAndAvailableResultsTogether() throws Exception {
+        initialise(csv());
+        var withheld = new FileFilters();
+        withheld.setFileName("cohort.csv");
+        withheld.setFilters(less(25));
+        var available = new FileFilters();
+        available.setFileName("cohort.csv");
+        available.setFilters(less(32));
+
+        var result = analytics.filterMultipleFilesByName(List.of(withheld, available));
+        assertThat(result).hasSize(2);
+        blocked(result.get(0));
+        assertThat(result.get(1).isDisclosureWithheld()).isFalse();
+        assertThat(result.get(1).getContinuousFeatures()).anySatisfy(feature -> assertThat(feature.getCount()).isEqualTo(12));
     }
     @Test void overlappingFiltersCannotRecoverOnePatientFromCountsMeansVariancesOrRelationships() throws Exception {
         initialise(csv());
