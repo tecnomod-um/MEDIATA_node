@@ -27,6 +27,7 @@ final class ColumnAccumulator {
     private LocalDateTime earliest = null;
     private LocalDateTime latest = null;
     private final LinkedHashMap<String, Integer> categoricalCounts = new LinkedHashMap<>();
+    private boolean categoricalOverflow;
 
     void accept(String rawValue) {
         String value = rawValue == null ? "" : rawValue.trim();
@@ -53,7 +54,13 @@ final class ColumnAccumulator {
             allInteger = false;
         }
 
-        categoricalCounts.merge(value, 1, Integer::sum);
+        if (!categoricalOverflow) {
+            categoricalCounts.merge(value, 1, Integer::sum);
+            if (categoricalCounts.size() > 200) {
+                categoricalOverflow = true;
+                categoricalCounts.clear();
+            }
+        }
         totalTextLength += value.length();
     }
 
@@ -99,7 +106,7 @@ final class ColumnAccumulator {
     }
 
     private boolean looksLikeNaturalLanguage() {
-        if (categoricalCounts.isEmpty()) return true;
+        if (categoricalOverflow || categoricalCounts.isEmpty()) return true;
 
         double uniquePercentage = (double) categoricalCounts.size() / (double) nonEmptyCount * 100.0;
         double averageLength = (double) totalTextLength / (double) nonEmptyCount;

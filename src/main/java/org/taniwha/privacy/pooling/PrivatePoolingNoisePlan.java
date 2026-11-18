@@ -5,31 +5,24 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 
 // rowEpsilon accounts for adding or removing one row in the protected histograms.
-// Disjoint cluster partitions compose in parallel, features compose sequentially.
+// Disjoint groups compose in parallel, features compose sequentially.
 // This budget does not account for the separate exact-statistics endpoints.
 record PrivatePoolingNoisePlan(Map<String, PrivateHistogramNoise> samplers, double rowEpsilon) {
-    private static final double LOG_TWO = Math.log(2);
-
-    static PrivatePoolingNoisePlan forFeatures(Map<String, PrivatePoolingDomain> features, SecureRandom random) {
-        long numerical = features.values().stream().filter(domain -> domain.boundaries() != null).count();
-        long categorical = features.size() - numerical;
-        boolean prioritizeMeans = numerical > 0 && numerical <= categorical;
-        Map<String, PrivateHistogramNoise> samplers = new LinkedHashMap<>();
-        double epsilon;
-        if (prioritizeMeans) {
-            var numericNoise = new PrivateHistogramNoise(random, 2, 5);
-            var categoricalNoise = new PrivateHistogramNoise(random, 5, 8);
-            features.forEach((name, domain) -> samplers.put(name,
-                    domain.boundaries() != null ? numericNoise : categoricalNoise));
-            // A numerical/categorical pair has continuation product (2/5)(5/8) = 1/4.
-            // Its cost is the same as two features at the old probability of 1/2.
-            epsilon = 2 * numerical * LOG_TWO + (categorical - numerical) * Math.log(8.0 / 5);
-        } else {
-            int divisor = features.size() <= 4 ? 2 : features.size() <= 8 ? 4 : 8;
-            var uniform = new PrivateHistogramNoise(random, divisor - 1, divisor);
-            features.keySet().forEach(name -> samplers.put(name, uniform));
-            epsilon = features.size() * Math.log1p(1.0 / (divisor - 1));
+    static PrivatePoolingNoisePlan forFeatures(Map<String, PrivatePoolingDomain> features, SecureRandom random, double allowance) {
+        if (features.isEmpty() || !Double.isFinite(allowance) || allowance <= 0)
+            throw new IllegalArgumentException("Invalid protected-summary allowance");
+        // Round continuation upward, so finite rational sampling never exceeds
+        // the configured total allowance. All feature types receive equal shares.
+        int denominator = 1024;
+        int numerator = Math.max(1, (int) Math.ceil(Math.exp(-allowance / features.size()) * denominator));
+        while (numerator < denominator && features.size() * Math.log((double) denominator / numerator) > allowance) numerator++;
+        if (numerator >= denominator) {
+            throw new PrivatePoolingUnavailableException("dataset-budget-exceeded",
+                    "The configured allowance is too small to release this feature set with the supported integer mechanism.");
         }
-        return new PrivatePoolingNoisePlan(Map.copyOf(samplers), epsilon);
+        var sampler = new PrivateHistogramNoise(random, numerator, denominator);
+        Map<String, PrivateHistogramNoise> samplers = new LinkedHashMap<>();
+        features.keySet().forEach(name -> samplers.put(name, sampler));
+        return new PrivatePoolingNoisePlan(Map.copyOf(samplers), features.size() * Math.log((double) denominator / numerator));
     }
 }

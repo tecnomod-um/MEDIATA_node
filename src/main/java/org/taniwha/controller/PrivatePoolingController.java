@@ -34,7 +34,7 @@ public class PrivatePoolingController {
             return pooling.release(request)
                     .map(release -> ResponseEntity.ok().cacheControl(CacheControl.noStore()).body(release))
                     .orElseThrow(() -> new PrivatePoolingUnavailableException("unsupported-dataset-filter",
-                            "Protected summaries require a supported dataset and a single supported cluster selection."));
+                            "Protected summaries require published feature metadata and one supported equality selection. A saved release retains its original grouping feature."));
         } catch (IOException | IllegalArgumentException | IllegalStateException error) {
             logger.warn("Approximate pooling unavailable: {}", error.getClass().getSimpleName());
             return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE).build();

@@ -6,7 +6,6 @@ import org.springframework.stereotype.Service;
 import org.taniwha.dto.FileFilters;
 import org.taniwha.service.DataProcessingService;
 import org.taniwha.service.FileService;
-import org.taniwha.util.NumberUtil;
 
 import java.io.IOException;
 import java.nio.ByteBuffer;
@@ -21,7 +20,6 @@ import java.security.DigestInputStream;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.security.SecureRandom;
-import java.text.ParseException;
 import java.util.HexFormat;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -32,17 +30,18 @@ import java.util.stream.LongStream;
 
 @Service
 public class PrivatePoolingService {
-    private static final int VERSION = 2;
+    private static final int VERSION = 3;
     private final Path directory;
     private final Path datasets;
     private final FileService files;
     private final DataProcessingService rows;
+    private final PrivatePoolingMetadata metadata;
     private final ObjectMapper mapper;
     private final double maxDatasetEpsilon;
     private final SecureRandom random = new SecureRandom();
 
     public PrivatePoolingService(@Value("${app.path}") String base, FileService files,
-                                 DataProcessingService rows, ObjectMapper mapper,
+                                 DataProcessingService rows, ObjectMapper mapper, PrivatePoolingMetadata metadata,
                                  @Value("${discovery.approximate-pooling.max-dataset-epsilon:2.772588722239781}") double maxDatasetEpsilon) {
         if (!Double.isFinite(maxDatasetEpsilon) || maxDatasetEpsilon <= 0) {
             throw new IllegalArgumentException("Private pooling budget must be finite and positive");
@@ -52,6 +51,7 @@ public class PrivatePoolingService {
         datasets = root.resolve("datasets");
         this.files = files;
         this.rows = rows;
+        this.metadata = metadata;
         this.mapper = mapper;
         this.maxDatasetEpsilon = maxDatasetEpsilon;
     }
@@ -127,52 +127,42 @@ public class PrivatePoolingService {
         String extension = fileName.substring(dot);
         Path input = Files.createTempFile(directory, "input-", extension);
         try {
-            // Bind the release to exactly the bytes that were scanned.
             Files.copy(path, input, StandardCopyOption.REPLACE_EXISTING);
-            return hash.equals(digest(input)) ? calculate(input, fileName, hash, request.getFilters()) : null;
+            if (!hash.equals(digest(input))) return null;
+            var policy = metadata.policy(input, fileName, hash, request.getFilters());
+            if (policy == null || policy.groupFor(request.getFilters(), rows::matchesDiscoveryFilters) == null) return null;
+            return calculate(input, policy);
         } finally {
             Files.deleteIfExists(input);
         }
     }
 
-    private PrivatePoolingSnapshot calculate(Path path, String fileName, String hash,
-                                             Map<String, Object> filter) throws IOException {
-        var schema = new AtomicReference<PrivatePoolingPolicy>();
-        var noisePlan = new AtomicReference<PrivatePoolingNoisePlan>();
+    private PrivatePoolingSnapshot calculate(Path path, PrivatePoolingPolicy policy) throws IOException {
+        var plan = PrivatePoolingNoisePlan.forFeatures(policy.features(), random, maxDatasetEpsilon);
         var firstHeaders = new AtomicReference<List<String>>();
         Map<String, Map<String, long[]>> histograms = new LinkedHashMap<>();
+        var groupKeys = new LinkedHashMap<String, String>();
+        for (String group : policy.groups()) {
+            groupKeys.put(policy.groupKey(group), group);
+            var counts = new LinkedHashMap<String, long[]>();
+            policy.features().forEach((name, domain) -> counts.put(name, new long[domain.size()]));
+            histograms.put(group, counts);
+        }
         rows.streamRows(path, headers -> {
             if (firstHeaders.get() != null) {
                 if (!firstHeaders.get().equals(headers)) {
-                    throw new IllegalArgumentException("Cluster summaries require matching worksheet headers");
+                    throw new IllegalArgumentException("Protected summaries require matching worksheet headers");
                 }
                 return;
             }
             firstHeaders.set(List.copyOf(headers));
-            var next = ClusterProfileSchema.fromHeaders(headers, fileName, hash);
-            if (next == null || next.groupFor(filter, rows::matchesDiscoveryFilters) == null) return;
-            var plan = PrivatePoolingNoisePlan.forFeatures(next.features(), random);
-            if (plan.rowEpsilon() > maxDatasetEpsilon) {
-                throw new PrivatePoolingUnavailableException("dataset-budget-exceeded",
-                        "The configured protected-summary allowance is too small for this dataset's supported features.");
-            }
-            schema.set(next);
-            noisePlan.set(plan);
-            for (String group : next.groups()) {
-                var counts = new LinkedHashMap<String, long[]>();
-                next.features().forEach((name, domain) -> counts.put(name, new long[domain.size()]));
-                histograms.put(group, counts);
-            }
+            if (!headers.contains(policy.groupBy()) || !headers.containsAll(policy.features().keySet()))
+                throw new IllegalArgumentException("Published feature metadata does not match dataset columns");
         }, row -> {
-            var policy = schema.get();
-            if (policy == null) return;
-            var counts = histograms.get(clusterId(row.get(policy.groupBy())));
+            var counts = histograms.get(groupKeys.get(policy.groupKey(row.get(policy.groupBy()))));
             if (counts != null) policy.features().forEach((name, domain) ->
                     counts.get(name)[domain.indexOf(row.get(name))]++);
         });
-        var policy = schema.get();
-        if (policy == null) return null;
-        var plan = noisePlan.get();
         var result = new LinkedHashMap<String, PrivatePoolingRelease>();
         histograms.forEach((group, counts) -> {
             var features = new LinkedHashMap<String, PrivatePoolingHistogram>();
@@ -184,17 +174,6 @@ public class PrivatePoolingService {
             result.put(group, new PrivatePoolingRelease(VERSION, group, plan.rowEpsilon(), null, features));
         });
         return new PrivatePoolingSnapshot(policy, result);
-    }
-
-    private static String clusterId(String value) {
-        if (value == null || value.isBlank()) return null;
-        try {
-            double number = NumberUtil.parseDouble(value);
-            return Double.compare(number, 0.0) >= 0 && number <= Integer.MAX_VALUE && number == Math.rint(number)
-                    ? Integer.toString((int) number) : null;
-        } catch (ParseException | NumberFormatException ignored) {
-            return null;
-        }
     }
 
     private void store(Path path, PrivatePoolingSnapshot snapshot) throws IOException {

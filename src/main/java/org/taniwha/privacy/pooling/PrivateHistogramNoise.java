@@ -22,7 +22,7 @@ final class PrivateHistogramNoise {
     }
 
     double variance() {
-        int stopNumerator = continuationDenominator - continuationNumerator;
+        double stopNumerator = continuationDenominator - continuationNumerator;
         return 2.0 * continuationNumerator * continuationDenominator / (stopNumerator * stopNumerator);
     }
 

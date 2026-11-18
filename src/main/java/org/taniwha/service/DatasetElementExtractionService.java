@@ -6,6 +6,7 @@ import org.taniwha.dto.DatasetElementsDTO;
 
 import java.io.IOException;
 import java.nio.file.Paths;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -34,10 +35,14 @@ public class DatasetElementExtractionService {
     }
 
     private DatasetElementsDTO extractSingleDataset(String fileName) throws IOException {
+        return extractDatasetElements(fileName, Paths.get(fileService.getDatasetFilePath(fileName)));
+    }
+
+    public DatasetElementsDTO extractDatasetElements(String fileName, Path input) throws IOException {
         Map<String, ColumnAccumulator> byColumn = new LinkedHashMap<>();
 
         dataProcessingService.streamRows(
-                Paths.get(fileService.getDatasetFilePath(fileName)),
+                input,
                 row -> row.forEach((column, value) ->
                         byColumn.computeIfAbsent(column, ignored -> new ColumnAccumulator()).accept(value))
         );
