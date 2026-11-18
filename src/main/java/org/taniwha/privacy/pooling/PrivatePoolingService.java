@@ -22,7 +22,6 @@ import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.security.SecureRandom;
 import java.text.ParseException;
-import java.util.HashSet;
 import java.util.HexFormat;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -39,13 +38,13 @@ public class PrivatePoolingService {
     private final FileService files;
     private final DataProcessingService rows;
     private final ObjectMapper mapper;
-    private final double maxNodeEpsilon;
+    private final double maxDatasetEpsilon;
     private final SecureRandom random = new SecureRandom();
 
     public PrivatePoolingService(@Value("${app.path}") String base, FileService files,
                                  DataProcessingService rows, ObjectMapper mapper,
-                                 @Value("${discovery.approximate-pooling.max-node-epsilon:2.772588722239781}") double maxNodeEpsilon) {
-        if (!Double.isFinite(maxNodeEpsilon) || maxNodeEpsilon <= 0) {
+                                 @Value("${discovery.approximate-pooling.max-dataset-epsilon:2.772588722239781}") double maxDatasetEpsilon) {
+        if (!Double.isFinite(maxDatasetEpsilon) || maxDatasetEpsilon <= 0) {
             throw new IllegalArgumentException("Private pooling budget must be finite and positive");
         }
         Path root = Path.of(base).toAbsolutePath().normalize();
@@ -54,7 +53,7 @@ public class PrivatePoolingService {
         this.files = files;
         this.rows = rows;
         this.mapper = mapper;
-        this.maxNodeEpsilon = maxNodeEpsilon;
+        this.maxDatasetEpsilon = maxDatasetEpsilon;
     }
 
     public synchronized Optional<PrivatePoolingRelease> release(FileFilters request) throws IOException {
@@ -82,10 +81,13 @@ public class PrivatePoolingService {
                 snapshot.policy().validate();
                 if (!hash.equals(snapshot.policy().sha256())) return Optional.empty();
             } else {
-                if (alreadyPublished) return Optional.empty();
-                double remaining = maxNodeEpsilon - publishedEpsilon();
-                if (remaining <= 0) return Optional.empty();
-                snapshot = calculateVersion(path, hash, request, remaining);
+                if (alreadyPublished) {
+                    throw new PrivatePoolingUnavailableException("saved-release-unavailable",
+                            "The protected release was already published but its saved summary is missing. Node review is required.");
+                }
+                // Each uploaded dataset version has its own allowance. Releases for
+                // other datasets remain recorded, but do not block this dataset.
+                snapshot = calculateVersion(path, hash, request);
                 if (snapshot == null) return Optional.empty();
                 store(state, snapshot);
             }
@@ -109,30 +111,6 @@ public class PrivatePoolingService {
         }
     }
 
-    private double publishedEpsilon() throws IOException {
-        double spent = 0;
-        var counted = new HashSet<String>();
-        try (var markers = Files.newDirectoryStream(directory, "*.published")) {
-            for (Path marker : markers) {
-                double released = Double.parseDouble(Files.readString(marker));
-                if (!Double.isFinite(released) || released <= 0) throw new IOException("Invalid privacy budget marker");
-                spent += released;
-                counted.add(marker.getFileName().toString().replaceFirst("[.]published$", ""));
-            }
-        }
-        try (var snapshots = Files.newDirectoryStream(directory, "*.json")) {
-            for (Path snapshot : snapshots) {
-                String hash = snapshot.getFileName().toString().replaceFirst("[.]json$", "");
-                if (hash.matches("[0-9a-f]{64}") && counted.add(hash)) {
-                    var state = mapper.readValue(snapshot.toFile(), PrivatePoolingSnapshot.class);
-                    state.policy().validate();
-                    spent += snapshotEpsilon(state);
-                }
-            }
-        }
-        return spent;
-    }
-
     private static double snapshotEpsilon(PrivatePoolingSnapshot snapshot) throws IOException {
         var charges = snapshot.releases().values().stream().mapToDouble(PrivatePoolingRelease::rowEpsilon)
                 .distinct().toArray();
@@ -142,7 +120,7 @@ public class PrivatePoolingService {
         return charges[0];
     }
 
-    private PrivatePoolingSnapshot calculateVersion(Path path, String hash, FileFilters request, double remaining) throws IOException {
+    private PrivatePoolingSnapshot calculateVersion(Path path, String hash, FileFilters request) throws IOException {
         String fileName = request.getFileName();
         int dot = fileName.lastIndexOf('.');
         if (dot < 0) return null;
@@ -151,14 +129,14 @@ public class PrivatePoolingService {
         try {
             // Bind the release to exactly the bytes that were scanned.
             Files.copy(path, input, StandardCopyOption.REPLACE_EXISTING);
-            return hash.equals(digest(input)) ? calculate(input, fileName, hash, request.getFilters(), remaining) : null;
+            return hash.equals(digest(input)) ? calculate(input, fileName, hash, request.getFilters()) : null;
         } finally {
             Files.deleteIfExists(input);
         }
     }
 
     private PrivatePoolingSnapshot calculate(Path path, String fileName, String hash,
-                                             Map<String, Object> filter, double remaining) throws IOException {
+                                             Map<String, Object> filter) throws IOException {
         var schema = new AtomicReference<PrivatePoolingPolicy>();
         var noisePlan = new AtomicReference<PrivatePoolingNoisePlan>();
         var firstHeaders = new AtomicReference<List<String>>();
@@ -174,7 +152,10 @@ public class PrivatePoolingService {
             var next = ClusterProfileSchema.fromHeaders(headers, fileName, hash);
             if (next == null || next.groupFor(filter, rows::matchesDiscoveryFilters) == null) return;
             var plan = PrivatePoolingNoisePlan.forFeatures(next.features(), random);
-            if (plan.rowEpsilon() > remaining) return;
+            if (plan.rowEpsilon() > maxDatasetEpsilon) {
+                throw new PrivatePoolingUnavailableException("dataset-budget-exceeded",
+                        "The configured protected-summary allowance is too small for this dataset's supported features.");
+            }
             schema.set(next);
             noisePlan.set(plan);
             for (String group : next.groups()) {

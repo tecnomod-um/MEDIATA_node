@@ -16,4 +16,10 @@ public record PrivatePoolingRelease(int version, String group, double rowEpsilon
     public String privacyScope() {
         return "protected-histograms-only";
     }
+
+    // Overlapping datasets and changed versions are not composed by this allowance.
+    @JsonProperty(value = "budgetScope", access = JsonProperty.Access.READ_ONLY)
+    public String budgetScope() {
+        return "dataset-version";
+    }
 }
