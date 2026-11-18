@@ -4,6 +4,9 @@ import java.security.SecureRandom;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
+// rowEpsilon accounts for adding or removing one row in the protected histograms.
+// Disjoint cluster partitions compose in parallel, features compose sequentially.
+// This budget does not account for the separate exact-statistics endpoints.
 record PrivatePoolingNoisePlan(Map<String, PrivateHistogramNoise> samplers, double rowEpsilon) {
     private static final double LOG_TWO = Math.log(2);
 

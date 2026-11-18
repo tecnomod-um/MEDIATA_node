@@ -43,6 +43,9 @@ class PrivatePoolingServiceTest {
         assertThat(first.features().get("Sex").noiseVariance()).isEqualTo(80.0 / 9);
         assertThat(empty.features()).containsOnlyKeys("Age", "Sex");
         assertThat(first.rowEpsilon()).isEqualTo(2 * Math.log(2));
+        var serialized = mapper.readTree(mapper.writeValueAsBytes(first));
+        assertThat(serialized.get("privacyUnit").asText()).isEqualTo("one-row-add-remove");
+        assertThat(serialized.get("privacyScope").asText()).isEqualTo("protected-histograms-only");
         assertThat(service.release(request("sample.csv", "Cluster ID", "1000"))).isEmpty();
         var restarted = new PrivatePoolingService(root.toString(), files, processor, mapper, 2 * Math.log(2));
         assertThat(restarted.release(request("sample.csv", "Cluster ID", "0.0"))).contains(first);
