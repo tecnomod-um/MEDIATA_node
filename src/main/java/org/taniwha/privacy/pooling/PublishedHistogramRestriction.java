@@ -15,7 +15,7 @@ final class PublishedHistogramRestriction {
             var histograms = new LinkedHashMap<String, PrivatePoolingHistogram>();
             release.features().forEach((name, histogram) -> histograms.put(name, restrict(histogram, published.get(name))));
             releases.put(group, new PrivatePoolingRelease(release.version(), release.group(), release.rowEpsilon(),
-                    release.noiseVariance(), histograms));
+                    release.noiseVariance(), histograms, release.selectionScope(), release.cohortCount()));
         });
         var old = snapshot.policy();
         var domains = new LinkedHashMap<String, PrivatePoolingDomain>();

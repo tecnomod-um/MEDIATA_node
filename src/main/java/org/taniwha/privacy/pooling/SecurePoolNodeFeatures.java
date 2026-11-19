@@ -27,13 +27,13 @@ final class SecurePoolNodeFeatures {
                     throw new IllegalArgumentException("The same dataset version and variable were selected more than once in this combination");
                 var nativeParts=members.stream().map(m->sources.get(m.fileName()).features().get(m.column())).toList();
                 if(nativeParts.stream().anyMatch(Objects::isNull)) throw new IllegalArgumentException("Mapped feature has no published protected domain");
-                var parts=nativeParts.stream().map(part->SecurePoolInterpretation.as(part,feature.type())).toList();
+                var parts=nativeParts.stream().map(part->ProtectedHistogramInterpretation.as(part,feature.type())).toList();
                 var domain=SecurePoolDomains.common(parts.stream().map(PrivatePoolingHistogram::domain).toList());
                 if(!domain.type().equals(feature.type())) throw new IllegalArgumentException("Selected type differs from the native domain");
                 long[] cells=new long[domain.size()];var components=new ArrayList<Double>();
                 for(int index=0;index<parts.size();index++) {
                     var part=parts.get(index);var member=members.get(index);var release=sources.get(member.fileName());
-                    long[] aligned=grids.rebin(List.of("native",member,release.group(),release.selectionScope()),part,domain);
+                    long[] aligned=grids.rebin(List.of("native",member.fileName(),member.column(),release.group(),release.selectionScope()),part,domain);
                     for(int i=0;i<cells.length;i++) cells[i]=Math.addExact(cells[i],aligned[i]);
                     components.addAll(SecurePoolDomains.offer(part,domain).noiseComponents());
                 }

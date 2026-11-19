@@ -38,7 +38,7 @@ public class PrivatePoolingService {
     @org.springframework.beans.factory.annotation.Autowired
     public PrivatePoolingService(@Value("${app.path}") String base, FileService files,
                                  DataProcessingService rows, ObjectMapper mapper, PrivatePoolingMetadata metadata,
-                                 @Value("${discovery.approximate-pooling.max-dataset-epsilon:2.772588722239781}") double maxDatasetEpsilon) {
+                                 @Value("${discovery.approximate-pooling.max-dataset-epsilon:80}") double maxDatasetEpsilon) {
         this(base, files, rows, mapper, metadata, maxDatasetEpsilon, "approximate-pooling");
     }
 
@@ -52,14 +52,14 @@ public class PrivatePoolingService {
         datasets = root.resolve("datasets");
         this.files = files;
         this.rows = rows;
-        this.profiler = new PrivateHistogramProfiler(rows, new SecureRandom());
+        this.profiler = new PrivateHistogramProfiler(rows, new SecureRandom(), namespace.equals("approximate-pooling"));
         this.metadata = metadata;
         this.mapper = mapper;
         this.maxDatasetEpsilon = maxDatasetEpsilon;
     }
 
     public Optional<PrivatePoolingRelease> release(FileFilters request) throws IOException {
-        return versionedRelease(request).map(VersionedPoolingRelease::release);
+        return versionedRelease(request).map(versioned -> ProtectedHistogramInterpretation.release(versioned.release(), request.getFeatureTypes()));
     }
 
     synchronized Optional<VersionedPoolingRelease> versionedRelease(FileFilters request) throws IOException {

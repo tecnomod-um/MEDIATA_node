@@ -26,6 +26,10 @@ final class PrivateHistogramNoise {
         return 2.0 * continuationNumerator * continuationDenominator / (stopNumerator * stopNumerator);
     }
 
+    double epsilon() {
+        return Math.log((double) continuationDenominator / continuationNumerator);
+    }
+
     private BigInteger geometric() {
         BigInteger value = BigInteger.ZERO;
         while (random.nextInt(continuationDenominator) < continuationNumerator) value = value.add(BigInteger.ONE);

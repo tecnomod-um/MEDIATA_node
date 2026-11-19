@@ -6,13 +6,18 @@ import java.util.Map;
 
 public record PrivatePoolingRelease(int version, String group, double rowEpsilon,
                                     @JsonInclude(JsonInclude.Include.NON_NULL) Double noiseVariance,
-                                    Map<String, PrivatePoolingHistogram> features, String selectionScope) {
+                                    Map<String, PrivatePoolingHistogram> features, String selectionScope,
+                                    @JsonInclude(JsonInclude.Include.NON_NULL) PrivatePoolingCount cohortCount) {
     public PrivatePoolingRelease {
         if (selectionScope == null) selectionScope = "group";
     }
     public PrivatePoolingRelease(int version, String group, double rowEpsilon, Double noiseVariance,
                                  Map<String, PrivatePoolingHistogram> features) {
-        this(version, group, rowEpsilon, noiseVariance, features, "group");
+        this(version, group, rowEpsilon, noiseVariance, features, "group", null);
+    }
+    public PrivatePoolingRelease(int version, String group, double rowEpsilon, Double noiseVariance,
+                                 Map<String, PrivatePoolingHistogram> features, String selectionScope) {
+        this(version, group, rowEpsilon, noiseVariance, features, selectionScope, null);
     }
     @JsonProperty(value = "privacyUnit", access = JsonProperty.Access.READ_ONLY)
     public String privacyUnit() {

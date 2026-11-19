@@ -5,14 +5,34 @@ import java.text.ParseException;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Map;
+import java.util.LinkedHashMap;
 import java.util.stream.IntStream;
 import org.taniwha.util.NumberUtil;
 
 /** Changes the interpretation of a cached release without reading rows or drawing new noise. */
-final class SecurePoolInterpretation {
-    private SecurePoolInterpretation() {}
+final class ProtectedHistogramInterpretation {
+    private ProtectedHistogramInterpretation() {}
+
+    static PrivatePoolingRelease release(PrivatePoolingRelease release, Map<String,String> types) {
+        if (types == null || types.isEmpty()) return release;
+        var features = new LinkedHashMap<>(release.features());
+        types.forEach((name,type) -> {
+            var input = features.get(name);
+            if (input == null) return;
+            try { features.put(name, as(input,type)); }
+            catch (IllegalArgumentException unsupported) {
+                // Retain the native domain so an unsupported interpretation
+                // cannot be mistaken for converted data or hide other fields.
+            }
+        });
+        return new PrivatePoolingRelease(release.version(),release.group(),release.rowEpsilon(),release.noiseVariance(),
+                Map.copyOf(features),release.selectionScope(),release.cohortCount());
+    }
 
     static PrivatePoolingHistogram as(PrivatePoolingHistogram input, String type) {
+        if (type == null || !List.of("continuous","categorical","date").contains(type))
+            throw new IllegalArgumentException("Invalid feature interpretation");
         var domain = input.domain();
         if (domain.type().equals(type)) return input;
         PrivatePoolingDomain interpreted;

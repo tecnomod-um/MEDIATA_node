@@ -26,7 +26,8 @@ final class SecurePoolRounds {
                         .sorted(Comparator.comparing(SecurePoolMember::fileName).thenComparing(SecurePoolMember::column)).toList();
                 // Padding depends on the saved private input and public grid,
                 // not incidental JSON ordering or spelling of the filter.
-                var counts=grids.rebin(List.of("aligned",members),input,field.domain());
+                var columns=members.stream().map(member->List.of(member.fileName(),member.column())).toList();
+                var counts=grids.rebin(List.of("aligned",columns),input,field.domain());
                 System.arraycopy(counts,0,values,offset,counts.length);
             }
             offset+=field.domain().size();

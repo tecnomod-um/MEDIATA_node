@@ -37,7 +37,8 @@ class PrivatePoolingIntegrationTest {
                 """;
         String first = mvc.perform(post("/api/data/approximatePool").contentType(MediaType.APPLICATION_JSON).content(request))
                 .andExpect(status().isOk()).andExpect(header().string("Cache-Control", "no-store"))
-                .andExpect(jsonPath("$.version").value(4)).andExpect(jsonPath("$.group").value("North"))
+                .andExpect(jsonPath("$.version").value(5)).andExpect(jsonPath("$.group").value("North"))
+                .andExpect(jsonPath("$.cohortCount.noiseVariance").isNumber())
                 .andExpect(jsonPath("$.privacyScope").value("protected-histograms-only"))
                 .andExpect(jsonPath("$.features.Reading.domain.type").value("continuous"))
                 .andExpect(jsonPath("$.features['Recorded on'].domain.type").value("date"))

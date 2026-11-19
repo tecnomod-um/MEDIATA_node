@@ -30,6 +30,17 @@ final class WholeDatasetRelease {
                     components.stream().mapToDouble(Double::doubleValue).sum(),List.copyOf(components)));
         });
         double epsilon=snapshot.releases().values().iterator().next().rowEpsilon();
-        return new PrivatePoolingRelease(4,"all",epsilon,null,histograms,"dataset");
+        PrivatePoolingCount cohort = null;
+        if (snapshot.releases().values().stream().allMatch(release -> release.cohortCount() != null)) {
+            long count = 0;
+            var components = new ArrayList<Double>();
+            for (var release : snapshot.releases().values()) {
+                count = Math.addExact(count, release.cohortCount().count());
+                components.addAll(release.cohortCount().noiseComponents());
+            }
+            if (Math.abs(count) > 1_000_000_000L) throw new PrivatePoolingUnavailableException("whole-release-too-large", "Combined protected cohort exceeds the supported count representation.");
+            cohort = new PrivatePoolingCount(count, components.stream().mapToDouble(Double::doubleValue).sum(), List.copyOf(components));
+        }
+        return new PrivatePoolingRelease(cohort == null ? 4 : 5,"all",epsilon,null,histograms,"dataset",cohort);
     }
 }

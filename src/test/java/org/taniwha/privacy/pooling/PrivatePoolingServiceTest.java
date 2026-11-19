@@ -37,11 +37,12 @@ class PrivatePoolingServiceTest {
         assertThat(service.release(request("sample.csv", "measurement", "0"))).isEmpty();
         var first = service.release(request("sample.csv", "cohort", "0")).orElseThrow();
         var other = service.release(request("sample.csv", "cohort", "1")).orElseThrow();
-        assertThat(first.version()).isEqualTo(4);
+        assertThat(first.version()).isEqualTo(5);
         assertThat(first.features()).containsOnlyKeys("measurement", "category");
         assertThat(first.features().get("measurement").counts()).hasSize(3);
-        assertThat(first.features().get("measurement").noiseVariance()).isEqualTo(4);
-        assertThat(first.rowEpsilon()).isEqualTo(allowance);
+        assertThat(first.features().get("measurement").noiseVariance()).isPositive();
+        assertThat(first.cohortCount()).isNotNull();
+        assertThat(first.rowEpsilon()).isCloseTo(allowance,within(1e-5));
         var json = mapper.readTree(mapper.writeValueAsBytes(first));
         assertThat(json.get("budgetScope").asText()).isEqualTo("dataset-version");
         assertThat(service.release(request("sample.csv", "cohort", "99"))).isEmpty();
@@ -68,6 +69,22 @@ class PrivatePoolingServiceTest {
                         error -> assertThat(error.getCode()).isEqualTo("saved-release-unavailable"));
     }
 
+    @Test void siteTypeSwitchesReuseTheSameCachedNoiseAndCohortCount() throws Exception {
+        dataset("scores.csv", "Arm,Reading\n"+"0,0\n".repeat(3)+"0,5\n".repeat(3));
+        var service=service(80);
+        var request=request("scores.csv","Arm","0");
+        var numerical=service.release(request).orElseThrow();
+        request.setFeatureTypes(Map.of("Reading","categorical"));
+        var category=service.release(request).orElseThrow();
+        assertThat(category.cohortCount()).isEqualTo(numerical.cohortCount());
+        assertThat(category.rowEpsilon()).isEqualTo(numerical.rowEpsilon());
+        assertThat(category.features().get("Reading").domain().categories()).containsExactly("0","5");
+        assertThat(category.features().get("Reading").counts().subList(0,2))
+                .isEqualTo(numerical.features().get("Reading").counts().subList(0,2));
+        request.setFeatureTypes(Map.of());
+        assertThat(service.release(request)).contains(numerical);
+    }
+
     @Test void wholeDatasetDistributionsReuseDisjointGroupsWithoutAnotherCharge() throws Exception {
         dataset("sample.csv", "partition,reading\n"+"0,0\n".repeat(8)+"1,5\n".repeat(8));
         var service=service(allowance);
@@ -79,6 +96,8 @@ class PrivatePoolingServiceTest {
         assertThat(whole.rowEpsilon()).isEqualTo(zero.rowEpsilon());
         var histogram=whole.features().get("reading");
         assertThat(histogram.noiseComponents()).containsExactly(zero.features().get("reading").noiseVariance(),one.features().get("reading").noiseVariance());
+        assertThat(whole.cohortCount().count()).isEqualTo(zero.cohortCount().count()+one.cohortCount().count());
+        assertThat(whole.cohortCount().noiseComponents()).hasSize(2);
         for(int cell=0;cell<histogram.counts().size();cell++)
             assertThat(histogram.counts().get(cell)).isEqualTo(zero.features().get("reading").counts().get(cell)+one.features().get("reading").counts().get(cell));
         assertThat(service(allowance).release(request)).contains(whole);

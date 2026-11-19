@@ -128,6 +128,30 @@ class SecurePoolServiceTest {
         assertThat(result.unavailable().get("reading")).contains("same dataset version");
     }
 
+    @Test void registrationChangesDoNotCreateFreshPaddingForTheSameLocalInputs() throws Exception {
+        var services=services();var first=manifest("continuous");
+        var original=complete(services,first,ids);
+        long before;
+        try(var files=java.nio.file.Files.walk(root)) {before=files.filter(p->p.toString().endsWith(".json")).count();}
+        var renamed=ids.stream().map(id->id+"-restart").toList();
+        var restarted=new SecurePoolManifest(UUID.randomUUID().toString(),System.currentTimeMillis(),
+                java.util.stream.IntStream.range(0,3).mapToObj(i->new SecurePoolParticipant(renamed.get(i),keys.get(i).getPublicKeyBase64())).toList(),
+                renamed.stream().map(id->new SecurePoolSource(id,"input.csv",Map.of())).toList(),
+                List.of(new SecurePoolFeature("reading","continuous",renamed.stream().map(id->new SecurePoolMember(id,"input.csv","Value")).toList())));
+        assertThat(complete(services,restarted,renamed).features()).isEqualTo(original.features());
+        try(var files=java.nio.file.Files.walk(root)) {
+            assertThat(files.filter(p->p.toString().endsWith(".json")).count()).isEqualTo(before);
+        }
+    }
+
+    private SecurePoolResult complete(List<SecurePoolService> services,SecurePoolManifest manifest,List<String> nodeIds) throws Exception {
+        var offers=new ArrayList<SecurePoolEnvelope>();
+        for(int i=0;i<services.size();i++)offers.add(services.get(i).prepare(new SecurePoolPrepareRequest(mapper.writeValueAsString(manifest),nodeIds.get(i))));
+        var packets=new ArrayList<SecurePoolEnvelope>();
+        for(var service:services)packets.add(service.mask(new SecurePoolRoundRequest(manifest.sessionId(),offers)));
+        return services.get(0).finish(new SecurePoolFinishRequest(manifest.sessionId(),offers,packets));
+    }
+
     private List<SecurePoolService> services() throws Exception {
         var result=new ArrayList<SecurePoolService>();
         for(int i=0;i<ids.size();i++) {
