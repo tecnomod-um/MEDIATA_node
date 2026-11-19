@@ -10,7 +10,7 @@ import java.util.List;
 import java.util.Optional;
 import java.util.stream.IntStream;
 
-/** Converts the node's disclosure-approved, unfiltered element metadata into fixed domains. */
+// Converts the node's disclosure-approved, unfiltered element metadata into fixed domains.
 final class PrivatePoolingDomainFactory {
     private static final int MAX_POINTS = 128;
     private static final int TARGET_BINS = 32;

@@ -12,7 +12,7 @@ import java.security.spec.X509EncodedKeySpec;
 import java.util.Base64;
 import java.util.HexFormat;
 
-/** Full-participation pairwise masks: X25519, HKDF-SHA256, AES-256-CTR. */
+// Full-participation pairwise masks: X25519, HKDF-SHA256, AES-256-CTR.
 final class SecurePoolCrypto {
     private SecurePoolCrypto() {}
 

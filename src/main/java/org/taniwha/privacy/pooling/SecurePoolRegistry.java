@@ -8,7 +8,7 @@ import org.taniwha.util.KeyPairUtil;
 import java.net.URI;
 import java.util.*;
 
-/** Bind peers to registered node identities, not keys supplied by a browser. */
+// Bind peers to registered node identities, not keys supplied by a browser.
 @Component
 public class SecurePoolRegistry {
     private final org.springframework.web.client.RestTemplate http;

@@ -5,7 +5,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
-/** Reuses saved noise while applying the node's current, unfiltered public schema. */
+// Reuses saved noise while applying the node's current, unfiltered public schema.
 final class PublishedHistogramRestriction {
     private PublishedHistogramRestriction() {}
 

@@ -3,7 +3,7 @@ package org.taniwha.privacy.pooling;
 import java.security.SecureRandom;
 import java.util.*;
 
-/** Common grids only coarsen released intervals; they never split hidden counts. */
+// Common grids only coarsen released intervals; they never split hidden counts.
 final class SecurePoolDomains {
     private SecurePoolDomains() {}
 

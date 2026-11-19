@@ -4,7 +4,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 
-/** Post-processes disjoint saved groups; it does not sample or spend again. */
+// Post-processes disjoint saved groups; it does not sample or spend again.
 final class WholeDatasetRelease {
     private WholeDatasetRelease() {}
 

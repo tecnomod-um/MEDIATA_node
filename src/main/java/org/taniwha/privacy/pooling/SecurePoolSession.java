@@ -4,7 +4,7 @@ import java.security.KeyPair;
 import java.time.Instant;
 import java.util.Map;
 
-/** Ephemeral keys and node-local protected inputs never enter a response DTO. */
+// Ephemeral keys and node-local protected inputs never enter a response DTO.
 final class SecurePoolSession {
     final SecurePoolManifest manifest;
     final String manifestHash;

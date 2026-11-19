@@ -4,7 +4,8 @@ import java.security.SecureRandom;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
-/** Allocate noise by public histogram sizes, including an independent cohort count. */
+// Allocate noise by public histogram sizes, including an independent cohort count.
+// The default site allowance of 80 favors utility and provides weak row-level privacy.
 record PrivateSiteNoisePlan(Map<String, PrivateHistogramNoise> samplers,
                             PrivateHistogramNoise cohort, double rowEpsilon) {
     private static final int DENOMINATOR = 1 << 30;

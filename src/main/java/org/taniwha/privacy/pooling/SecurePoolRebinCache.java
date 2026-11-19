@@ -10,7 +10,7 @@ import java.nio.file.attribute.PosixFilePermissions;
 import java.security.SecureRandom;
 import java.util.List;
 
-/** Persist data-free grid padding too, so refreshes reproduce the same result. */
+// Persist data-free grid padding too, so refreshes reproduce the same result.
 @Component
 public class SecurePoolRebinCache {
     private final Path directory;

@@ -10,7 +10,7 @@ import java.util.LinkedHashMap;
 import java.util.stream.IntStream;
 import org.taniwha.util.NumberUtil;
 
-/** Changes the interpretation of a cached release without reading rows or drawing new noise. */
+// Changes the interpretation of a cached release without reading rows or drawing new noise.
 final class ProtectedHistogramInterpretation {
     private ProtectedHistogramInterpretation() {}
 

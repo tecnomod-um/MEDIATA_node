@@ -9,7 +9,7 @@ import org.taniwha.service.FileService;
 import org.taniwha.service.DatasetElementExtractionService;
 import java.io.IOException;
 
-/** Independent, durable protected inputs exposed only through masked rounds. */
+// Independent, durable protected inputs exposed only through masked rounds.
 @Component
 public class SecurePoolInputs {
     private final PrivatePoolingService store;

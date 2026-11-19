@@ -8,12 +8,7 @@ import java.security.*;
 import java.time.Instant;
 import java.util.*;
 
-/**
- * Node-local orchestration; private inputs and ephemeral keys stay in this JVM.
- * Relay confidentiality assumes a trusted identity registry and non-colluding
- * contributing nodes. Dropouts abort; this is not a Byzantine-resilient protocol.
- * Cached protected inputs also limit disclosure from the aggregate itself.
- */
+// Coordinate masked rounds; private inputs stay on the node and every participant must complete the round.
 @Service
 public class SecurePoolService {
     private static final org.slf4j.Logger logger=org.slf4j.LoggerFactory.getLogger(SecurePoolService.class);
@@ -40,6 +35,7 @@ public class SecurePoolService {
             return existing.offer;
         }
         if(sessions.size()>=32) throw new IllegalStateException("Secure pooling is busy; retry after a session completes");
+        // Contribution secrecy assumes a trusted registry and non-colluding nodes.
         registry.verify(request.nodeId(),manifest.participants());
         var data=SecurePoolNodeFeatures.read(manifest,request.nodeId(),inputs,grids);
         var exchange=SecurePoolCrypto.exchangeKey();

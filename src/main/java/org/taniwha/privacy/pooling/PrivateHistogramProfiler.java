@@ -11,7 +11,7 @@ import java.util.HashSet;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.IntStream;
 
-/** Streams immutable node-local rows into a fixed protected release. */
+// Streams immutable node-local rows into a fixed protected release.
 final class PrivateHistogramProfiler {
     private static final int VERSION = 4;
     private final DataProcessingService rows;

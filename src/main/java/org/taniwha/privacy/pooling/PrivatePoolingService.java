@@ -23,6 +23,7 @@ import java.security.SecureRandom;
 import java.util.HexFormat;
 import java.util.Optional;
 
+// Cache noisy releases per dataset version; exact outputs and overlapping patient records are outside this accounting.
 @Service
 public class PrivatePoolingService {
     private static final double HISTORICAL_ALLOWANCE = 4 * Math.log(2);
