@@ -18,6 +18,10 @@ final class PrivatePoolingDomainFactory {
     private PrivatePoolingDomainFactory() {}
 
     static Optional<PrivatePoolingDomain> fromElement(DatasetElementDTO element) {
+        return fromElement(element,MAX_POINTS);
+    }
+
+    static Optional<PrivatePoolingDomain> fromElement(DatasetElementDTO element,int maxPoints) {
         List<String> values = element.getValues();
         String declared = element.getDataType();
         if (values == null || values.isEmpty() || "text".equals(declared)
@@ -26,11 +30,11 @@ final class PrivatePoolingDomainFactory {
             PrivatePoolingDomain domain;
             if (!"categorical".equals(declared) && values.size() == 3 && (values.get(0).equals("integer") || values.get(0).equals("double"))) {
                 domain = numerical(number(values.get(1), "min:"), number(values.get(2), "max:"),
-                        values.get(0).equals("integer") || element.getIntegerStep() != null, "continuous", element.getIntegerStep());
+                        values.get(0).equals("integer") || element.getIntegerStep() != null, "continuous", element.getIntegerStep(),maxPoints);
             } else if (!"categorical".equals(declared) && values.size() == 3 && values.get(0).equals("date")) {
                 double min = date(values.get(1), "earliest:");
                 double max = date(values.get(2), "latest:");
-                domain = numerical(min, max, true, "date", 1L);
+                domain = numerical(min, max, true, "date", 1L,maxPoints);
             } else {
                 domain = new PrivatePoolingDomain(null, values.stream().distinct().sorted().toList());
             }
@@ -53,13 +57,13 @@ final class PrivatePoolingDomainFactory {
         return DateUtil.parseDate(value.substring(prefix.length())).orElseThrow().toLocalDate().toEpochDay();
     }
 
-    private static PrivatePoolingDomain numerical(double min, double max, boolean integer, String type, Long publishedStep) {
+    private static PrivatePoolingDomain numerical(double min, double max, boolean integer, String type, Long publishedStep,int maxPoints) {
         if (!Double.isFinite(min) || !Double.isFinite(max) || min > max || Math.abs(min) > 1e9 || Math.abs(max) > 1e9) {
             throw new IllegalArgumentException("Invalid numerical limits");
         }
         long step = publishedStep == null ? 1 : publishedStep;
         if (step <= 0 || (integer && (max - min) % step != 0)) throw new IllegalArgumentException("Invalid integer step");
-        if (min == max || (integer && min == Math.rint(min) && max == Math.rint(max) && (max - min) / step < MAX_POINTS)) {
+        if (min == max || (integer && min == Math.rint(min) && max == Math.rint(max) && (max - min) / step < maxPoints)) {
             List<Double> points = IntStream.rangeClosed(0, (int) ((max - min) / step)).mapToObj(i -> min + i * step).toList();
             var edges = new ArrayList<Double>();
             edges.add(Math.max(-1e9, min - step / 2.0));

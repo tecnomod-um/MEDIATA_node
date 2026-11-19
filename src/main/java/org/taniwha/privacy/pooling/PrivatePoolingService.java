@@ -35,14 +35,20 @@ public class PrivatePoolingService {
     private final double maxDatasetEpsilon;
     private final PrivateHistogramProfiler profiler;
 
+    @org.springframework.beans.factory.annotation.Autowired
     public PrivatePoolingService(@Value("${app.path}") String base, FileService files,
                                  DataProcessingService rows, ObjectMapper mapper, PrivatePoolingMetadata metadata,
                                  @Value("${discovery.approximate-pooling.max-dataset-epsilon:2.772588722239781}") double maxDatasetEpsilon) {
+        this(base, files, rows, mapper, metadata, maxDatasetEpsilon, "approximate-pooling");
+    }
+
+    PrivatePoolingService(String base, FileService files, DataProcessingService rows, ObjectMapper mapper,
+                          PrivatePoolingMetadata metadata, double maxDatasetEpsilon, String namespace) {
         if (!Double.isFinite(maxDatasetEpsilon) || maxDatasetEpsilon <= 0) {
             throw new IllegalArgumentException("Private pooling budget must be finite and positive");
         }
         Path root = Path.of(base).toAbsolutePath().normalize();
-        directory = root.resolve("discovery-privacy").resolve("approximate-pooling");
+        directory = root.resolve("discovery-privacy").resolve(namespace);
         datasets = root.resolve("datasets");
         this.files = files;
         this.rows = rows;
@@ -52,7 +58,11 @@ public class PrivatePoolingService {
         this.maxDatasetEpsilon = maxDatasetEpsilon;
     }
 
-    public synchronized Optional<PrivatePoolingRelease> release(FileFilters request) throws IOException {
+    public Optional<PrivatePoolingRelease> release(FileFilters request) throws IOException {
+        return versionedRelease(request).map(VersionedPoolingRelease::release);
+    }
+
+    synchronized Optional<VersionedPoolingRelease> versionedRelease(FileFilters request) throws IOException {
         if (request == null || !PrivatePoolingPolicy.validName(request.getFileName())) {
             return Optional.empty();
         }
@@ -152,7 +162,8 @@ public class PrivatePoolingService {
                             "The saved release and its durable privacy accounting disagree. Node review is required.");
                 if (current > recorded + 1e-9) writeCharge(published, current);
             }
-            return Optional.ofNullable(whole ? WholeDatasetRelease.from(snapshot) : snapshot.releases().get(group));
+            return Optional.ofNullable(whole ? WholeDatasetRelease.from(snapshot) : snapshot.releases().get(group))
+                    .map(release->new VersionedPoolingRelease(hash,release));
         }
     }
 

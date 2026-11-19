@@ -14,9 +14,16 @@ import java.util.Map;
 @Component
 public class PrivatePoolingMetadata {
     private final DatasetElementExtractionService elements;
+    private final int maxPoints;
 
+    @org.springframework.beans.factory.annotation.Autowired
     public PrivatePoolingMetadata(DatasetElementExtractionService elements) {
+        this(elements,128);
+    }
+
+    PrivatePoolingMetadata(DatasetElementExtractionService elements,int maxPoints) {
         this.elements = elements;
+        this.maxPoints=maxPoints;
     }
 
     PrivatePoolingPolicy policy(Path input, String file, String hash, Map<String, Object> filter) throws IOException {
@@ -26,8 +33,11 @@ public class PrivatePoolingMetadata {
                 || !(column.get("conditions") instanceof List<?> selection) || selection.size() != 1
                 || !(selection.get(0) instanceof Map<?, ?> criterion)
                 || !(criterion.get("filterType") instanceof String groupType)) return null;
-        Map<String, PrivatePoolingDomain> domains = domains(input, file);
-        PrivatePoolingDomain grouping = domains.remove(groupBy);
+        var published = elements.extractDatasetElements(file, input).getElements();
+        Map<String, PrivatePoolingDomain> domains = domains(published);
+        PrivatePoolingDomain grouping = published.stream().filter(element->groupBy.equals(element.getColumn()))
+                .findFirst().flatMap(PrivatePoolingDomainFactory::fromElement).orElse(null);
+        domains.remove(groupBy);
         if (grouping == null || domains.isEmpty()) return null;
         if (!grouping.type().equals(groupType)) return null;
         if (domains.size() > 256) throw new PrivatePoolingUnavailableException("unsupported-feature-count",
@@ -49,10 +59,14 @@ public class PrivatePoolingMetadata {
     }
 
     Map<String, PrivatePoolingDomain> domains(Path input, String file) throws IOException {
+        return domains(elements.extractDatasetElements(file,input).getElements());
+    }
+
+    private Map<String,PrivatePoolingDomain> domains(List<org.taniwha.dto.DatasetElementDTO> published) {
         Map<String, PrivatePoolingDomain> domains = new LinkedHashMap<>();
-        for (var element : elements.extractDatasetElements(file, input).getElements()) {
+        for (var element : published) {
             if (PrivatePoolingPolicy.validName(element.getColumn()))
-                PrivatePoolingDomainFactory.fromElement(element).ifPresent(domain -> domains.put(element.getColumn(), domain));
+                PrivatePoolingDomainFactory.fromElement(element,maxPoints).ifPresent(domain -> domains.put(element.getColumn(), domain));
         }
         return domains;
     }
