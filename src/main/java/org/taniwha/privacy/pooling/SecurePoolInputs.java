@@ -23,10 +23,6 @@ public class SecurePoolInputs {
         store=new PrivatePoolingService(base,files,rows,mapper,new PrivatePoolingMetadata(extraction,32),4*Math.log(2),"secure-pooling");
     }
 
-    public PrivatePoolingRelease release(SecurePoolSource source) throws IOException {
-        return versionedSource(source).release();
-    }
-
     VersionedPoolingRelease versionedSource(SecurePoolSource source) throws IOException {
         FileFilters request=new FileFilters();request.setFileName(source.fileName());request.setFilters(source.filters());
         return store.versionedRelease(request).orElseThrow(()->new PrivatePoolingUnavailableException("secure-pool-unsupported-filter",

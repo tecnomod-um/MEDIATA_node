@@ -23,16 +23,16 @@ class SecurePoolInputsTest {
         var filters=Map.<String,Object>of("operator","AND","conditions",Map.of("Partition",Map.of("operators",List.of(),
                 "conditions",List.of(Map.of("type","equal","filterType","continuous","value","1")))));
         var source=new SecurePoolSource("alpha","input.csv",filters);
-        var first=new SecurePoolInputs(root.toString(),files,rows,mapper,extraction).release(source);
+        var first=new SecurePoolInputs(root.toString(),files,rows,mapper,extraction).versionedSource(source).release();
         var restarted=new SecurePoolInputs(root.toString(),files,rows,mapper,extraction);
-        assertThat(restarted.release(source)).isEqualTo(first);
+        assertThat(restarted.versionedSource(source).release()).isEqualTo(first);
         assertThat(first.rowEpsilon()).isLessThanOrEqualTo(4*Math.log(2));
         assertThat(Files.exists(root.resolve("discovery-privacy/approximate-pooling"))).isFalse();
         assertThat(Files.exists(root.resolve("discovery-privacy/registry.json"))).isFalse();
-        var whole=restarted.release(new SecurePoolSource("alpha","input.csv",null));
+        var whole=restarted.versionedSource(new SecurePoolSource("alpha","input.csv",null)).release();
         assertThat(whole.selectionScope()).isEqualTo("dataset");
         assertThat(whole.rowEpsilon()).isEqualTo(first.rowEpsilon());
-        assertThat(restarted.release(source)).isEqualTo(first);
+        assertThat(restarted.versionedSource(source).release()).isEqualTo(first);
     }
 
     @Test void cachedPaddingSurvivesRestartAndIsScopedByFeatureIdentity() throws Exception {
@@ -58,7 +58,7 @@ class SecurePoolInputsTest {
         var filters=Map.<String,Object>of("operator","AND","conditions",Map.of("Partition",Map.of("operators",List.of(),
                 "conditions",List.of(Map.of("type","equal","filterType","continuous","value","48")))));
         var release=new SecurePoolInputs(root.toString(),files,rows,mapper,extraction)
-                .release(new SecurePoolSource("alpha","groups.csv",filters));
+                .versionedSource(new SecurePoolSource("alpha","groups.csv",filters)).release();
         assertThat(release.group()).isEqualTo("48");
         assertThat(release.features().get("Reading").domain().values()).containsExactly(0.,5.);
     }

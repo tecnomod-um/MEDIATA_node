@@ -18,10 +18,6 @@ final class PrivateHistogramProfiler {
     private final SecureRandom random;
     private final boolean siteSummary;
 
-    PrivateHistogramProfiler(DataProcessingService rows, SecureRandom random) {
-        this(rows, random, false);
-    }
-
     PrivateHistogramProfiler(DataProcessingService rows, SecureRandom random, boolean siteSummary) {
         this.rows=rows;
         this.random=random;
