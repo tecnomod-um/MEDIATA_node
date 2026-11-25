@@ -49,5 +49,17 @@ class PrivatePoolingIntegrationTest {
         var histogram = mapper.readTree(first).get("features").get("Reading");
         assertThat(histogram.get("counts").size()).isEqualTo(histogram.get("domain").get("boundaries").size());
         assertThat(mapper.readTree(first).has("rows")).isFalse();
+        assertThat(histogram.get("domain").get("missingAllowed").asBoolean()).isFalse();
+        String switchedRequest = request.replace("\"fileName\":", "\"featureTypes\":{\"Reading\":\"categorical\"},\"fileName\":");
+        String switched = mvc.perform(post("/api/data/approximatePool").contentType(MediaType.APPLICATION_JSON).content(switchedRequest))
+                .andExpect(status().isOk()).andReturn().getResponse().getContentAsString();
+        var switchedRelease = mapper.readTree(switched);
+        assertThat(switchedRelease.get("cohortCount")).isEqualTo(mapper.readTree(first).get("cohortCount"));
+        assertThat(switchedRelease.get("rowEpsilon")).isEqualTo(mapper.readTree(first).get("rowEpsilon"));
+        assertThat(switchedRelease.get("features").get("Reading").get("domain").get("type").asText())
+                .isEqualTo("categorical");
+        String restored = mvc.perform(post("/api/data/approximatePool").contentType(MediaType.APPLICATION_JSON).content(request))
+                .andExpect(status().isOk()).andReturn().getResponse().getContentAsString();
+        assertThat(mapper.readTree(restored)).isEqualTo(mapper.readTree(first));
     }
 }

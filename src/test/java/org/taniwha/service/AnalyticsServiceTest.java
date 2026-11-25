@@ -14,6 +14,7 @@ import org.taniwha.dto.ProcessingStatusDTO;
 import org.taniwha.service.jobs.AnalyticsProcessingJobs;
 import org.taniwha.privacy.DiscoveryDisclosureService;
 import org.taniwha.privacy.DisclosureObservation;
+import org.taniwha.statistics.CategoricalFeatureStatistics;
 
 import java.io.IOException;
 import java.nio.file.Files;
@@ -127,6 +128,34 @@ class AnalyticsServiceTest {
                 .singleElement()
                 .extracting("featureName", "count", "reason")
                 .containsExactly("col1", 0L, "Suppressed for privacy: 5 or fewer observations");
+    }
+
+    @Test
+    void releasedPopulationCountsPreserveMissingnessAcrossFeatureTypeChanges() throws Exception {
+        String filename = "measurements.csv";
+        when(fileService.getDatasetFilePath(filename)).thenReturn("/tmp/" + filename);
+        List<Map<String, String>> rows = new ArrayList<>();
+        rows.addAll(Collections.nCopies(8, Map.of("Reading", "5", "Arm", "North")));
+        rows.addAll(Collections.nCopies(8, Map.of("Reading", "", "Arm", "South")));
+        rows.addAll(Collections.nCopies(8, Map.of("Reading", "10", "Arm", "")));
+        stubStreamRows(filename, rows);
+
+        var numerical = analyticsService.filterDataByName(filename, null, Map.of("Reading", "continuous"));
+        var reading = numerical.getContinuousFeatures().stream()
+                .filter(feature -> feature.getFeatureName().equals("Reading")).findFirst().orElseThrow();
+        assertThat(reading.getCount()).isEqualTo(16);
+        assertThat(reading.getMissingValuesCount()).isEqualTo(8);
+        var arm = numerical.getCategoricalFeatures().stream()
+                .filter(feature -> feature.getFeatureName().equals("Arm")).findFirst().orElseThrow();
+        assertThat(arm.getCount() + arm.getMissingValuesCount()).isEqualTo(24);
+
+        var categorical = analyticsService.filterDataByName(filename, null, Map.of("Reading", "categorical"));
+        var converted = categorical.getCategoricalFeatures().stream()
+                .filter(feature -> feature.getFeatureName().equals("Reading")).findFirst().orElseThrow();
+        assertThat(converted.getCount()).isEqualTo(reading.getCount());
+        assertThat(converted.getMissingValuesCount()).isEqualTo(reading.getMissingValuesCount());
+        assertThat(((CategoricalFeatureStatistics) converted).getCategoryCounts().values().stream().mapToInt(Integer::intValue).sum())
+                .isEqualTo(converted.getCount());
     }
 
     @Test

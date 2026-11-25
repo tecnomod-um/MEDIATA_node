@@ -133,13 +133,18 @@ public class PrivatePoolingService {
                     var old = snapshot.policy();
                     domains.remove(old.groupBy());
                     double available = maxDatasetEpsilon - spent;
-                    double minimum = domains.size() * Math.log(1024.0 / 1023);
+                    double minimum = profiler.minimumAllowance(domains.size());
                     if (!domains.isEmpty() && domains.size() <= 256 && available >= minimum) {
                         var policy = new PrivatePoolingPolicy(request.getFileName(), hash, old.groupBy(), old.groupType(), old.groups(), domains);
                         policy.validate();
-                        snapshot = profiler.calculate(input, policy, available, spent, maxDatasetEpsilon);
-                        store(state, snapshot);
+                        if (!domains.equals(old.features()) || profiler.improves(snapshot, available)) {
+                            snapshot = profiler.calculate(input, policy, available, spent, maxDatasetEpsilon);
+                        }
                     }
+                    // Remember the evaluated cap without spending it or rescanning the data on every request.
+                    snapshot = new PrivatePoolingSnapshot(snapshot.policy(), snapshot.releases(), snapshot.metadataVersion(),
+                            maxDatasetEpsilon, snapshot.coversDataset());
+                    store(state, snapshot);
                 } finally { Files.deleteIfExists(input); }
             }
             if (!alreadyPublished) {

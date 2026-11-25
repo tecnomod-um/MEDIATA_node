@@ -131,6 +131,42 @@ class PrivatePoolingServiceTest {
         assertThat(Files.readString(state)).isEqualTo(original);
     }
 
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(doubles = {20.0001, 25})
+    void increasingTheCapDoesNotReplaceUsefulStatisticsWithNoisierCounts(double cap) throws Exception {
+        Path file = dataset("measurements.csv", "Partition,Reading,Arm\n"
+                + "0,5,North\n".repeat(8) + "1,10,South\n".repeat(8));
+        var first = service(20).release(request("measurements.csv", "Partition", "0")).orElseThrow();
+        var other = service(20).release(request("measurements.csv", "Partition", "1")).orElseThrow();
+        String hash = HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(Files.readAllBytes(file)));
+        Path state = root.resolve("discovery-privacy/approximate-pooling/" + hash + ".json");
+        Path charge = state.resolveSibling(hash + ".published");
+        String saved = Files.readString(state), spent = Files.readString(charge);
+
+        var increased = service(cap);
+        assertThat(increased.release(request("measurements.csv", "Partition", "0"))).contains(first);
+        assertThat(increased.release(request("measurements.csv", "Partition", "1"))).contains(other);
+        var categorical = request("measurements.csv", "Partition", "0");
+        categorical.setFeatureTypes(Map.of("Reading", "categorical"));
+        var converted = increased.release(categorical).orElseThrow();
+        assertThat(converted.cohortCount()).isEqualTo(first.cohortCount());
+        assertThat(converted.rowEpsilon()).isEqualTo(first.rowEpsilon());
+        var expected = mapper.readTree(saved);
+        ((com.fasterxml.jackson.databind.node.ObjectNode) expected).put("allocatedAllowance", cap);
+        assertThat(mapper.readTree(Files.readString(state))).isEqualTo(expected);
+        assertThat(Files.readString(charge)).isEqualTo(spent);
+        String checked = Files.readString(state);
+        assertThat(service(cap).release(request("measurements.csv", "Partition", "0"))).contains(first);
+        assertThat(Files.readString(state)).isEqualTo(checked);
+
+        var improved = service(50).release(request("measurements.csv", "Partition", "0")).orElseThrow();
+        assertThat(improved.cohortCount().noiseVariance()).isLessThan(first.cohortCount().noiseVariance());
+        first.features().forEach((name, histogram) ->
+                assertThat(improved.features().get(name).noiseVariance()).isLessThan(histogram.noiseVariance()));
+        assertThat(improved.rowEpsilon()).isGreaterThan(first.rowEpsilon()).isLessThanOrEqualTo(50);
+        assertThat(service(50).release(request("measurements.csv", "Partition", "0"))).contains(improved);
+    }
+
     @Test void savedReleasesGainPublishedSchemaConstraintsWithoutRerollingTheRetainedCells() throws Exception {
         Path data = dataset("sample.csv", "partition,reading\n"+"0,0\n".repeat(8)+"1,5\n".repeat(8));
         String hash = HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(Files.readAllBytes(data)));

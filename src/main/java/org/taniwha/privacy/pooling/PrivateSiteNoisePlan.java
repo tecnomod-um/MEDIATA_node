@@ -45,6 +45,25 @@ record PrivateSiteNoisePlan(Map<String, PrivateHistogramNoise> samplers,
         return new PrivateSiteNoisePlan(Map.copyOf(samplers), cohort, cost);
     }
 
+    // Replace a release only when every existing channel is at least as precise and one improves.
+    boolean improves(PrivatePoolingRelease previous) {
+        if (!samplers.keySet().equals(previous.features().keySet())) return false;
+        boolean improves = previous.cohortCount() == null;
+        for (var entry : samplers.entrySet()) {
+            Double variance = previous.features().get(entry.getKey()).noiseVariance();
+            if (variance == null) variance = previous.noiseVariance();
+            if (variance == null || !Double.isFinite(variance) || variance <= 0 || entry.getValue().variance() > variance)
+                return false;
+            improves |= entry.getValue().variance() < variance;
+        }
+        if (previous.cohortCount() != null) {
+            double variance = previous.cohortCount().noiseVariance();
+            if (!Double.isFinite(variance) || variance <= 0 || cohort.variance() > variance) return false;
+            improves |= cohort.variance() < variance;
+        }
+        return improves;
+    }
+
     private static PrivateHistogramNoise sampler(SecureRandom random, double epsilon) {
         int numerator = Math.max(1, (int) Math.ceil(Math.exp(-epsilon) * DENOMINATOR));
         return new PrivateHistogramNoise(random, numerator, DENOMINATOR);

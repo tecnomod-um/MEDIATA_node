@@ -24,6 +24,16 @@ final class PrivateHistogramProfiler {
         this.siteSummary=siteSummary;
     }
 
+    boolean improves(PrivatePoolingSnapshot previous, double available) {
+        if (!siteSummary) return true;
+        var plan = PrivateSiteNoisePlan.create(previous.policy().features(), random, available);
+        return previous.releases().values().stream().allMatch(plan::improves);
+    }
+
+    double minimumAllowance(int features) {
+        return (features + (siteSummary ? 1 : 0)) * Math.log(1024.0 / 1023);
+    }
+
     PrivatePoolingSnapshot calculate(Path path, PrivatePoolingPolicy policy, double available, double spent, double configuredAllowance) throws IOException {
         var site = siteSummary ? PrivateSiteNoisePlan.create(policy.features(), random, available) : null;
         var plan = site == null ? PrivatePoolingNoisePlan.forFeatures(policy.features(), random, available)
