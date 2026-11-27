@@ -3,17 +3,37 @@ package org.taniwha.statistics;
 import lombok.Getter;
 
 import java.util.Map;
+import java.util.List;
+import java.util.Set;
 
 @Getter
 public class CategoricalFeatureStatistics extends FeatureStatistics {
     private final int cardinality;
-    private final String mode;
-    private final int modeFrequency;
-    private final double modeFrequencyPercentage;
-    private final String secondMode;
-    private final Integer secondModeFrequency;
-    private final Double secondModePercentage;
-    private final Map<String, Integer> categoryCounts;
+    private String mode;
+    private Integer modeFrequency;
+    private Double modeFrequencyPercentage;
+    private String secondMode;
+    private Integer secondModeFrequency;
+    private Double secondModePercentage;
+    private Map<String, Integer> categoryCounts;
+    private List<CategoryHistogramBin> categoryBins = List.of();
+    private String categoryCountsStatus = "AVAILABLE";
+
+    public void coarsenDistribution(List<CategoryHistogramBin> bins, Set<String> publishedCounts, int minimumCount) {
+        if (modeFrequency < minimumCount) mode = null;
+        if (mode == null || !publishedCounts.contains(mode)) {
+            modeFrequency = null;
+            modeFrequencyPercentage = null;
+        }
+        if (secondModeFrequency != null && secondModeFrequency < minimumCount) secondMode = null;
+        if (secondMode == null || !publishedCounts.contains(secondMode)) {
+            secondModeFrequency = null;
+            secondModePercentage = null;
+        }
+        categoryCounts = Map.of();
+        categoryBins = List.copyOf(bins);
+        categoryCountsStatus = "COARSENED";
+    }
 
     public CategoricalFeatureStatistics(
             String featureName, long count, double percentMissing, long missingValuesCount,

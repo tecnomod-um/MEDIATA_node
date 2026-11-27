@@ -382,22 +382,26 @@ public class AnalyticsService {
             long missingValues = missingValueCounts.getOrDefault(key, 0L);
             double percentMissing = (double) missingValues / totalRecords * 100;
 
-            List<Map.Entry<String, Integer>> sortedEntries = valueMap.entrySet().stream()
-                    .sorted(Map.Entry.<String, Integer>comparingByValue().reversed().thenComparing(Map.Entry.comparingByKey()))
-                    .toList();
-
-            if (sortedEntries.isEmpty()) {
+            if (valueMap.isEmpty()) {
                 statisticsList.add(new CategoricalFeatureStatistics(key, 0, percentMissing, missingValues,
                         0, null, 0, 0, null, null, null, Map.of()));
                 return;
             }
 
-            Map.Entry<String, Integer> modeEntry = sortedEntries.get(0);
+            Comparator<Map.Entry<String, Integer>> order = Map.Entry.<String, Integer>comparingByValue().reversed()
+                    .thenComparing(Map.Entry.comparingByKey());
+            Map.Entry<String, Integer> modeEntry = null, secondEntry = null;
+            for (var entry : valueMap.entrySet()) {
+                if (modeEntry == null || order.compare(entry, modeEntry) < 0) {
+                    secondEntry = modeEntry;
+                    modeEntry = entry;
+                } else if (secondEntry == null || order.compare(entry, secondEntry) < 0) secondEntry = entry;
+            }
             String mode = modeEntry.getKey();
             int modeFrequency = modeEntry.getValue();
             double modePercentage = (double) modeFrequency / (totalRecords - missingValues) * 100;
 
-            String secondMode = sortedEntries.size() > 1 ? sortedEntries.get(1).getKey() : null;
+            String secondMode = secondEntry != null ? secondEntry.getKey() : null;
             Integer secondModeFrequency = secondMode != null ? valueMap.get(secondMode) : null;
             Double secondModePercentage = secondModeFrequency != null ? (double) secondModeFrequency / (totalRecords - missingValues) * 100 : null;
 
@@ -479,7 +483,8 @@ public class AnalyticsService {
             long missingValues = missingValueCounts.getOrDefault(key, 0L);
             double percentMissing = (double) missingValues / totalRecords * 100;
 
-            double meanEpoch = dateValues.stream().mapToDouble(v -> v).average().orElse(Double.NaN);
+            long sumEpochDays = dates.stream().mapToLong(LocalDate::toEpochDay).sum();
+            double meanEpoch = (double) sumEpochDays / dateValues.size();
             LocalDate meanDate = LocalDate.ofEpochDay((long) meanEpoch);
 
             double medianEpoch = percentileFromSorted(sortedDates, 50);
@@ -491,13 +496,14 @@ public class AnalyticsService {
             double q3Epoch = percentileFromSorted(sortedDates, 75);
             LocalDate q3Date = LocalDate.ofEpochDay((long) q3Epoch);
 
-            double stdDevEpoch = Math.sqrt(dateValues.stream().mapToDouble(v -> Math.pow(v - meanEpoch, 2)).sum() / dateValues.size());
+            double sumSquaredDeviations = dateValues.stream().mapToDouble(v -> Math.pow(v - meanEpoch, 2)).sum();
+            double stdDevEpoch = Math.sqrt(sumSquaredDeviations / dateValues.size());
 
             List<String> outlierDates = List.of();
 
             DateTimeFormatter formatter = DateTimeFormatter.ISO_LOCAL_DATE;
 
-            dateStatisticsList.add(new DateFeatureStatistics(
+            DateFeatureStatistics feature = new DateFeatureStatistics(
                     key,
                     dateStringList.size(),
                     percentMissing,
@@ -511,7 +517,9 @@ public class AnalyticsService {
                     medianDate.format(formatter),
                     q1Date.format(formatter),
                     q3Date.format(formatter)
-            ));
+            );
+            feature.setMoments(sumEpochDays, sumSquaredDeviations);
+            dateStatisticsList.add(feature);
         });
         return dateStatisticsList;
     }

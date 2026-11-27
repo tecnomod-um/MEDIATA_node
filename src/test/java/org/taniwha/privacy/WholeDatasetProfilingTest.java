@@ -145,12 +145,20 @@ class WholeDatasetProfilingTest {
         for (var types : List.of(Map.of("Flag", "continuous"), Map.of("Flag", "categorical"))) {
             var result = analytics.filterDataByName("source.csv", null, types);
             assertThat(result.getContinuousFeatures()).isEmpty();
-            assertThat(result.getCategoricalFeatures()).isEmpty();
-            assertThat(result.getOmittedFeatures()).singleElement().satisfies(feature -> {
-                assertThat(feature.getCount()).isEqualTo(24);
-                assertThat(feature.getMissingValuesCount()).isZero();
-                assertThat(feature.isCountsReleased()).isTrue();
-            });
+            if (types.get("Flag").equals("continuous")) {
+                assertThat(result.getCategoricalFeatures()).isEmpty();
+                assertThat(result.getOmittedFeatures()).singleElement().satisfies(feature -> {
+                    assertThat(feature.getCount()).isEqualTo(24);
+                    assertThat(feature.isCountsReleased()).isTrue();
+                });
+            } else {
+                assertThat(result.getOmittedFeatures()).isEmpty();
+                var feature = (CategoricalFeatureStatistics) result.getCategoricalFeatures().get(0);
+                assertThat(feature.getMode()).isEqualTo("0");
+                assertThat(feature.getModeFrequency()).isNull();
+                assertThat(feature.getCategoryCounts()).isEmpty();
+                assertThat(feature.getCategoryBins()).singleElement().satisfies(bin -> assertThat(bin.count()).isEqualTo(24));
+            }
             assertThat(result.getNumericPairSummaries()).isEmpty();
         }
     }

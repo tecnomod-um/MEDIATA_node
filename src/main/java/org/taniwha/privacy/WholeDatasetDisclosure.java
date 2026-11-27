@@ -28,21 +28,22 @@ final class WholeDatasetDisclosure {
         }).toList());
         response.setCategoricalFeatures(response.getCategoricalFeatures().stream().filter(feature -> {
             var item = (CategoricalFeatureStatistics) feature;
-            if (feature.getCount() > 0 && (feature.getCount() < AggregateDisclosure.MIN_COUNT
-                    || item.getCategoryCounts().values().stream().anyMatch(count -> count < AggregateDisclosure.MIN_COUNT))) {
+            if (feature.getCount() > 0 && feature.getCount() < AggregateDisclosure.MIN_COUNT) {
                 omit(omitted, feature, "categorical");
                 return false;
             }
-            categorical.add(feature.getFeatureName());
+            CategoryDisclosure.release(item);
+            if (item.getCategoryCountsStatus().equals("AVAILABLE")) categorical.add(feature.getFeatureName());
             return true;
         }).toList());
         response.setDateFeatures(response.getDateFeatures().stream().filter(feature -> {
-            if (feature.getCount() < AggregateDisclosure.MIN_COUNT
-                    || feature.getDateHistogram().values().stream().anyMatch(count -> count < AggregateDisclosure.MIN_COUNT)) {
+            if (feature.getCount() < AggregateDisclosure.MIN_COUNT || feature.getCardinality() == 2
+                    && feature.getDateHistogram().values().stream().anyMatch(count -> count < AggregateDisclosure.MIN_COUNT)) {
                 omit(omitted, feature, "date");
                 return false;
             }
-            numeric.put(feature.getFeatureName(), feature.getDateHistogram().size());
+            numeric.put(feature.getFeatureName(), feature.getCardinality());
+            DateHistogramDisclosure.release(feature);
             return true;
         }).toList());
         response.setOmittedFeatures(omitted);
@@ -56,7 +57,7 @@ final class WholeDatasetDisclosure {
                 .filter(pair -> pair.count() >= AggregateDisclosure.MIN_COUNT)
                 .filter(pair -> pair.frequencies().stream().allMatch(cell -> cell.count() >= AggregateDisclosure.MIN_COUNT))
                 .toList());
-        response.setDisclosurePolicyVersion(3);
+        response.setDisclosurePolicyVersion(4);
         response.setDisclosureMode("WHOLE_DATASET");
         return response;
     }
