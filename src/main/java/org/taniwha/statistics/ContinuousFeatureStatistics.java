@@ -7,13 +7,13 @@ import java.util.List;
 @Getter
 public class ContinuousFeatureStatistics extends FeatureStatistics {
     private final int cardinality;
-    private final double min;
-    private final double max;
-    private final double mean;
-    private final double stdDev;
-    private final double qrt1;
-    private final double median;
-    private final double qrt3;
+    private final Double min;
+    private final Double max;
+    private final Double mean;
+    private final Double stdDev;
+    private final Double qrt1;
+    private final Double median;
+    private final Double qrt3;
     private List<Double> histogram;
     private List<String> binRanges;
     private String histogramStatus = "AVAILABLE";
@@ -58,6 +58,19 @@ public class ContinuousFeatureStatistics extends FeatureStatistics {
 
     public void setValueCounts(List<NumericValueCount> valueCounts) {
         this.valueCounts = List.copyOf(valueCounts);
+    }
+
+    public static ContinuousFeatureStatistics empty(String name, long missing) {
+        return new ContinuousFeatureStatistics(name, missing);
+    }
+
+    private ContinuousFeatureStatistics(String name, long missing) {
+        super(name, 0, missing > 0 ? 100 : 0, missing);
+        cardinality = 0;
+        min = max = mean = stdDev = qrt1 = median = qrt3 = null;
+        histogram = List.of();
+        binRanges = List.of();
+        outliers = List.of();
     }
 
     public ContinuousFeatureStatistics(String featureName, long count, double percentMissing, long missingValuesCount, int cardinality, double min, double max, double mean, double stdDev, double qrt1, double median, double qrt3, List<Double> histogramBins, List<String> binRanges, List<Double> outliers) {

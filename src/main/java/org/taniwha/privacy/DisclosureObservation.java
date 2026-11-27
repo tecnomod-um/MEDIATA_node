@@ -3,6 +3,7 @@ package org.taniwha.privacy;
 import java.util.*;
 import org.taniwha.util.AlignedNumericData;
 import org.taniwha.util.AggregateDisclosure;
+import org.taniwha.util.DiscoveryValues;
 
 // Transient memberships built during parsing; only indices reach the local ledger
 public final class DisclosureObservation {
@@ -21,7 +22,7 @@ public final class DisclosureObservation {
         if (!included) return;
         selected.set(index);
         values.forEach((name, value) -> {
-            if (value == null || value.trim().isEmpty() || value.trim().equalsIgnoreCase("NULL")) return;
+            if (DiscoveryValues.isMissing(value)) return;
             categorical.computeIfAbsent(name, ignored -> new BitSet()).set(index);
         });
     }

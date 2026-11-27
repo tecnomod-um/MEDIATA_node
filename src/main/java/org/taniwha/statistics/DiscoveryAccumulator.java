@@ -5,6 +5,7 @@ import java.util.*;
 
 /** Buffers owned by a single file-processing thread, never shared between requests. */
 public final class DiscoveryAccumulator {
+    public final Map<String, String> types = new HashMap<>();
     public final Map<String, List<Double>> continuous = new HashMap<>();
     public final Map<String, Map<String, Integer>> categorical = new HashMap<>();
     public final Map<String, List<String>> dates = new HashMap<>();

@@ -10,6 +10,10 @@ import org.taniwha.util.AggregateDisclosure;
 //  Releases descriptive aggregates, the ledger gates requested query cohorts
 @Service
 public class DiscoveryDisclosureService {
+    public AnalyticsResponseDTO releaseWholeDataset(AnalyticsResponseDTO response) {
+        return WholeDatasetDisclosure.release(response);
+    }
+
     private final DiscoveryQueryLedger ledger;
     public DiscoveryDisclosureService(DiscoveryQueryLedger ledger) { this.ledger = ledger; }
     public DisclosureObservation begin(Path path) { return new DisclosureObservation(ledger.begin(path)); }
@@ -57,27 +61,22 @@ public class DiscoveryDisclosureService {
             dates.add(feature); numeric.add(feature.getFeatureName());
         }
         response.setContinuousFeatures(continuous); response.setCategoricalFeatures(categories); response.setDateFeatures(dates);
-        List<NumericPairSummary> pairs = new ArrayList<>(); Set<List<String>> numericPairs = new HashSet<>();
+        List<NumericPairSummary> pairs = new ArrayList<>();
         for (NumericPairSummary pair : response.getNumericPairSummaries()) {
             if (!numeric.contains(pair.featureX()) || !numeric.contains(pair.featureY())) continue;
             BitSet cohort = DisclosureObservation.intersect(observation.members(pair.featureX(), true), observation.members(pair.featureY(), true));
             if (!valid(cohort, pair.count())) continue;
-            numericPairs.add(List.of(pair.featureX(), pair.featureY())); numericPairs.add(List.of(pair.featureY(), pair.featureX()));
             pairs.add(pair);
         }
-        response.setNumericPairSummaries(pairs);
-        response.setCovariances(filterMatrix(response.getCovariances(), numericPairs));
-        response.setPearsonCorrelations(filterMatrix(response.getPearsonCorrelations(), numericPairs));
-        response.setSpearmanCorrelations(filterMatrix(response.getSpearmanCorrelations(), numericPairs));
-        List<CategoricalPairSummary> tables = new ArrayList<>(); Set<List<String>> categoryPairs = new HashSet<>();
+        RelationshipDisclosure.numeric(response, pairs);
+        List<CategoricalPairSummary> tables = new ArrayList<>();
         for (CategoricalPairSummary pair : response.getCategoricalPairSummaries()) {
             if (!categorical.contains(pair.featureX()) || !categorical.contains(pair.featureY())) continue;
             BitSet cohort = DisclosureObservation.intersect(observation.members(pair.featureX(), false), observation.members(pair.featureY(), false));
             if (!valid(cohort, pair.count())) continue;
-            tables.add(pair); categoryPairs.add(List.of(pair.featureX(), pair.featureY())); categoryPairs.add(List.of(pair.featureY(), pair.featureX()));
+            tables.add(pair);
         }
-        response.setCategoricalPairSummaries(tables);
-        response.setChiSquareTest(response.getChiSquareTest().stream().filter(test -> categoryPairs.contains(List.of(test.getCategory1(), test.getCategory2()))).toList());
+        RelationshipDisclosure.categorical(response, tables);
         // Omission metadata must not bypass count suppression, including high-cardinality omissions.
         response.setOmittedFeatures(omitted.stream().map(feature -> new OmittedFeatureStatistics(feature.getFeatureName(), 0, 0, 0,
                 feature.getReason().startsWith("Suppressed for privacy:") ? feature.getReason() : "Suppressed for privacy: release controls")).toList());
@@ -92,11 +91,4 @@ public class DiscoveryDisclosureService {
         omitted.add(new OmittedFeatureStatistics(feature.getFeatureName(), 0, 0, 0, "Suppressed for privacy: release controls"));
     }
 
-    private Map<String, Map<String, Double>> filterMatrix(Map<String, Map<String, Double>> matrix, Set<List<String>> allowed) {
-        Map<String, Map<String, Double>> result = new HashMap<>();
-        matrix.forEach((x, values) -> values.forEach((y, value) -> {
-            if (allowed.contains(List.of(x, y))) result.computeIfAbsent(x, ignored -> new HashMap<>()).put(y, value);
-        }));
-        return result;
-    }
 }

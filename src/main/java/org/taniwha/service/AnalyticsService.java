@@ -15,8 +15,10 @@ import org.taniwha.util.DateUtil;
 import org.taniwha.privacy.DiscoveryDisclosureService;
 import org.taniwha.privacy.DisclosureObservation;
 import org.taniwha.privacy.DiscoveryDisclosureBlockedException;
+import org.taniwha.privacy.DiscoveryProfileScope;
 import org.taniwha.util.NumberUtil;
 import org.taniwha.util.FeatureTypeOverrides;
+import org.taniwha.util.DiscoveryValues;
 
 import jakarta.annotation.PreDestroy;
 import java.io.BufferedInputStream;
@@ -64,7 +66,6 @@ public class AnalyticsService {
     private static final Pattern XLSX_DIMENSION_LAST_ROW =
             Pattern.compile("dimension[^>]*ref=\"[A-Z]+\\d+:[A-Z]+(\\d+)\"");
 
-    private final AggregateCalculator calculator = new AggregateCalculator(MIN_DISCLOSURE_COUNT + 1);
     private final DataProcessingService dataProcessingService;
     private final DiscoveryDisclosureService disclosure;
     private final FileService fileService;
@@ -385,6 +386,12 @@ public class AnalyticsService {
                     .sorted(Map.Entry.<String, Integer>comparingByValue().reversed().thenComparing(Map.Entry.comparingByKey()))
                     .toList();
 
+            if (sortedEntries.isEmpty()) {
+                statisticsList.add(new CategoricalFeatureStatistics(key, 0, percentMissing, missingValues,
+                        0, null, 0, 0, null, null, null, Map.of()));
+                return;
+            }
+
             Map.Entry<String, Integer> modeEntry = sortedEntries.get(0);
             String mode = modeEntry.getKey();
             int modeFrequency = modeEntry.getValue();
@@ -417,6 +424,10 @@ public class AnalyticsService {
                                                           long totalRecords) {
         List<FeatureStatistics> statisticsList = new ArrayList<>();
         continuousData.forEach((key, valueList) -> {
+            if (valueList.isEmpty()) {
+                statisticsList.add(ContinuousFeatureStatistics.empty(key, totalRecords));
+                return;
+            }
             // Discovery responses contain summaries only; do not return individual outlier values.
             List<Double> outliers = List.of();
             double mean = valueList.stream().mapToDouble(Double::doubleValue).average().orElse(Double.NaN);
@@ -594,23 +605,29 @@ public class AnalyticsService {
             // This method currently only reads a local file and calculates statistics for rows matching the filters.
             Path path = Paths.get(fileService.getDatasetFilePath(fileName));
             logger.info("Discovery profiling started for dataset {}", path.getFileName());
-            DisclosureObservation observation = disclosure.begin(path);
+            DiscoveryProfileScope scope = DiscoveryProfileScope.forFilters(filters);
+            DisclosureObservation observation = scope == DiscoveryProfileScope.WHOLE_DATASET
+                    ? new DisclosureObservation(null) : disclosure.begin(path);
             DiscoveryAccumulator buffer = new DiscoveryAccumulator();
             long[] scanned = {0};
             dataProcessingService.streamRows(path, row -> {
                 if (Thread.currentThread().isInterrupted()) throw new CancellationException("Discovery interrupted");
                 progress.accept(++scanned[0]);
-                boolean included = filters == null || dataProcessingService.matchesDiscoveryFilters(row, filters);
+                boolean included = scope == DiscoveryProfileScope.WHOLE_DATASET || dataProcessingService.matchesDiscoveryFilters(row, filters);
                 observation.row(row, included);
                 if (included) accumulateRecord(row, buffer, overrides, observation);
             });
             if (Thread.currentThread().isInterrupted()) throw new CancellationException("Discovery interrupted");
             progress.accept(scanned[0]);
             if (buffer.rows == 0) {
-                response.setMessage(filters == null ? NO_DATA_FOUND_MSG + fileName
+                response.setMessage(scope == DiscoveryProfileScope.WHOLE_DATASET ? NO_DATA_FOUND_MSG + fileName
                         : "No records match the provided filters for file: " + fileName);
             } else {
-                completeProfile(buffer, response, observation);
+                completeProfile(buffer, response, observation, scope, overrides);
+            }
+            if (scope == DiscoveryProfileScope.WHOLE_DATASET) {
+                logger.info("Discovery whole-dataset profile completed: dataset={} rows={}", path.getFileName(), buffer.rows);
+                return disclosure.releaseWholeDataset(response);
             }
             return disclosure.release(observation, response);
         } catch (CancellationException canceled) {
@@ -626,11 +643,11 @@ public class AnalyticsService {
     private void accumulateRecord(Map<String, String> row, DiscoveryAccumulator buffer,
                                   Map<String, String> overrides, DisclosureObservation observation) {
         buffer.rows++;
-        observation.numeric(processRecord(row, buffer.continuous, buffer.categorical, buffer.dates, buffer.missing,
-                overrides, buffer.combinations, observation));
+        observation.numeric(processRecord(row, buffer, overrides, observation));
     }
 
-    private void completeProfile(DiscoveryAccumulator buffer, AnalyticsResponseDTO response, DisclosureObservation observation) {
+    private void completeProfile(DiscoveryAccumulator buffer, AnalyticsResponseDTO response, DisclosureObservation observation,
+                                 DiscoveryProfileScope scope, Map<String, String> overrides) {
         Map<String, List<Double>> continuousData = buffer.continuous;
         Map<String, Map<String, Integer>> categoricalData = buffer.categorical;
         Map<String, List<String>> dateData = buffer.dates;
@@ -640,11 +657,21 @@ public class AnalyticsService {
         // Retain all-missing column identities so automatic mappings cannot
         // silently exclude a selected site's unavailable observations.
         for (String column : missingValueCounts.keySet()) {
-            if (!continuousData.containsKey(column) && !categoricalData.containsKey(column) && !dateData.containsKey(column))
-                omittedFeatures.add(new OmittedFeatureStatistics(column, 0, 0, 0, SMALL_FEATURE_SUPPRESSION_REASON));
+            if (!continuousData.containsKey(column) && !categoricalData.containsKey(column) && !dateData.containsKey(column)) {
+                if (scope == DiscoveryProfileScope.FILTERED) {
+                    omittedFeatures.add(new OmittedFeatureStatistics(column, 0, 0, 0, SMALL_FEATURE_SUPPRESSION_REASON));
+                } else {
+                    switch (overrides.getOrDefault(column, CATEGORICAL_TYPE)) {
+                        case CONTINUOUS_TYPE -> continuousData.put(column, List.of());
+                        default -> categoricalData.put(column, Map.of());
+                    }
+                }
+            }
         }
-        suppressSmallFeatures(continuousData, categoricalData, dateData, omittedFeatures);
-        filterCategoricalData(categoricalData, omittedFeatures, totalRecords);
+        if (scope == DiscoveryProfileScope.FILTERED) {
+            suppressSmallFeatures(continuousData, categoricalData, dateData, omittedFeatures);
+            filterCategoricalData(categoricalData, omittedFeatures, totalRecords);
+        }
 
         response.setContinuousFeatures(processContinuousData(continuousData, missingValueCounts, totalRecords));
         response.setCategoricalFeatures(processCategoricalData(categoricalData, missingValueCounts, totalRecords));
@@ -654,14 +681,16 @@ public class AnalyticsService {
 
         Set<String> numericColumns = new HashSet<>(continuousData.keySet());
         numericColumns.addAll(dateData.keySet());
-        setNumericRelationships(response, observation.numericColumns(numericColumns));
+        AggregateCalculator calculator = new AggregateCalculator(AggregateDisclosure.MIN_COUNT);
+        setNumericRelationships(response, observation.numericColumns(numericColumns), calculator);
         response.setChiSquareTest(calculator.calculateChiSquaredTest(categoricalData, buffer.combinations));
         response.setCategoricalPairSummaries(calculator.categoricalPairSummaries(categoricalData, buffer.combinations));
 
         response.setMessage(SUCCESS_MSG);
     }
 
-    private void setNumericRelationships(AnalyticsResponseDTO response, Map<String, List<Double>> alignedData) {
+    private void setNumericRelationships(AnalyticsResponseDTO response, Map<String, List<Double>> alignedData,
+                                         AggregateCalculator calculator) {
         List<NumericPairSummary> summaries = calculator.numericPairSummaries(alignedData);
         response.setNumericPairSummaries(summaries);
         Map<String, Map<String, Double>> covariances = new HashMap<>(), correlations = new HashMap<>();
@@ -683,28 +712,31 @@ public class AnalyticsService {
     }
 
     private Map<String, Double> processRecord(Map<String, String> rowData,
-                               Map<String, List<Double>> continuousData,
-                               Map<String, Map<String, Integer>> categoricalData,
-                               Map<String, List<String>> dateData, Map<String, Long> missingValueCounts,
+                               DiscoveryAccumulator buffer,
                                Map<String, String> overrides,
-                               Map<Pair<String, String>, Map<Pair<String, String>, Integer>> categoryCombinationCounts,
                                DisclosureObservation observation) {
-
+        var continuousData = buffer.continuous;
+        var categoricalData = buffer.categorical;
+        var dateData = buffer.dates;
+        var missingValueCounts = buffer.missing;
+        var categoryCombinationCounts = buffer.combinations;
         Map<String, Double> numericRow = new HashMap<>();
         rowData.forEach((column, value) -> {
             String override = overrides.get(column);
 
-            if (value == null || value.trim().isEmpty() || "NULL".equalsIgnoreCase(value.trim())) {
+            if (DiscoveryValues.isMissing(value)) {
                 missingValueCounts.merge(column, 1L, Long::sum);
                 return;
             }
 
             String trimmedValue = value.trim();
-            String featureType = determineFeatureType(override, trimmedValue);
+            String featureType = buffer.types.computeIfAbsent(column, ignored -> determineFeatureType(override, trimmedValue));
 
             switch (featureType) {
                 case DATE_TYPE -> {
-                    DateUtil.parseDate(trimmedValue).ifPresent(parsedDate -> {
+                    var parsed = DateUtil.parseDate(trimmedValue);
+                    if (parsed.isEmpty()) missingValueCounts.merge(column, 1L, Long::sum);
+                    parsed.ifPresent(parsedDate -> {
                         String date = parsedDate.format(DateTimeFormatter.ISO_LOCAL_DATE);
                         dateData.computeIfAbsent(column, k -> new ArrayList<>()).add(date);
                         observation.exactCell(column, date);
@@ -725,6 +757,7 @@ public class AnalyticsService {
                             // valid numerical interpretation for moments or pooled relationships.
                             throw new InvalidNumericConversionException();
                         } else {
+                            missingValueCounts.merge(column, 1L, Long::sum);
                             logger.debug("A numeric value could not be parsed");
                         }
                     }
@@ -749,8 +782,7 @@ public class AnalyticsService {
                 String col2 = categoricalColumns.get(j);
                 String val1 = Objects.toString(rowData.get(col1), "").trim();
                 String val2 = Objects.toString(rowData.get(col2), "").trim();
-                if (!val1.isEmpty() && !"NULL".equalsIgnoreCase(val1) &&
-                        !val2.isEmpty() && !"NULL".equalsIgnoreCase(val2)) {
+                if (!DiscoveryValues.isMissing(val1) && !DiscoveryValues.isMissing(val2)) {
 
                     Pair<String, String> columnPair = new Pair<>(col1, col2);
                     Pair<String, String> valuePair = new Pair<>(val1, val2);

@@ -49,6 +49,7 @@ class AnalyticsServiceTest {
         MockitoAnnotations.openMocks(this);
         when(disclosure.begin(any())).thenAnswer(inv -> new DisclosureObservation(null));
         when(disclosure.release(any(), any())).thenAnswer(inv -> inv.getArgument(1));
+        when(disclosure.releaseWholeDataset(any())).thenAnswer(inv -> inv.getArgument(0));
         when(dataProcessingService.matchesDiscoveryFilters(any(), any())).thenReturn(true);
     }
 
@@ -113,7 +114,7 @@ class AnalyticsServiceTest {
     }
 
     @Test
-    void typedRefresh_oneRecord_suppressesFeature() throws Exception {
+    void typedRefresh_oneRecord_preservesWholeFileStatistics() throws Exception {
         String filename = "f2";
         when(fileService.getDatasetFilePath(filename)).thenReturn("/tmp/" + filename);
         stubStreamRows(filename, List.of(Map.of("col1", "42")));
@@ -123,11 +124,9 @@ class AnalyticsServiceTest {
         assertThat(dto.getMessage()).isEqualTo("Data processed successfully");
         assertThat(dto.getFileName()).isEqualTo(filename);
 
-        assertThat(dto.getContinuousFeatures()).isEmpty();
-        assertThat(dto.getOmittedFeatures())
-                .singleElement()
-                .extracting("featureName", "count", "reason")
-                .containsExactly("col1", 0L, "Suppressed for privacy: 5 or fewer observations");
+        assertThat(dto.getContinuousFeatures()).singleElement()
+                .extracting("featureName", "count").containsExactly("col1", 1L);
+        assertThat(dto.getOmittedFeatures()).isEmpty();
     }
 
     @Test
@@ -245,8 +244,8 @@ class AnalyticsServiceTest {
     }
 
     @Test
-    @DisplayName("processSingleFileOnDisk omits identifier-like high-cardinality columns")
-    void processSingleFileOnDisk_omitsHighCardinalityColumns() throws Exception {
+    @DisplayName("Whole-file profiles retain high-cardinality column summaries")
+    void processSingleFileOnDisk_retainsHighCardinalityColumns() throws Exception {
         String filename = "highcard.csv";
         when(fileService.getDatasetFilePath(filename)).thenReturn("/tmp/" + filename);
         List<Map<String, String>> rows = new ArrayList<>();
@@ -260,11 +259,9 @@ class AnalyticsServiceTest {
         }).when(dataProcessingService).streamRows(eq(Paths.get("/tmp/" + filename)), any());
 
         AnalyticsResponseDTO dto = analyticsService.processSingleFileOnDisk(filename);
-        assertThat(dto.getCategoricalFeatures()).isEmpty();
-        assertThat(dto.getOmittedFeatures())
-                .singleElement()
-                .extracting("featureName", "reason")
-                .containsExactly("u", "Too many unique values (100.0%)");
+        assertThat(dto.getCategoricalFeatures()).singleElement()
+                .extracting("featureName", "count").containsExactly("u", 11L);
+        assertThat(dto.getOmittedFeatures()).isEmpty();
     }
 
     @Test
@@ -305,14 +302,12 @@ class AnalyticsServiceTest {
     }
 
     @Test
-    void processSingleFileOnDisk_fiveObservations_suppressesFeature() throws Exception {
+    void processSingleFileOnDisk_fiveObservations_returnsWholeFileStatistics() throws Exception {
         AnalyticsResponseDTO dto = processNumericRows("five.csv", 5);
 
-        assertThat(dto.getContinuousFeatures()).isEmpty();
-        assertThat(dto.getOmittedFeatures())
-                .singleElement()
-                .extracting("featureName", "count", "reason")
-                .containsExactly("num", 0L, "Suppressed for privacy: 5 or fewer observations");
+        assertThat(dto.getContinuousFeatures()).singleElement()
+                .extracting("featureName", "count").containsExactly("num", 5L);
+        assertThat(dto.getOmittedFeatures()).isEmpty();
     }
 
     @Test
@@ -444,14 +439,19 @@ class AnalyticsServiceTest {
         var asyncResult = realJobs.getJob(jobId).getResults().get(0);
         assertAlignedRelationships(asyncResult);
         assertThat(asyncResult).usingRecursiveComparison()
+                .withEqualsForType(Double::equals, Double.class)
                 .isEqualTo(analyticsService.processSingleFileOnDisk("pairs.csv"));
         assertThat(asyncResult).usingRecursiveComparison()
+                .withEqualsForType(Double::equals, Double.class)
                 .isEqualTo(analyticsService.filterDataByName("pairs.csv", Map.of()));
-        assertThat(asyncResult.getOmittedFeatures()).extracting("featureName").contains("Unavailable");
+        assertThat(asyncResult.getCategoricalFeatures()).anySatisfy(feature -> {
+            assertThat(feature.getFeatureName()).isEqualTo("Unavailable");
+            assertThat(feature.getMissingValuesCount()).isEqualTo(10);
+        });
     }
 
     @Test
-    void suppressesSmallPairwiseCohortsEvenWhenBothFeaturesAreReleased() throws Exception {
+    void smallPairwiseCohortsRemainProtectedEvenForWholeFiles() throws Exception {
         var rows = new ArrayList<Map<String, String>>();
         for (int i = 0; i < 10; i++) rows.add(Map.of("x", i < 6 ? String.valueOf(i) : "", "y", i >= 4 ? String.valueOf(i * 2) : ""));
         stubStreamRows("few-pairs.csv", rows);

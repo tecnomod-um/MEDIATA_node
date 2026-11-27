@@ -33,7 +33,7 @@ public class AnalyticsResponseDTO {
     private final int statisticsConventionVersion = 1;
     private int disclosurePolicyVersion;
     private boolean disclosureWithheld;
-    private final String disclosureMode = "COHORT_AGGREGATES";
+    private String disclosureMode = "COHORT_AGGREGATES";
     private int featureTypeSummaryVersion;
     private Map<String, String> featureTypes = new HashMap<>();
     private List<NumericPairSummary> numericPairSummaries = new ArrayList<>();
